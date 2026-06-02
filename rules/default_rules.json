@@ -1,0 +1,62 @@
+{
+  "strong_sources": [
+    "sample-base",
+    "zion_sandbox",
+    "cloud_sandbox",
+    "vt_contacted",
+    "virustotal",
+    "manual"
+  ],
+  "weak_sources": [],
+  "malicious_indicators": [
+    "sample",
+    "c2",
+    "malware",
+    "trojan",
+    "backdoor",
+    "rat",
+    "callback",
+    "connect",
+    "dns",
+    "http",
+    "tcp",
+    "download",
+    "payload",
+    "sandbox",
+    "virus",
+    "恶意",
+    "样本",
+    "通信",
+    "回连",
+    "下载",
+    "沙箱"
+  ],
+  "context_comment_malicious_indicators": [],
+  "context_comment_historical_indicators": [
+    "historical",
+    "history",
+    "曾",
+    "历史",
+    "曾经"
+  ],
+  "normalization_indicators": [
+    "cdn",
+    "cloud",
+    "shared hosting",
+    "parking",
+    "official",
+    "官网",
+    "备案",
+    "正常业务"
+  ],
+  "review_indicators": [
+    "mixed-family",
+    "shared-hosting",
+    "标签混杂",
+    "家族混杂"
+  ],
+  "trusted_business_fields": [
+    "icp_website",
+    "official_website"
+  ]
+}
