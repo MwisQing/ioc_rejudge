@@ -16,12 +16,18 @@ _BUILT_IN_DEFAULTS: dict = {
         "payload", "sandbox", "virus", "恶意", "样本", "通信",
         "回连", "下载", "沙箱",
     ],
+    "strong_malicious_indicators": [
+        "trojan", "malware", "backdoor", "rat", "c2", "malicious",
+        "spyware", "botnet", "木马", "恶意", "后门", "远控", "间谍", "僵尸",
+        "worm", "virus", "exploit", "rootkit", "keylogger", "downloader",
+        "dropper", "ransom", "蠕虫", "病毒", "漏洞", "勒索",
+    ],
     "context_comment_malicious_indicators": [],
     "context_comment_historical_indicators": [
         "historical", "history", "曾", "历史", "曾经",
     ],
     "normalization_indicators": [
-        "cdn", "cloud", "shared hosting", "parking",
+        "cdn", "cloud", "shared hosting",
         "official", "官网", "备案", "正常业务",
     ],
     "review_indicators": [
@@ -30,12 +36,16 @@ _BUILT_IN_DEFAULTS: dict = {
     "trusted_business_fields": [
         "icp_website", "official_website",
     ],
+    "authoritative_clue_indicators": ["线索群"],
+    "operator_sources": ["manual", "alliocs_tpd"],
 }
 
 _LIST_FIELDS = [
     "strong_sources", "weak_sources", "malicious_indicators",
+    "strong_malicious_indicators",
     "context_comment_malicious_indicators", "context_comment_historical_indicators",
     "normalization_indicators", "review_indicators", "trusted_business_fields",
+    "authoritative_clue_indicators", "operator_sources",
 ]
 
 
@@ -45,11 +55,14 @@ class RuleConfig:
     strong_sources: list[str] = field(default_factory=list)
     weak_sources: list[str] = field(default_factory=list)
     malicious_indicators: list[str] = field(default_factory=list)
+    strong_malicious_indicators: list[str] = field(default_factory=list)
     context_comment_malicious_indicators: list[str] = field(default_factory=list)
     context_comment_historical_indicators: list[str] = field(default_factory=list)
     normalization_indicators: list[str] = field(default_factory=list)
     review_indicators: list[str] = field(default_factory=list)
     trusted_business_fields: list[str] = field(default_factory=list)
+    authoritative_clue_indicators: list[str] = field(default_factory=list)
+    operator_sources: list[str] = field(default_factory=list)
 
 
 def _build_defaults() -> RuleConfig:

@@ -1,8 +1,9 @@
-"""Pack the project into a distributable zip archive with a rollback tag."""
+"""Build a deterministic, non-Git release archive."""
 
 import argparse
+import json
 import os
-import subprocess
+import re
 import sys
 import zipfile
 from datetime import datetime
@@ -14,310 +15,190 @@ _INCLUDE_PATHS = [
     "ioc_rejudge/",
     "rules/",
     "tests/",
+    "iocProducer_api_ioc_info.py",
+    "ioc_rejudge/anonymize_ioc.py",
+    "README.md",
+    "CHANGELOG.md",
     "CLAUDE.md",
     "VERSION",
+    "requirements.txt",
+    "requirements-dev.txt",
+    "docs/ARCHITECTURE.md",
+    "docs/DEVELOPMENT.md",
+    "docs/HISTORY.md",
     "pack.py",
     "push.py",
     "upgrade.py",
     ".gitignore",
 ]
 
-_STAGE_PATHS = list(_INCLUDE_PATHS)
-
-_EXCLUDE_PREFIXES = [
-    "docs/",
+_EXCLUDE_PREFIXES = (
+    "docs/agent-prompts/",
+    "docs/superpowers/",
+    "ioc_info/",
+    "outputs/",
     "release/",
-    "ioc.txt",
-    "ioc_info_result_diagnostics.json",
-    "history.md",
-    "ai开发提示词.md",
-    "AGENTS.md",
-    ".clinerules/",
-]
+)
 
 _ZIP_PREFIX = "ioc_rejudge"
-
-_GITIGNORE_CONTENT = """\
-__pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-*.tmp
-*.temp
-json_temp.*
-/dist/
-*.egg-info/
-*.zip
-release/
-"""
+_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 
 def _read_version(root: Path) -> str:
     version_file = root / "VERSION"
-    if version_file.exists():
-        return version_file.read_text(encoding="utf-8").strip()
-    return "0.0.0"
+    if not version_file.is_file():
+        raise ValueError("VERSION file is missing")
+    version = version_file.read_text(encoding="utf-8").strip()
+    _validate_version(version)
+    return version
 
 
-def _show_version(root: Path) -> None:
-    print(f"当前版本: v{_read_version(root)}")
-
-
-def _check_git() -> None:
-    try:
-        subprocess.run(
-            ["git", "--version"],
-            capture_output=True,
-            check=True,
-            timeout=10,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        print("错误: 未找到 Git，请先安装 Git 并添加到 PATH。")
-        sys.exit(1)
-
-
-def _ensure_gitignore(root: Path) -> None:
-    gitignore = root / ".gitignore"
-    if gitignore.exists():
-        return
-    gitignore.write_text(_GITIGNORE_CONTENT, encoding="utf-8")
-    print("已创建 .gitignore")
-
-
-def _ensure_version(root: Path) -> None:
-    version_file = root / "VERSION"
-    if version_file.exists():
-        return
-    version_file.write_text("1.0.0\n", encoding="utf-8")
-    print("已创建 VERSION: 1.0.0")
-
-
-def _git_init(root: Path) -> None:
-    if (root / ".git").exists():
-        print("Git 仓库已存在，跳过 git init")
-        return
-    try:
-        subprocess.run(["git", "init"], cwd=str(root), capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"错误: git init 失败:\n{e.stderr.strip()}")
-        sys.exit(1)
-    print("已初始化 Git 仓库")
-
-
-def _git_add(root: Path) -> None:
-    try:
-        subprocess.run(
-            ["git", "add", "--"] + _STAGE_PATHS,
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError as e:
-        print(f"错误: git add 失败:\n{e.stderr.strip()}")
-        sys.exit(1)
-    print("已添加发布文件到暂存区")
-
-
-def _git_commit(root: Path, message: str) -> bool:
-    try:
-        diff = subprocess.run(
-            ["git", "diff", "--cached", "--quiet"],
-            cwd=str(root),
-            capture_output=True,
-        )
-        if diff.returncode == 0:
-            print("没有暂存变更，跳过 git commit 和 tag")
-            return False
-
-        subprocess.run(
-            ["git", "commit", "-m", message],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError as e:
-        print(f"错误: git commit 失败:\n{e.stderr.strip()}")
-        sys.exit(1)
-    print(f"已提交: {message}")
-    return True
-
-
-def _git_tag(root: Path, version: str) -> str:
-    now = datetime.now().strftime("%Y%m%d-%H%M%S")
-    tag = f"v{version}-{now}"
-    try:
-        subprocess.run(
-            ["git", "tag", "-a", tag, "-m", f"Release v{version}"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError as e:
-        print(f"错误: 创建 tag 失败:\n{e.stderr.strip()}")
-        sys.exit(1)
-    print(f"已打回退标签: {tag}")
-    return tag
-
-
-def _bump_version(root: Path, current: str) -> str:
-    print()
-    print(f"下一次发布版本设置 (当前已打包版本: {current})")
-    print("  p) patch  {}.{}.{}  (小修复)".format(*_parse_version(current, "patch")))
-    print("  n) minor  {}.{}.{}  (新功能)".format(*_parse_version(current, "minor")))
-    print("  m) major  {}.{}.{}  (大版本)".format(*_parse_version(current, "major")))
-    print(f"  s) skip   保持 {current}")
-    try:
-        choice = input("选择下一次版本 [p/n/m/s]: ").strip().lower()
-    except EOFError:
-        choice = "s"
-
-    if choice == "p":
-        new = _bump(current, "patch")
-    elif choice == "n":
-        new = _bump(current, "minor")
-    elif choice == "m":
-        new = _bump(current, "major")
-    else:
-        print(f"VERSION 保持为 {current}")
-        return current
-
-    (root / "VERSION").write_text(new + "\n", encoding="utf-8")
-    print(f"VERSION 已更新为 {new}，将在下一次 pack 时提交和打包")
-    return new
-
-
-def _parse_version(v: str, part: str) -> tuple[int, int, int]:
-    try:
-        pieces = [int(piece) for piece in v.split(".")]
-    except ValueError:
-        print(f"错误: VERSION 不是合法 semver: {v}")
-        sys.exit(1)
-    major = pieces[0] if len(pieces) > 0 else 0
-    minor = pieces[1] if len(pieces) > 1 else 0
-    patch = pieces[2] if len(pieces) > 2 else 0
-    if part == "major":
-        return major + 1, 0, 0
-    if part == "minor":
-        return major, minor + 1, 0
-    return major, minor, patch + 1
-
-
-def _bump(v: str, part: str) -> str:
-    return "{}.{}.{}".format(*_parse_version(v, part))
+def _validate_version(version: str) -> None:
+    if not _SEMVER_RE.fullmatch(version):
+        raise ValueError(f"VERSION is not strict semver: {version!r}")
 
 
 def _should_exclude(member_path: str) -> bool:
-    parts = Path(member_path).parts
-    if any(part in {"__pycache__", ".pytest_cache"} for part in parts):
+    normalized = member_path.replace("\\", "/")
+    if normalized.startswith(_EXCLUDE_PREFIXES):
+        return True
+
+    parts = Path(normalized).parts
+    if any(part in {"__pycache__", ".pytest_cache", ".git"} for part in parts):
         return True
 
     filename = parts[-1] if parts else ""
-    if filename.endswith((".pyc", ".pyo", ".tmp", ".temp", ".zip")):
-        return True
-    if filename.startswith("json_temp."):
-        return True
-
-    normalized = member_path.replace("\\", "/")
-    return any(normalized.startswith(prefix) for prefix in _EXCLUDE_PREFIXES)
+    return filename.endswith(
+        (".pyc", ".pyo", ".tmp", ".temp", ".zip", ".log")
+    )
 
 
-def _create_zip(root: Path, version: str) -> Path:
-    now = datetime.now().strftime("%Y%m%d-%H%M%S")
-    zip_name = f"{_ZIP_PREFIX}_{version}_{now}.zip"
-    release_dir = root / "release"
-    release_dir.mkdir(exist_ok=True)
-    zip_path = release_dir / zip_name
+def _iter_package_files(root: Path) -> list[tuple[Path, str]]:
+    by_member: dict[str, Path] = {}
+    for include in _INCLUDE_PATHS:
+        target = root / include
+        if not target.exists():
+            continue
+        if target.is_file():
+            member = target.relative_to(root).as_posix()
+            if not _should_exclude(member):
+                by_member[member] = target
+            continue
+        for file_path in target.rglob("*"):
+            if not file_path.is_file():
+                continue
+            member = file_path.relative_to(root).as_posix()
+            if not _should_exclude(member):
+                by_member[member] = file_path
+    return [(by_member[member], member) for member in sorted(by_member)]
 
-    included_count = 0
-    try:
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for include in _INCLUDE_PATHS:
-                target = root / include
-                if not target.exists():
-                    print(f"跳过不存在的路径: {include}")
-                    continue
 
-                if target.is_file():
-                    if _should_exclude(include):
-                        continue
-                    zf.write(target, include)
-                    included_count += 1
-                    print(f"  + {include}")
-                elif target.is_dir():
-                    for file_path in target.rglob("*"):
-                        if not file_path.is_file():
-                            continue
-                        rel = file_path.relative_to(root).as_posix()
-                        if _should_exclude(rel):
-                            continue
-                        zf.write(file_path, rel)
-                        included_count += 1
-                        print(f"  + {rel}")
-    except OSError as e:
-        print(f"错误: 创建 zip 文件失败: {e}")
-        sys.exit(1)
+def _build_manifest(
+    version: str,
+    created_at: str,
+    zip_name: str,
+    included_paths: list[str],
+) -> dict:
+    return {
+        "project": _ZIP_PREFIX,
+        "version": version,
+        "created_at": created_at,
+        "zip_name": zip_name,
+        "included_paths": included_paths,
+        "source": "filesystem",
+    }
 
-    print(f"\n已生成完整包: {zip_path}")
-    print(f"包内版本: v{version}")
-    print(f"包含 {included_count} 个文件")
+
+def _create_zip(root: Path, version: str, output_dir: Path) -> Path:
+    _validate_version(version)
+    created_at = datetime.now().strftime("%Y%m%d-%H%M%S")
+    zip_name = f"{_ZIP_PREFIX}_v{version}_{created_at}.zip"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = output_dir / zip_name
+    package_files = _iter_package_files(root)
+    included_paths = [member for _, member in package_files]
+    manifest = _build_manifest(
+        version,
+        created_at,
+        zip_name,
+        included_paths,
+    )
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for file_path, member in package_files:
+            archive.write(file_path, member)
+        archive.writestr(
+            "RELEASE.json",
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        )
     return zip_path
 
 
+def _run_checks(root: Path) -> list[tuple[Path, str]]:
+    version = _read_version(root)
+    missing = [path for path in _INCLUDE_PATHS if not (root / path).exists()]
+    if missing:
+        raise ValueError("Missing release paths: " + ", ".join(missing))
+
+    gitignore = root / ".gitignore"
+    ignored = gitignore.read_text(encoding="utf-8", errors="ignore")
+    if "release/" not in ignored and "/release/" not in ignored:
+        raise ValueError(".gitignore must exclude release/")
+
+    package_files = _iter_package_files(root)
+    if not package_files:
+        raise ValueError("Release package would be empty")
+    print(f"版本: v{version}")
+    print(f"发布文件: {len(package_files)}")
+    print("检查完成：未创建 Git、tag 或 zip")
+    return package_files
+
+
+def _resolve_output_dir(root: Path, value: str) -> Path:
+    output = Path(value).expanduser()
+    return output if output.is_absolute() else root / output
+
+
+def _pause() -> None:
+    try:
+        input("按任意键继续...")
+    except EOFError:
+        pass
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="项目打包工具")
-    parser.add_argument("-m", "--message", default=None, help="提交信息")
+    parser = argparse.ArgumentParser(description="IOC Rejudge 非 Git 发布打包工具")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="只检查版本、路径和排除规则，不创建 zip",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="release",
+        help="发布包输出目录（默认 release）",
+    )
     args = parser.parse_args()
 
     os.chdir(SCRIPT_DIR)
     root = SCRIPT_DIR
-
-    _show_version(root)
-
-    print("[1/4] 环境准备...")
-    _check_git()
-    _ensure_gitignore(root)
-    _ensure_version(root)
-    _git_init(root)
-
-    print("[2/4] 提交代码...")
-    if args.message:
-        message = args.message
-    else:
-        try:
-            message = input("\n请输入提交信息: ").strip()
-        except EOFError:
-            print("错误: 无法读取输入，请使用 -m 参数指定提交信息")
-            sys.exit(1)
-    if not message:
-        print("错误: 提交信息不能为空")
-        sys.exit(1)
+    _run_checks(root)
+    if args.check:
+        return
 
     version = _read_version(root)
-
-    _git_add(root)
-    committed = _git_commit(root, message)
-
-    print("[3/4] 打版本标签...")
-    if committed:
-        _git_tag(root, version)
-    else:
-        print("跳过（无变更）")
-
-    print("[4/4] 生成发布包...")
-    _create_zip(root, version)
-
-    _bump_version(root, version)
-
-    print("\n打包完成。")
-    input("按任意键继续...")
+    output_dir = _resolve_output_dir(root, args.output_dir)
+    zip_path = _create_zip(root, version, output_dir)
+    print(f"发布包: {zip_path}")
+    print("VERSION 保持不变；本工具未执行 Git 或网络操作。")
+    _pause()
 
 
 if __name__ == "__main__":
     try:
         main()
-    except KeyboardInterrupt:
-        print("\n操作已取消。")
-        sys.exit(0)
+    except (KeyboardInterrupt, ValueError) as exc:
+        if isinstance(exc, KeyboardInterrupt):
+            print("\n操作已取消。")
+            sys.exit(0)
+        sys.exit(f"错误: {exc}")

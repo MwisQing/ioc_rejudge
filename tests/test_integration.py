@@ -1,11 +1,11 @@
-"""Integration test using the real json_temp.txt data."""
+"""Integration test using a checked-in sanitized snapshot fixture."""
 import os
 from ioc_rejudge.cli import run_pipeline
 from ioc_rejudge.config import Config
 
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SNAPSHOT_PATH = os.path.join(PROJECT_DIR, "json_temp.txt")
+SNAPSHOT_PATH = os.path.join(PROJECT_DIR, "tests", "data", "integration_snapshot.jsonl")
 
 
 def test_real_snapshot_no_crash():
@@ -30,7 +30,7 @@ def test_real_snapshot_has_required_fields():
 def test_real_snapshot_valid_conclusions():
     config = Config()
     verdicts = run_pipeline(SNAPSHOT_PATH, config)
-    valid = {"存活有效", "失活有效", "误报", "待复核"}
+    valid = {"存活有效", "失活有效", "误报", "待复核", "灰"}
     for v in verdicts:
         assert v["conclusion"] in valid, \
             f"Invalid conclusion '{v['conclusion']}' for {v['ioc']}"

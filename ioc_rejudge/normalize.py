@@ -2,8 +2,38 @@
 import re
 from datetime import datetime
 from urllib.parse import urlparse
-from ioc_rejudge.models import IocDossier
+from ioc_rejudge.models import IocDossier, RecordSnapshot
 from ioc_rejudge.parser import parse_time
+
+
+def _record_time(record: dict) -> datetime | None:
+    """Extract the best-effort record timestamp."""
+    for field in ("updatetime", "inserttime", "disposaltime"):
+        parsed = parse_time(str(record.get(field, "")))
+        if parsed:
+            return parsed
+    return None
+
+
+def _ordered_snapshots(records: list[dict]) -> list[RecordSnapshot]:
+    """Build provenance snapshots sorted by (record_time, original index).
+
+    Records without a parseable time sort before those with one
+    (datetime.min is used as the sort key for None).
+    """
+    snapshots = [
+        RecordSnapshot(
+            index=idx,
+            record_time=_record_time(rec),
+            sources=_merge_all_values([rec], "source"),
+            raw=rec,
+        )
+        for idx, rec in enumerate(records)
+    ]
+    return sorted(
+        snapshots,
+        key=lambda s: (s.record_time or datetime.min, s.index),
+    )
 
 
 def normalize_ioc(value: str, port: str = "0") -> tuple[str, str, list[str]]:
@@ -120,6 +150,18 @@ def _collect_all_nested(records: list[dict], nested_field: str) -> list[dict]:
     return result
 
 
+def _safe_current_dict(record: dict, field: str) -> dict:
+    """Return a shallow copy of *record[field]* if it is a dict, else {}.
+
+    Guards against malformed records where whois/http may be a string,
+    list, or other non-dict value that would crash ``dict(...)``.
+    """
+    val = record.get(field)
+    if isinstance(val, dict):
+        return dict(val)
+    return {}
+
+
 def _pick_latest_dict(records: list[dict], field: str) -> dict:
     """Pick the dict whose internal time value is most recent.
 
@@ -149,6 +191,20 @@ def _pick_latest_dict(records: list[dict], field: str) -> dict:
     return best_val if best_val else fallback
 
 
+def coerce_level(value: object, default: float = 0.0) -> float:
+    """Coerce a possibly dirty level field (None, bool, str, junk) to a float."""
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return default
+    return default
+
+
 def merge_records(records: list[dict]) -> IocDossier:
     if not records:
         return IocDossier(ioc="", ioc_type="unknown")
@@ -160,9 +216,9 @@ def merge_records(records: list[dict]) -> IocDossier:
 
     max_level = 0.0
     for rec in records:
-        lvl = rec.get("level")
-        if lvl is not None and lvl > max_level:
-            max_level = float(lvl)
+        lvl = coerce_level(rec.get("level"))
+        if lvl > max_level:
+            max_level = lvl
 
     hash_entries = _collect_all_nested(records, "hash")
     dtree_entries = _collect_all_nested(records, "dtree")
@@ -180,6 +236,50 @@ def merge_records(records: list[dict]) -> IocDossier:
     latest_access = _pick_latest_dict(records, "access")
     latest_certificates = _pick_latest_dict(records, "certificates")
     latest_topdomain = _pick_latest_dict(records, "topdomain")
+
+    # ---- Current-state fields from the single latest record ----
+    snapshots = _ordered_snapshots(records)
+    latest_rec = snapshots[-1].raw if snapshots else {}
+    latest_whois = _safe_current_dict(latest_rec, "whois")
+    latest_http = _safe_current_dict(latest_rec, "http")
+
+    # historical_icp_values: all non-empty ICP from older snapshots
+    historical_icp: list[str] = []
+    icp_current = str(latest_rec.get("icp_website", "") or "")
+    for snap in snapshots[:-1]:  # all except the latest
+        val = str(snap.raw.get("icp_website", "") or "")
+        if val:
+            historical_icp.append(val)
+
+    official_website = str(latest_rec.get("official_website", "") or "")
+    page_title = str(latest_rec.get("page_title", "") or "")
+    resolv_ip = str(latest_rec.get("resolv_ip", "") or "")
+
+    # Aggregate runtime flags across all records
+    aggregated_runtime: dict[str, str | bool | int | float] = {}
+    _RUNTIME_FIELDS = [
+        "risk", "fdark", "alert", "alert_score", "block", "black",
+        "ml_black", "ml_cls", "ml_confidence", "current_status",
+        "reachable", "processed", "task_status",
+    ]
+    for rec in records:
+        for f in _RUNTIME_FIELDS:
+            val = rec.get(f)
+            if val is not None and f not in aggregated_runtime:
+                aggregated_runtime[f] = val
+            elif val is not None and f in aggregated_runtime:
+                # Take max for numeric, latest non-empty for strings, True wins for bools
+                existing = aggregated_runtime[f]
+                if isinstance(val, bool) and isinstance(existing, bool):
+                    aggregated_runtime[f] = existing or val
+                elif isinstance(val, (int, float)) and isinstance(existing, (int, float)):
+                    # risk: preserve most negative (benign) value
+                    if f == "risk":
+                        aggregated_runtime[f] = min(existing, val)
+                    else:
+                        aggregated_runtime[f] = max(existing, val)
+                elif isinstance(val, str) and val and not existing:
+                    aggregated_runtime[f] = val
 
     contexts = [rec.get("context", "") for rec in records if rec.get("context")]
     comments = [rec.get("comment", "") for rec in records if rec.get("comment")]
@@ -205,10 +305,15 @@ def merge_records(records: list[dict]) -> IocDossier:
         comment="\n".join(c for c in comments if c),
         certificates=latest_certificates,
         topdomain=latest_topdomain,
-        icp_website=next((r.get("icp_website", "") for r in records if r.get("icp_website")), ""),
-        official_website=next((r.get("official_website", "") for r in records if r.get("official_website")), ""),
-        page_title=next((r.get("page_title", "") for r in records if r.get("page_title")), ""),
-        resolv_ip=next((r.get("resolv_ip", "") for r in records if r.get("resolv_ip")), ""),
+        icp_website=icp_current,
+        official_website=official_website,
+        page_title=page_title,
+        resolv_ip=resolv_ip,
+        whois=latest_whois,
+        http=latest_http,
+        runtime_flags=aggregated_runtime,
+        record_snapshots=snapshots,
+        historical_icp_values=historical_icp,
     )
 
     activity_times = []
@@ -229,6 +334,10 @@ def merge_records(records: list[dict]) -> IocDossier:
 
     if activity_times:
         dossier.latest_material_activity_time = max(activity_times)
+
+    whois_updated = parse_time(latest_whois.get("updatedDate", ""))
+    if whois_updated:
+        dossier.latest_profile_update_time = whois_updated
 
     latest_intel = _pick_latest(records, "updatetime")
     if latest_intel:

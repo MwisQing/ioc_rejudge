@@ -1,9 +1,14 @@
 """A-F evidence extraction from merged IOC dossier."""
 import re
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
+
 from ioc_rejudge.config import Config
+from ioc_rejudge.inputs import is_valid_host, is_valid_port
 from ioc_rejudge.models import Evidence, EvidenceLevel, EvidenceStrength, IocDossier
+from ioc_rejudge.normalize import normalize_ioc
 from ioc_rejudge.parser import parse_time
+from ioc_rejudge.profile import extract_profile
 
 
 def _is_ip(value: str) -> bool:
@@ -70,25 +75,156 @@ def _parse_access_end(access: dict) -> datetime | None:
 
 def extract_evidence(dossier: IocDossier, config: Config) -> IocDossier:
     cutoff = datetime.now() - timedelta(days=config.activity_window_days)
+    dossier = extract_profile(dossier, config)
+    _extract_operator_evidence(dossier, config)
     _extract_a(dossier, config)
     _extract_b(dossier, config, cutoff)
     _extract_c(dossier, config)
+    _extract_structured_public_apt(dossier, config)
     _extract_d(dossier, config)
     _extract_e(dossier, config)
     _extract_f(dossier, config)
+    _extract_profile_evidence(dossier, config)
     return dossier
+
+
+def _indicator_match(indicator: str, text_lower: str) -> bool:
+    """Match *indicator* in *text_lower* using token boundaries for English,
+    contains-match for Chinese (where characters are self-delimiting).
+
+    Regex-special characters in the indicator are safely escaped.
+    Indicator is internally lowercased before matching.
+    An empty indicator never matches.
+    """
+    if not indicator:
+        return False
+    ind = indicator.lower()
+    if re.search(r'[一-鿿]', ind):
+        return ind in text_lower
+    escaped = re.escape(ind)
+    pattern = re.compile(r'(?<![a-z0-9])' + escaped + r'(?![a-z0-9])')
+    return bool(pattern.search(text_lower))
+
+
+def _record_sources(record: dict) -> set[str]:
+    raw = record.get("source", [])
+    values = raw if isinstance(raw, (list, tuple, set)) else [raw]
+    return {str(value).strip() for value in values if str(value).strip()}
+
+
+def _record_context(record: dict) -> str:
+    return "\n".join(
+        str(record.get(field, "") or "")
+        for field in ("context", "comment")
+    )
+
+
+def has_authoritative_clue(records: list[dict], config: Config) -> bool:
+    return any(
+        any(
+            _indicator_match(indicator, _record_context(record).lower())
+            for indicator in config.rules.authoritative_clue_indicators
+        )
+        for record in records
+        if isinstance(record, dict)
+    )
+
+
+def _extract_operator_evidence(dossier: IocDossier, config: Config) -> None:
+    records = [
+        snapshot.raw for snapshot in dossier.record_snapshots
+        if isinstance(snapshot.raw, dict)
+    ]
+    if has_authoritative_clue(records, config):
+        dossier.evidence_a.append(Evidence(
+            level=EvidenceLevel.A,
+            field="operator_clue_group",
+            detail="运营线索群明确确认恶意",
+            strength=EvidenceStrength.STRONG,
+            tags=["authoritative", "operator", "clue_group"],
+        ))
+        return
+
+    operator_sources = set(config.rules.operator_sources)
+    for record in records:
+        if not (_record_sources(record) & operator_sources):
+            continue
+        if not _has_strong_malicious_indicator(_record_context(record), config):
+            continue
+        dossier.evidence_a.append(Evidence(
+            level=EvidenceLevel.A,
+            field="operator_confirmed_malicious_context",
+            detail="运营人员来源包含明确恶意性质上下文",
+            strength=EvidenceStrength.STRONG,
+            tags=["authoritative", "operator", "malicious_context"],
+        ))
+        return
+
+
+def is_malicious_sample(entry: dict | None, config: Config) -> bool:
+    """Return True when a hash/dtree entry represents a genuine malicious sample.
+
+    Excludes not-a-virus families, entries below hash_malicious_level, and
+    entries with explicit confidence <= 0.  Missing confidence retains the
+    old level-only semantics.  Malformed numeric fields return False safely.
+    """
+    if not entry or not isinstance(entry, dict):
+        return False
+
+    family = str(entry.get("family", "") or "").lower()
+    entry_type = str(entry.get("type", "") or "").lower()
+    if "not-a-virus" in family or "not-a-virus" in entry_type:
+        return False
+
+    try:
+        level = float(entry.get("level", 0))
+    except (ValueError, TypeError):
+        return False
+    if level < config.hash_malicious_level:
+        return False
+
+    if "confidence" in entry:
+        try:
+            confidence = float(entry["confidence"])
+        except (ValueError, TypeError):
+            return False
+        if confidence <= 0:
+            return False
+
+    return True
 
 
 def _has_malicious_indicator(text: str, config: Config) -> bool:
     """Check if text contains any malicious indicator from rules."""
     text_lower = text.lower()
     indicators = config.rules.malicious_indicators + config.rules.context_comment_malicious_indicators
-    return any(ind in text_lower for ind in indicators)
+    return any(_indicator_match(ind, text_lower) for ind in indicators)
+
+
+def _has_strong_malicious_indicator(text: str, config: Config) -> bool:
+    """Check if text contains a malicious-nature word (trojan/backdoor/rat/...).
+
+    Strong words carry malicious nature, as opposed to neutral
+    communication/behavior words (dns/http/tcp/connect/download/sample/payload)
+    which only support indirect D-level evidence, never a strong-A direct hit.
+
+    A user-declared context_comment_malicious_indicators entry is treated as a
+    strong word too: by listing it there the operator explicitly asserts it is
+    a malicious-nature marker for this deployment.
+    """
+    text_lower = text.lower()
+    strong = (
+        config.rules.strong_malicious_indicators
+        + config.rules.context_comment_malicious_indicators
+    )
+    return any(_indicator_match(ind, text_lower) for ind in strong)
+
+
 
 
 def _has_historical_indicator(text: str, config: Config) -> bool:
     text_lower = text.lower()
-    return any(ind in text_lower for ind in config.rules.context_comment_historical_indicators)
+    return any(_indicator_match(ind, text_lower) for ind in config.rules.context_comment_historical_indicators)
 
 
 def _has_review_indicator(dossier: IocDossier, config: Config) -> bool:
@@ -99,7 +235,7 @@ def _has_review_indicator(dossier: IocDossier, config: Config) -> bool:
         " ".join(dossier.family),
         " ".join(dossier.tag),
     ]).lower()
-    return any(ind.lower() in text for ind in config.rules.review_indicators)
+    return any(_indicator_match(ind.lower(), text) for ind in config.rules.review_indicators)
 
 
 def _has_normalization_indicator(dossier: IocDossier, config: Config) -> bool:
@@ -113,7 +249,7 @@ def _has_normalization_indicator(dossier: IocDossier, config: Config) -> bool:
         dossier.icp_website,
         dossier.official_website,
     ]).lower()
-    return any(ind.lower() in text for ind in config.rules.normalization_indicators)
+    return any(_indicator_match(ind.lower(), text) for ind in config.rules.normalization_indicators)
 
 
 def _is_strong_source(source: str, config: Config) -> bool:
@@ -129,12 +265,37 @@ def _trusted_business_value(dossier: IocDossier, field_name: str) -> str:
     return str(value)
 
 
+def _is_valid_retained_url(url: str) -> bool:
+    """Return True when *url* is a well-formed http/https URL suitable for
+    retained_urls and URL IOC direct evidence.
+
+    Uses the shared host/port validators from inputs.py so the same DNS
+    label and IPv4 boundary rules apply everywhere.
+    """
+    if not url:
+        return False
+    try:
+        parsed = urlsplit(url)
+        scheme = parsed.scheme
+        hostname = parsed.hostname
+        url_port = parsed.port  # may raise ValueError for out-of-range port
+    except ValueError:
+        return False
+    if scheme not in ("http", "https"):
+        return False
+    if not hostname or not is_valid_host(hostname):
+        return False
+    if url_port is not None and not is_valid_port(str(url_port)):
+        return False
+    return True
+
+
 def _extract_a(dossier: IocDossier, config: Config):
     ioc = dossier.ioc
     combined_text = f"{dossier.context}\n{dossier.comment}"
     ioc_matched = _ioc_aware_match(ioc, combined_text)
 
-    if ioc_matched and _has_malicious_indicator(combined_text, config):
+    if ioc_matched and _has_strong_malicious_indicator(combined_text, config):
         dossier.evidence_a.append(Evidence(
             level=EvidenceLevel.A,
             field="context/comment",
@@ -142,15 +303,26 @@ def _extract_a(dossier: IocDossier, config: Config):
             strength=EvidenceStrength.STRONG,
             tags=["direct", "context"],
         ))
+    elif ioc_matched and _has_malicious_indicator(combined_text, config):
+        # Neutral communication/behavior words (dns/http/tcp/connect/sample/...)
+        # do not justify a strong-A direct-malicious hit. Demote to D-level
+        # indirect evidence so context is not lost but cannot overturn threat
+        # residue or auto-conclude a verdict on its own.
+        dossier.evidence_d.append(Evidence(
+            level=EvidenceLevel.D,
+            field="context/comment",
+            detail=f"上下文提及 IOC ({ioc}) 与通信/行为词关联，但无恶意性质词",
+            strength=EvidenceStrength.WEAK,
+            tags=["indirect", "context", "neutral_indicator"],
+        ))
 
     if ioc_matched:
         for h in dossier.hash_entries:
-            h_level = h.get("level", 0)
-            if h_level >= config.hash_malicious_level:
+            if is_malicious_sample(h, config):
                 dossier.evidence_a.append(Evidence(
                     level=EvidenceLevel.A,
                     field=f"hash[{h.get('md5', '')}]",
-                    detail=f"样本 {h.get('md5', '')} level={h_level} >= {config.hash_malicious_level}，上下文证明通信当前IOC",
+                    detail=f"样本 {h.get('md5', '')} 上下文证明通信当前IOC",
                     strength=EvidenceStrength.STRONG,
                     tags=["direct", "hash"],
                 ))
@@ -165,21 +337,48 @@ def _extract_a(dossier: IocDossier, config: Config):
                 tags=["direct", "source"],
             ))
 
+    # Collect qualifying relate_url entries into retained_urls.
     for url_entry in dossier.relate_url_entries:
-        url = url_entry.get("url", "")
-        url_level = url_entry.get("level", 0)
-        if url_level >= config.relate_url_malicious_level and _ioc_aware_match(ioc, url):
-            dossier.evidence_a.append(Evidence(
-                level=EvidenceLevel.A,
-                field=f"relate_url[{url}]",
-                detail=f"relate_url直接包含IOC，level={url_level} >= {config.relate_url_malicious_level}",
-                strength=EvidenceStrength.NORMAL,
-                tags=["direct", "relate_url"],
-            ))
+        url = str(url_entry.get("url", ""))
+        if not _is_valid_retained_url(url):
+            continue
+        try:
+            url_level = float(url_entry.get("level", 0))
+        except (ValueError, TypeError):
+            continue
+        if url_level >= config.relate_url_malicious_level:
+            if url not in dossier.retained_urls:
+                dossier.retained_urls.append(url)
+
+    # For URL IOC targets: exact normalized match with a relate_url entry
+    # produces direct evidence.  Domain targets never get A from relate_url.
+    if dossier.ioc_type == "url":
+        ioc_normalized = normalize_ioc(dossier.ioc)[0]
+        for url_entry in dossier.relate_url_entries:
+            url = str(url_entry.get("url", ""))
+            if not _is_valid_retained_url(url):
+                continue
+            try:
+                url_level = float(url_entry.get("level", 0))
+            except (ValueError, TypeError):
+                continue
+            if url_level < config.relate_url_malicious_level:
+                continue
+            url_normalized = normalize_ioc(url)[0]
+            if url_normalized == ioc_normalized:
+                dossier.evidence_a.append(Evidence(
+                    level=EvidenceLevel.A,
+                    field=f"relate_url[{url}]",
+                    detail=f"relate_url matches URL IOC, level={url_level}",
+                    strength=EvidenceStrength.NORMAL,
+                    tags=["direct", "relate_url"],
+                ))
 
 
 def _extract_b(dossier: IocDossier, config: Config, cutoff: datetime):
     for h in dossier.hash_entries:
+        if not is_malicious_sample(h, config):
+            continue
         t = parse_time(h.get("time", ""))
         if t and t >= cutoff:
             dossier.evidence_b.append(Evidence(
@@ -247,7 +446,7 @@ def _extract_c(dossier: IocDossier, config: Config):
     dossier.evidence_c.append(Evidence(
         level=EvidenceLevel.C,
         field="historical_malicious",
-        detail=f"历史恶意闭环成立，level={dossier.level} >= {config.historical_malicious_level}，近{config.activity_window_days}天无实质活动",
+        detail=f"历史恶意闭环成立，level={dossier.level} >= {config.historical_malicious_level}，情报曾经有效",
         strength=EvidenceStrength.NORMAL,
         tags=tags,
     ))
@@ -337,7 +536,9 @@ def _extract_e(dossier: IocDossier, config: Config):
             tags=list(normalization_tags),
         ))
 
-    if dossier.page_title and "page_title" not in trusted_values:
+    # page_title as standalone weak E (profile maps it to F, but it still
+    # carries weak normalization weight when not already a trusted field)
+    if dossier.page_title and "page_title" not in config.rules.trusted_business_fields:
         dossier.evidence_e.append(Evidence(
             level=EvidenceLevel.E,
             field="page_title",
@@ -345,67 +546,132 @@ def _extract_e(dossier: IocDossier, config: Config):
             strength=EvidenceStrength.WEAK,
             tags=list(normalization_tags),
         ))
-    return
 
-    """E-level: false positive / contamination evidence.
 
-    Strong E = ICP备案 + official_website both present.
-    Weak E = single field (certificates, page_title, single website/icp).
-    Only strong E can conflict with strong A.
-    """
-    has_icp = bool(dossier.icp_website)
-    has_official = bool(dossier.official_website)
+def _extract_profile_evidence(dossier: IocDossier, config: Config):
+    """Map profile observations into D/E/F evidence."""
+    if not dossier.profile:
+        return
 
-    if has_icp and has_official:
-        # Strong E: both ICP + official website
-        dossier.evidence_e.append(Evidence(
-            level=EvidenceLevel.E,
-            field="icp_website",
-            detail=f"存在ICP备案网站: {dossier.icp_website}",
-            strength=EvidenceStrength.STRONG,
-            tags=["trusted_business"],
+    for obs in dossier.profile.observations:
+        if obs.severity == "suspicious":
+            _map_suspicious_to_d(dossier, obs, config)
+        elif obs.severity == "normal":
+            _map_normal_to_e(dossier, obs)
+        elif obs.severity == "conflict":
+            _map_conflict_to_e(dossier, obs)
+        elif obs.severity == "neutral":
+            _map_neutral_to_f(dossier, obs)
+
+    # Additional D evidence: high-level hash without direct IOC match
+    _add_hash_without_ioc_d(dossier, config)
+
+    # Additional D evidence: strong source without direct A
+    _add_source_without_a_d(dossier, config)
+
+
+def _map_suspicious_to_d(dossier: IocDossier, obs, config: Config):
+    kind_map = {
+        "domain_age": "suspicious_domain_age",
+        "domain_lifespan": "suspicious_domain_age",
+        "ip_reverse_domain_risk": "ip_pdns_related_domains",
+        "threat_runtime": "threat_runtime_flags",
+        "random_domain": "random_related_domain_shape",
+        "random_related_domains": "random_related_domain_shape",
+        "recent_pdns_activity": "suspicious_reverse_domains",
+        "recent_infrastructure": "suspicious_reverse_domains",
+    }
+    evidence_field = kind_map.get(obs.kind, obs.kind)
+    dossier.evidence_d.append(Evidence(
+        level=EvidenceLevel.D,
+        field=evidence_field,
+        detail=f"{obs.field} [{','.join(obs.tags)}]: {obs.detail}",
+        strength=EvidenceStrength.NORMAL,
+        tags=list(obs.tags),
+    ))
+
+
+def _map_normal_to_e(dossier: IocDossier, obs):
+    kind_map = {
+        "business_identity": "trusted_business_identity",
+        "popular_domain": "popular_normal_domain",
+        "shared_infrastructure": "shared_infrastructure",
+        "benign_runtime": "normal_runtime_signals",
+        "domain_age": "stable_business_domain",
+    }
+    evidence_field = kind_map.get(obs.kind, obs.kind)
+    dossier.evidence_e.append(Evidence(
+        level=EvidenceLevel.E,
+        field=evidence_field,
+        detail=f"{obs.field} [{','.join(obs.tags)}]: {obs.detail}",
+        strength=EvidenceStrength.WEAK,
+        tags=list(obs.tags),
+    ))
+
+
+def _map_conflict_to_e(dossier: IocDossier, obs):
+    dossier.evidence_e.append(Evidence(
+        level=EvidenceLevel.E,
+        field="benign_family_or_risk_conflict",
+        detail=f"{obs.field} [{','.join(obs.tags)}]: {obs.detail}",
+        strength=EvidenceStrength.NORMAL,
+        tags=["conflict"] + obs.tags,
+    ))
+
+
+def _map_neutral_to_f(dossier: IocDossier, obs):
+    kind_map = {
+        "whois_update": "profile_update_only",
+        "domain_expiry": "whois_expiry_without_threat_context",
+        "http_state": "http.status",
+        "reachable": "reachable",
+        "current_status": "current_status",
+        "near_expiry": "whois_expiry_without_threat_context",
+        "parking": "parking_state",
+    }
+    evidence_field = kind_map.get(obs.kind, obs.kind)
+    dossier.evidence_f.append(Evidence(
+        level=EvidenceLevel.F,
+        field=evidence_field,
+        detail=f"{obs.field} [{','.join(obs.tags)}]: {obs.detail}",
+        strength=EvidenceStrength.WEAK,
+        tags=list(obs.tags),
+    ))
+
+
+def _add_hash_without_ioc_d(dossier: IocDossier, config: Config):
+    """High-level hash entries without direct IOC evidence → D."""
+    if dossier.evidence_a:
+        return
+    high_hashes = [
+        h for h in dossier.hash_entries
+        if is_malicious_sample(h, config)
+    ]
+    if high_hashes:
+        dossier.evidence_d.append(Evidence(
+            level=EvidenceLevel.D,
+            field="high_level_hash_without_direct_ioc",
+            detail=f"{len(high_hashes)} hash entries level >= {config.hash_malicious_level} without IOC closure",
+            strength=EvidenceStrength.NORMAL,
+            tags=["hash", "no_ioc_closure"],
         ))
-        dossier.evidence_e.append(Evidence(
-            level=EvidenceLevel.E,
-            field="official_website",
-            detail=f"存在官方网站: {dossier.official_website}",
-            strength=EvidenceStrength.STRONG,
-            tags=["trusted_business"],
-        ))
-    else:
-        if has_icp:
-            dossier.evidence_e.append(Evidence(
-                level=EvidenceLevel.E,
-                field="icp_website",
-                detail=f"存在ICP备案网站: {dossier.icp_website}",
-                strength=EvidenceStrength.WEAK,
-                tags=["normalization"],
-            ))
-        if has_official:
-            dossier.evidence_e.append(Evidence(
-                level=EvidenceLevel.E,
-                field="official_website",
-                detail=f"存在官方网站: {dossier.official_website}",
-                strength=EvidenceStrength.WEAK,
-                tags=["normalization"],
-            ))
 
-    if dossier.certificates.get("credible", False):
-        dossier.evidence_e.append(Evidence(
-            level=EvidenceLevel.E,
-            field="certificates",
-            detail="证书可信",
+
+def _add_source_without_a_d(dossier: IocDossier, config: Config):
+    """Strong sources without direct A evidence → D."""
+    if dossier.evidence_a:
+        return
+    strong_sources = [
+        s for s in dossier.source_set
+        if s in config.rules.strong_sources and s not in config.rules.weak_sources
+    ]
+    if strong_sources:
+        dossier.evidence_d.append(Evidence(
+            level=EvidenceLevel.D,
+            field="strong_source_without_direct_a",
+            detail=f"strong sources {', '.join(strong_sources)} without direct IOC closure",
             strength=EvidenceStrength.WEAK,
-            tags=["normalization"],
-        ))
-
-    if dossier.page_title:
-        dossier.evidence_e.append(Evidence(
-            level=EvidenceLevel.E,
-            field="page_title",
-            detail=f"页面标题: {dossier.page_title}",
-            strength=EvidenceStrength.WEAK,
-            tags=["normalization"],
+            tags=["source", "no_ioc_closure"],
         ))
 
 
@@ -417,6 +683,70 @@ def _is_strong_a(dossier: IocDossier) -> bool:
 def _is_strong_e(dossier: IocDossier) -> bool:
     """Strong E = any E evidence with strength=strong."""
     return any(e.strength == EvidenceStrength.STRONG for e in dossier.evidence_e)
+
+
+def _extract_structured_public_apt(dossier: IocDossier, config: Config):
+    """Create a single normal-strength C evidence entry when every public-APT
+    criterion is met by at least one record snapshot.
+
+    Required: malicious_type contains case-insensitive exact ``"APT"`` (scalar
+    or list); private is boolean False; confidence >= 4; info_level >= 2;
+    level >= 70; a URL extracted from context, comment, or a ``reference``
+    field.  A bare top-level ``url`` field is not sufficient.
+    Malformed numeric fields do not crash — they exclude the record instead.
+    """
+    for snap in dossier.record_snapshots:
+        raw = snap.raw
+        mt = raw.get("malicious_type")
+        if isinstance(mt, str):
+            mt = [mt]
+        if not isinstance(mt, list):
+            continue
+        if not any(str(x).strip().upper() == "APT" for x in mt):
+            continue
+
+        if raw.get("private") is not False:
+            continue
+
+        try:
+            confidence = float(raw.get("confidence", 0))
+        except (ValueError, TypeError):
+            continue
+        if confidence < 4:
+            continue
+
+        try:
+            info_level = float(raw.get("info_level", 0))
+        except (ValueError, TypeError):
+            continue
+        if info_level < 2:
+            continue
+
+        try:
+            level = float(raw.get("level", 0))
+        except (ValueError, TypeError):
+            continue
+        if level < 70:
+            continue
+
+        reference_text = "\n".join(
+            str(raw.get(f, ""))
+            for f in ("context", "comment", "reference")
+            if raw.get(f)
+        )
+        urls = re.findall(r'https?://[^\s"\'<>]+', reference_text)
+        if not urls:
+            continue
+        ref_url = urls[0]
+
+        dossier.evidence_c.append(Evidence(
+            level=EvidenceLevel.C,
+            field="structured_public_apt",
+            detail=f"公开APT报告: {ref_url}",
+            strength=EvidenceStrength.NORMAL,
+            tags=["historical", "structured_public_apt"],
+        ))
+        return  # At most one entry
 
 
 def _extract_f(dossier: IocDossier, config: Config):

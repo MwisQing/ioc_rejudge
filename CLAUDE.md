@@ -1,198 +1,350 @@
-# APT IOC 快照重判工具
+# IOC Rejudge CLI - 协作上下文
 
-## 项目背景
+> 操作本项目前先读本文件。完成有意义的变更后，更新底部进度记录。
+>
+> 当前版本为 `2.1.0`。它保留 v1.4.1 离线快照兼容入口，并已完成多源聚合、五个默认在线 provider、显式 opt-in ICP、分路裁判、离线回放和 mock 端到端验收。
 
-对客户 APT 告警 IOC 做批量重判。输入 JSON 快照，不依赖外部查询。输出四类结论：存活有效、失活有效、误报、待复核。
+## 1. 阅读顺序
 
-## 使用方式
+1. `CLAUDE.md`
+2. `README.md`
+3. `docs/ARCHITECTURE.md`
+4. 与任务相关的 spec 和 plan
+5. 相关源码和测试
 
-```bash
-python -m ioc_rejudge -i <快照.jsonl> [-j result.jsonl] [-c result.csv] [--rules rules.json] [--diagnostics diag.json]
-# 不指定 -c/-j 时默认生成 Excel（summary + results 双 sheet、自动列宽、表头筛选、固定表头、审阅排序）
-# --rules: 可选 JSON 规则配置文件，不指定时使用内置默认值
-# --diagnostics: 可选诊断 JSON 输出路径，Excel 模式下自动生成
-# 输入格式：逐行 JSONL，每行 {"ioc": "...", "data": [...]}
+当前权威文档：
+
+- 产品说明：`README.md`
+- 架构：`docs/ARCHITECTURE.md`
+- 开发与验证：`docs/DEVELOPMENT.md`
+- 历史：`docs/HISTORY.md`
+- 更新日志：`CHANGELOG.md`
+- 历史设计规格：`docs/superpowers/specs/2026-07-23-multi-source-ioc-adjudication-design.md`
+- 核心计划：`docs/superpowers/plans/2026-07-23-multi-source-core.md`
+- 在线计划：`docs/superpowers/plans/2026-07-23-live-providers.md`
+
+## 2. 当前事实
+
+| 项目 | 当前值 |
+|---|---|
+| 版本 | `2.1.0` |
+| 项目类型 | Python CLI |
+| 当前输入 | iocProducer 风格 JSONL 快照、裸 IOC 文件或重复 `--ioc` |
+| 当前联网 | 裸 IOC 统一模式可按所选 provider 联网；`--offline` 与旧快照兼容模式不联网 |
+| 当前结论 | 统一 pipeline 可按可靠 DGA-only 分类分路，并输出存活有效、失活有效、灰、误报、待复核 |
+| 当前输出 | 带 route/disposition/scope/provider 契约的 JSONL、CSV、六表 Excel 和 diagnostics |
+| Git | `push.py` 可在用户明确授权发布时按 allow-list 初始化并推送；禁止整目录暂存或 force push |
+| 2.1.0 | 任务 1-22 与 H1-H3 高危修复全部完成；九场景 online mock、offline replay 和凭据安全已验收 |
+
+ICP provider 已有固定响应契约并仅显式 opt-in；真实 endpoint、认证和生产响应仍需授权环境验收，不读取 `token_icp.txt`。
+
+## 3. 产品目标
+
+### 当前实现
+
+同一 CLI 接受裸 IOC、IOC 文件或已有 IOC Info 快照，聚合所选 provider 后统一研判：
+
+```text
+bare IOC / JSONL snapshot
+  -> parse and normalize
+  -> provider factory / local sidecar
+  -> bounded concurrent collection and Observation merge
+  -> DGA-only or standard route
+  -> adjudicate and export
 ```
 
-## 协作规则
+当前 live provider：
 
-- 本文件分为默认规则与按需模式两层。
-- 默认规则始终生效。
-- 按需模式仅在用户明确要求，或任务明显需要且已获用户确认时启用；未启用前，不默认进入重流程。
-- 涉及项目/系统设计、文档体系设计或高风险改动时，应在开始时让用户选择是否启用相关按需模式。
+- K01 compromises / DGA 分类
+- IOC Info
+- F-Dark
+- WHOIS
+- pDNS
+- ICP（仅显式选择；支持 live cache/replay 和本地 sidecar）
 
-## 默认规则
+HTTP 状态仍未提供；ICP 使用 typed `icp_registration` positive/negative Observation，自动验收只使用 mock/cache。
 
-### 工作原则
+## 4. 用户工作流
 
-- 非微小改动先说明方法。
-- 需求有歧义、风险高或影响大时，先澄清并获批，再开始写代码。
-- 坚持 Spec Coding，避免 Vibe Coding；Plan 只写方案、范围、风险和验收标准，不写实现代码。
-- 优先小步迭代；实现与审查分离。
-- 完成后可执行 /simplify；必要时使用 /loop。
+- 旧兼容模式：准备 JSONL 快照 -> 运行 CLI -> 合并和裁判 -> 导出 -> 人工审阅。
+- 统一模式：输入裸 IOC/旧快照 -> provider 聚合 -> Observation -> DGA/普通分路 -> 统一输出 -> 离线回放。
+- 当前命令接受旧快照、裸 IOC、重复 `--ioc` 和本地 `--provider-data`；统一模式支持 `--providers`、本地非密钥配置、独立 cache/run 目录及 offline replay。
 
-### 编码约束
+## 5. 已确认业务语义
 
-- 代码中只使用英文。
-- 注释说明意图、约束和边界，不记录开发过程式说明。
-- 优先用概念、模块、职责和符号名定位代码；不要只依赖易漂移的行号，必要时可补充文件路径。
-- Spec 不依赖行号定位代码。
-- 不为未被请求的未来需求提前抽象、泛化或暴露配置。
+### 5.1 通用铁律
 
-### 质量与验证
+- 不打分、不平均、不让弱证据推翻强证据。
+- `updatetime` 是情报记录时间，不是存活证据。
+- `level` 是威胁等级，不是活跃状态。
+- 误报表示恶意关联不成立，不是“现在不活了”。
+- 失活有效仍是黑情报，仍可用于拦截。
+- 同一 IOC 必须先聚合证据再裁判。
+- provider `error/disabled` 不等于 `no_data`。
+- 人工原因用于改写通用规则和回归测试，不是生产环境高优先级人工规则。
 
-- 项目早期只保留最小必要质量标准：可运行、可验证、可回滚。
-- 关键路径、高风险改动和外部接口必须可验证。
-- 修复 bug 时，先复现，再修复，再验证。
-- 任何"已完成""已修复""已通过"的结论，都必须附验证方式、命令或结果摘要。
-- 若当前无法验证，必须明确说明原因、风险和未覆盖范围。
-- 修复 bug 或完成功能后，必须运行全量回归测试，所有用例通过才算完成。
+### 5.2 DGA
 
-### 拆分与沉淀
+只有可靠 DGA-only 分类进入 DGA 专用裁判。
 
-- 将任务拆成低耦合、可独立验证的子任务；必要时使用 /batch。
-- 重复出现且边界稳定的流程，应沉淀为 Skill、脚本或检查清单。
-- 公共规则优先沉淀为文档、测试或自动化，而不是只停留在对话里。
+在确认没有关联恶意样本后，以下任一新鲜证据足以判白：
 
-### 协作与纠错
+- WHOIS 未过期。
+- 近 30 天存在 pDNS。
+- 当前存在 ICP。
 
-- 被纠正时，先验证问题是否适用于当前代码库，再调整做法。
-- 外部建议先核对是否适用，再决定是否采纳。
-- 对重复性问题，沉淀为明确规则、测试或自动检查。
+补充规则：
 
-### 禁止事项
+- `not-a-virus`、低 level、零 confidence 的关联项不算关联恶意样本。
+- 样本 provider 未成功完成时不能自动判白。
+- DGA 判白输出 `误报`，不输出 `灰`。
+- 白证据均不成立、分类可靠、必要查询完整时，保留为失活有效。
 
-- 永远不要使用 /init，除非项目明确要求。
-- CLAUDE.md 必须按项目实际需求编写，不套用空泛模板。
-- 不要在代码注释、commit message 或 PR body 中使用描述开发进度的词，如 FIXED、Step、Week、Section、Phase、AC-x。
-- 不要在代码注释、commit message 或 PR body 中出现 AI 工具名称，如 Codex、Claude、Grok、Gemini 等。
-- 不要把外部实现细节、外部文档或外部技能树直接提升为当前项目的硬约束。
+### 5.3 非 DGA
 
-## 按需模式
+- 非 DGA domain 未解决 ICP 时进入人工研判；clue-group evidence 无条件 standard block。
+- 非 DGA 的 WHOIS 未过期和近期 pDNS 不独立判白。
+- 公开 APT 通过结构化字段组合建立历史恶意闭环，不通过“人工来源优先”例外。
+- 英文恶意词使用词法边界，`rat` 不命中 `rate1/rate2`，`c2` 不命中更长字母数字串。
+- `relate_url` 直接证明 URL，不自动扩大成当前 domain 强 A。
 
-### 架构与演进模式
+### 5.4 灰与作用范围
 
-- 适用：用户要求项目或系统设计满足分层、稳定接口、可演进，或明确要求按架构流程推进。
-- 优先做分层设计；不同层次保持职责分离，只通过明确、稳定的接口交互。
-- 不要让上层依赖下层实现细节，也不要建立非必要的跨层耦合；若必须依赖，应收敛为单向、最小依赖。
-- 每个层次内优先做 primitive 设计；primitive 应是独立、可替换、可组合、可验证的最小功能单元。
-- 若项目采用多 Agent 协作，应按层次设计专用 agent 与 skill，使其职责、输入、输出和边界清晰。
-- 架构演进必须逐步验证；每一步新增特性或重构，都要确认不破坏已有接口、行为和关键路径。
+当前 `灰` 结论表示：当前作用范围不继续拦截，但也不能加入白名单。
 
-### 严格验证模式
+典型场景：历史钓鱼情报可信，domain 已失活或过期，具体 URL 仍需保留。
 
-- 适用：改动高风险、回归代价高，或用户要求每一步都经过验证。
-- 将工作拆成可独立验证的小步；每一步完成后先验证，再继续下一步。
-- 新增特性、重构或修复都要确认不破坏已有功能、接口和关键路径。
-- 若当前无法完成必要验证，应暂停继续扩展，并明确说明阻塞、风险和未覆盖范围。
+目标输出字段：
 
-## 调用链
+- `route`
+- `disposition`
+- `scope_actions`
+- `retained_urls`
+- `provider_statuses`
+- `evidence_origins`
+- `missing_required_providers`
 
-```
-cli.py
-  → parser.read_jsonl_snapshot()    # 逐行读 JSONL，返回 [{"ioc": ..., "data": [...]}]
-  → normalize.merge_records()       # 同 IOC 多记录合并（支持 url/ip_port/domain_port）
-  → evidence.extract_evidence()     # 提取 A-F 级证据（附加 strength/tags，使用规则配置）
-  → adjudicator.adjudicate()        # 判定结论（基于 evidence metadata 判定强 A/强 E）
-  → export.export_jsonl/csv/excel()  # 导出（Excel: summary + results 双 sheet）
-  → export_diagnostics()            # 诊断 JSON 导出
-```
+## 6. 当前代码调用链
 
-## API 清单
-
-### rules.py — 规则配置
-- `RuleConfig` — dataclass，字段：`strong_sources`, `weak_sources`, `malicious_indicators`, `context_comment_malicious_indicators`, `context_comment_historical_indicators`, `normalization_indicators`, `review_indicators`, `trusted_business_fields`
-- `load_rules(filepath: str | None = None) -> RuleConfig` — 加载 JSON 规则文件，None 时返回内置默认值；缺失键自动补全；校验类型和字段名
-
-### parser.py — 快照解析
-- `parse_time(value: str | None) -> datetime | None` — 多格式时间解析
-- `read_jsonl_snapshot(filepath: str) -> list[dict]` — 逐行读 JSONL，返回 [{"ioc": ..., "data": [...]}]，支持 UTF-8/GBK，容错前缀文本
-- `safe_get(record: dict, *keys: str, default=None)` — 嵌套字典安全取值
-
-### normalize.py — IOC 归一化与合并
-- `normalize_ioc(value: str, port: str = "0") -> tuple[str, str, list[str]]` — 归一化 IOC（ip/ip_port/domain/domain_port/url）
-- `group_by_ioc(records: list[dict]) -> dict[str, list[dict]]` — 按 IOC 分组
-- `merge_records(records: list[dict]) -> IocDossier` — 合并同 IOC 全部记录为 Dossier
-
-### evidence.py — 证据提取（A-F 级）
-- `extract_evidence(dossier: IocDossier, config: Config) -> IocDossier` — 主入口，调用 _extract_a 到 _extract_f
-- `_ioc_aware_match(ioc: str, text: str) -> bool` — IOC 感知文本匹配（域名边界、IP 数字边界、URL 解析、子域名支持）
-- `_is_strong_a(dossier: IocDossier) -> bool` — 强 A 判定（基于 evidence metadata: strength=strong）
-- `_is_strong_e(dossier: IocDossier) -> bool` — 强 E 判定（基于 evidence metadata: strength=strong）
-- 内部函数：`_extract_a/b/c/d/e/f(dossier, config)` — 各级证据提取，附加 strength/tags
-
-### adjudicator.py — 裁判树
-- `adjudicate(dossier: IocDossier) -> Verdict` — 主入口，A-F 证据 → 结论
-- `_build_hit_evidence(dossier: IocDossier) -> str` — 拼接命中证据摘要
-- 内部函数：`_make_verdict()`, `_make_conflict_verdict()`, `_build_forbidden()`, `_build_reason()`
-
-### models.py — 数据结构
-- `Conclusion(str, Enum)` — 存活有效/失活有效/误报/待复核
-- `EvidenceLevel(str, Enum)` — A/B/C/D/E/F
-- `EvidenceStrength(str, Enum)` — strong/normal/weak
-- `Evidence` — level + field + detail + strength + tags
-- `IocDossier` — IOC 全量信息（证据、时间、来源、hash 等）
-- `Verdict` — 裁判输出（结论、恶意性质、活跃状态、置信度等）
-
-### config.py — 配置
-- `Config` — dataclass，字段：`activity_window_days(365)`, `hash_malicious_level(40)`, `relate_url_malicious_level(40)`, `historical_malicious_level(40)`, `high_level_no_a_threshold(70)`, `rules(RuleConfig)`
-- `load_config(...) -> Config` — CLI 参数覆盖默认值，支持 `rules_path` 参数加载 JSON 规则
-
-### export.py — 导出
-- `export_jsonl(verdicts: list[dict], filepath: str)` — 导出 JSONL
-- `export_csv(verdicts: list[dict], filepath: str)` — 导出 CSV
-- `export_excel(verdicts: list[dict], filepath: str, diagnostics: dict | None = None)` — 导出 Excel（summary + results 双 sheet、审阅排序、结论着色、自动列宽、表头筛选、冻结首行）
-- `_display_width(text: str) -> int` — 估算显示宽度（CJK 字符算 2 列宽）
-- `_sort_key(v: dict) -> tuple` — 审阅排序键（必看→抽检→不看，待复核→存活有效→失活有效→误报）
-
-### cli.py — 入口
-- `run_pipeline(input_path: str, config: Config) -> list[dict]` — 完整流水线（兼容包装）
-- `run_pipeline_with_diagnostics(input_path: str, config: Config) -> PipelineResult` — 带诊断的完整流水线
-- `Diagnostics` — dataclass，诊断数据（parse_error_count, missing_data_count, empty_data_count, skipped_total 等）
-- `PipelineResult` — dataclass，verdicts + diagnostics
-- `export_diagnostics(diag: Diagnostics, filepath: str)` — 导出诊断 JSON
-- `main()` — argparse CLI（支持 -i/-j/-c/--rules/--diagnostics + 阈值参数）
-
-## 当前进度
-
-| 功能 | 状态 | 说明 |
-|------|------|------|
-| 核心流水线 | ✅ 完成 | parser→normalize→evidence→adjudicator→export 全通 |
-| A-F 证据提取 | ✅ 完成 | 6 级证据全部实现，附加 strength/tags 元数据 |
-| 裁判树 | ✅ 完成 | A+E 冲突检测、强弱区分，基于 evidence metadata 判定 |
-| CLI 入口 | ✅ 完成 | 支持 -i/-j/-c/--rules/--diagnostics + 阈值参数；不指定输出时默认 Excel |
-| `__main__.py` | ✅ 完成 | `python -m ioc_rejudge` 可用 |
-| Excel 导出 | ✅ 完成 | summary + results 双 sheet、审阅排序（必看→抽检→不看）、结论着色、自动列宽（CJK 感知）、表头筛选、冻结首行 |
-| 规则配置 | ✅ 完成 | `rules.py` + `rules/default_rules.json`；`--rules` 加载 JSON 配置；缺失键自动补全；类型校验 |
-| 证据强度模型 | ✅ 完成 | `EvidenceStrength(str, Enum)` strong/normal/weak；附加到 Evidence 对象 |
-| IOC 感知匹配 | ✅ 完成 | 域名边界匹配（evil.com ≠ not-evil.com、evil.com.cn）、IP 数字边界、URL 解析、子域名支持 |
-| URL/端口归一化 | ✅ 完成 | `normalize_ioc` 支持 url/ip_port/domain_port 类型；URL 和 domain 分开裁判 |
-| 证据详情字段 | ✅ 完成 | 输出包含 evidence_a~f_detail（格式：`field [strength,tags]: detail`） |
-| 诊断导出 | ✅ 完成 | `Diagnostics` dataclass + `export_diagnostics` JSON 导出；Excel 模式自动生成诊断文件 |
-| 测试 | ✅ 96/96 通过 | pytest 全量通过（含 29 条边界测试） |
-| 证据修复 | ✅ 完成 | _extract_a 删除 cutoff 死参数 |
-| 裁判修复 | ✅ 完成 | _make_conflict_verdict 统一调用 _build_forbidden |
-| 测试修复 | ✅ 完成 | test_5 断言精确匹配 |
-| CLI 修复 | ✅ 完成 | 直接 .value 替代 hasattr 检查 |
-| iocProducer_api_ioc_info.py | ✅ 完成 | API `data` 字典解出、逐行写缓存和结果 JSONL、请求成功/失败状态展示 |
-| JSONL 输入支持 | ✅ 完成 | `read_jsonl_snapshot` 逐行读 JSONL，替换旧 `read_json_snapshot`；58/58 测试通过 |
-| 静默失败修复 | ✅ 完成 | 正则回退 crash 修复、解析失败计数、空 data 行警告、GBK 编码测试、空 IOC 检测 |
-| 验收测试 | ✅ 通过 | 17/17 场景通过，96/96 单元测试通过 |
-| pack/push/upgrade VERSION 联动 | ✅ 完成 | pack: VERSION 加入 _INCLUDE_PATHS，zip 名含版本号，支持 bump；push: 自动 git init + 初始提交（解压场景），自动推送 tags；upgrade: 更新前比较版本，降级/同版本需确认 |
-
-## 铁律（不可违反）
-
-- 不打分、不平均、不让弱证据推翻强证据
-- `updatetime` 不是存活证据
-- `level` 是威胁等级，不是存活状态
-- 误报 = 恶意关联不成立，不是"现在不活了"
-- 失活 = 历史恶意已老化，不是"原情报错误"
-- 同 IOC 必须先合并再裁判
-
-## 测试
-
-```bash
-python -m pytest tests/ -v
+```text
+ioc_rejudge/cli.py
+  -> legacy snapshot wrapper, or inputs.read_input_bundle
+  -> providers.factory / providers.sidecar
+  -> pipeline bounded ThreadPoolExecutor -> deterministic Observation merge
+  -> routing
+  -> dga.adjudicate_dga / adjudicator.adjudicate
+  -> export.export_jsonl / export_csv / export_excel
 ```
 
-96 个测试全通过是准入门槛。修改 adjudicator 或 evidence 后必须跑测试。
+当前模块：
+
+| 文件 | 责任 |
+|---|---|
+| `parser.py` | JSONL 与时间解析 |
+| `normalize.py` | IOC 归一化和记录合并 |
+| `models.py` | Evidence、Dossier、Verdict |
+| `observations.py` | IocTarget、Observation、route/status/disposition 类型 |
+| `inputs.py` | 裸 IOC/快照输入识别、校验、去重与错误可见性 |
+| `providers/base.py` | provider 协议、执行上下文和结果状态 |
+| `providers/sidecar.py` | 确定性本地 JSONL sidecar provider |
+| `providers/settings.py` | 不泄漏 secrets 的在线 provider 运行配置 |
+| `providers/cache.py` | provider 级 append-only JSONL 原始响应缓存和 TTL 状态 |
+| `providers/transport.py` | 可注入 HTTP JSON 传输和 secret-safe 错误分类 |
+| `providers/ioc_info.py` | IOC Info 批量查询、空结果定向重试、缓存适配与历史 CLI 实现 |
+| `providers/k01_compromise.py` | K01 批量分类、请求 profile 缓存隔离和严格 tags 规范化 |
+| `providers/fdark.py` | F-Dark 五类 IOC 查询变体、原始响应缓存和统一样本语义 |
+| `providers/whois.py` | 当前 WHOIS 查询、日期事实规范化及 stale 审计回退 |
+| `providers/pdns.py` | 完整 pDNS 活动记录、Unix 时间规范化及 freshness 降级 |
+| `providers/icp.py` | 显式 opt-in ICP 查询、host 去重、typed 当前状态、cache-first 和限速并发 |
+| `providers/factory.py` | 环境变量凭据、本地非密钥配置、Provider 选择及 cache/run 审计组装 |
+| `profile.py` | domain/IP/runtime 画像 |
+| `evidence.py` | A-F 证据提取 |
+| `dga.py` | DGA facts 与专用有序裁判 |
+| `adjudicator.py` | 五类普通路由裁判、ICP 人工门和灰作用范围 |
+| `routing.py` | 可靠 DGA-only 分类和分类失败降级 |
+| `pipeline.py` | provider 聚合、分路、facts/dossier 构建和结构化诊断 |
+| `diff.py` | 确定性 verdict 迁移、成员变化和重点变化组报告 |
+| `rules.py` | 规则配置 |
+| `config.py` | 阈值配置 |
+| `export.py` | JSONL、CSV、Excel |
+| `cli.py` | 编排、诊断、CLI |
+
+当前公开兼容 API：
+
+- `run_pipeline_with_diagnostics(input_path, config)`：旧快照结构化结果。
+- `run_pipeline(input_path, config)`：旧快照 verdict 列表包装器。
+- `run_unified_pipeline(bundle, providers, config, context, progress=None)`：统一 provider/路由边界；可选 `progress` 回调在每个 provider 采集完成时收到一行进度文本，回调异常不影响采集结果。
+- `compare_verdicts(before, after)`：确定性迁移和成员差异报告。
+
+### 6.1 在线 Provider 配置
+
+- 默认顺序：`k01_compromise,ioc_info,fdark,whois,pdns`；`SUPPORTED_PROVIDERS` 另含 `icp`，必须用 `--providers ... ,icp` 显式选择。
+- CLI：`--provider-config` 指向本地非密钥 JSON，`--cache-dir` 保存可复用原始响应缓存，`--run-dir/raw` 保存本次运行审计副本，`--offline` 只读本地数据/cache，`--refresh` 绕过 cache；`--offline` 与 `--refresh` 互斥。
+- CLI 可见性：统一模式启动打印 provider 清单（disabled 标注并在 stderr 给出原因，sidecar 单独标注），逐 provider 完成进度与耗时输出到 stderr，结束打印逐 provider 状态计数、被拒绝输入行计数与总耗时；diagnostics `provider_metrics` 含 `duration_seconds`。
+- CLI 迁移对比：`--diff-baseline` 接受上次 result JSONL，运行前 fail-fast 校验（存在性、JSON、`ioc`/`conclusion` 字段），研判后经 `compare_verdicts` 输出确定性迁移报告到 `--diff-output` 或默认 `<输出名>_diff.json`；旧快照兼容模式同样适用，`--diff-output` 必须与 `--diff-baseline` 同用。
+- 凭据环境变量：`K01_COMPROMISE_API_KEY`、`IOC_INFO_API_KEY`、`FDP_ACCESS`/`FDP_SECRET`；WHOIS 可用独立 `WHOIS_ACCESS`/`WHOIS_SECRET`，pDNS 可用独立 `PDNS_ACCESS`/`PDNS_SECRET`，未设置独立值时回退到 FDP 凭据。
+- endpoint 环境变量：`K01_COMPROMISE_URL`、`IOC_INFO_URL`、`FDARK_URL`、`WHOIS_URL`、`PDNS_URL`。
+- ICP 凭据环境变量：`ICP_UC`、`ICP_KEY`；endpoint 为可选 `ICP_URL`。ICP 默认 TTL 30 天、workers 2、rate 2/s；其他 provider 默认值不变。本地配置可为单个 provider 设置 `ttl_seconds`、`ttl_hours` 或 `ttl_days`，三者只能选一。
+- 本地配置拒绝 secret/token/password/authorization 类字段；在线缺少某来源凭据时只将该来源标为 disabled，不中止其他来源。
+- 离线回放不需要凭据，但必须保留与首次运行一致的 provider 选择、非密钥查询配置和持久 `--cache-dir`；离线传输 fail-closed，不允许网络回退。
+- 跨 provider 并发由 `Config.provider_workers` 限制，默认 5；最终 Observation、诊断和 verdict 仍按输入 IOC 与 provider 配置顺序稳定归并。
+
+## 7. 当前已知缺陷
+
+1. 真实 ICP endpoint、认证和生产响应尚未用用户凭据验收；自动测试持续使用 mock/cache，禁止读取 `token_icp.txt`。
+2. 脱敏全量快照使用带下划线的占位域名，其中 9,487 条会被严格 DNS 输入校验拒绝；任务 12 另以内部 pipeline 审计覆盖全部记录，不放宽生产校验。
+3. ICP workers/rate 本地配置当前只校验为正数，尚未定义产品级硬上限；真实生产值需由接口所有者批准。
+
+修复时先用测试复现，不在旧逻辑上继续叠加例外。
+
+## 8. 项目结构
+
+```text
+ioc_rejudge_cli_1.4.1/
+|-- ioc_rejudge/                 # 当前业务包
+|-- rules/                       # 默认规则 JSON
+|-- tests/                       # 测试
+|-- ioc_info/                    # 脱敏快照，非发布源代码
+|-- outputs/                     # 研判产物，非发布源代码
+|-- 其他接口/                    # F-Dark、WHOIS、pDNS、HTTP 参考实现/文档
+|-- docs/
+|   |-- ARCHITECTURE.md
+|   |-- DEVELOPMENT.md
+|   |-- HISTORY.md
+|   `-- superpowers/             # 已批准规格和实施计划
+|-- README.md
+|-- CHANGELOG.md
+|-- CLAUDE.md
+|-- VERSION
+|-- pack.py
+|-- push.py
+`-- upgrade.py
+```
+
+## 9. 工作原则
+
+- 非微小改动先说明目标、范围、风险和验证方法。
+- 需求不清或会改变业务结论时，先确认后编码。
+- 先写规格，再写实施计划，再实现。
+- 优先小步迭代；实现与审查/验证分开。
+- 遵循现有模块边界，不做无关重构。
+- 只有用户明确授权发布时才可通过 `push.py` 按 allow-list 初始化、提交、打标签和推送；禁止 `git add .`、整目录提交或 force push。
+- 不执行破坏性文件操作。
+
+## 10. 编码约束
+
+- 代码和代码注释使用英文。
+- 注释说明意图、约束和边界，不记录开发过程。
+- 优先使用稳定符号名和模块职责定位。
+- 不为未确认需求提前抽象。
+- 使用结构化解析器处理 JSON、URL、时间和表格。
+- 不在生产代码中匹配 R 编号或脱敏 IOC 值。
+- 不在代码、commit message 或发布说明中出现协作工具名称。
+- 不使用 `/init`。
+
+## 11. 测试与验收
+
+### 当前真实基线
+
+```powershell
+python -m pytest tests -q
+```
+
+当前结果：`620 passed`。另含控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间与发布 allow-list/忽略规则安全专项。任务 1-22 及 opt-in ICP 闭环已覆盖核心离线链路、五个默认在线 Provider、显式 ICP、工厂/CLI、有界并发、cache/run 分离、必要来源 freshness 门、聚合错误 ICP 门、响应回显凭据脱敏、历史入口和最终 mock 回放验收；另含 legacy 坏 URL 行级隔离和非 Git 发布工具测试。
+
+任务 22 在线端到端验收：`tests/test_live_acceptance.py` 与 live pipeline 联合为 `13 passed`。九个合成场景全程使用注入 transport，并对 `requests.Session.get/post` 设置 fail-fast 网络哨兵；online mock 填充五源 cache/raw 后移除全部凭据，offline replay 的 verdict、原因、来源、顺序及 Observation 稳定字段与 online 完全一致。递归扫描 JSONL、CSV、Excel 及解压后的 XML/rels、diagnostics、cache、raw 和 log，sentinel 凭据零匹配。
+
+任务 12 离线验收：裸 IOC sidecar smoke 输出 `误报/dga/false_positive` 且必要 provider 完整；旧快照 smoke 输出 1 条存活有效。脱敏全量 10,856 行包含 3 个重复顶层 IOC，按 `original_ioc` 对齐为 10,853 个唯一输入，legacy 与统一 pipeline 结论变化为 0；黑转白、白转黑、转灰、转复核均为 0。
+
+### 变更准入
+
+- Bug：复现 -> 修复 -> 相关测试 -> 全量测试。
+- 修改 normalize/evidence/adjudicator：必须运行人工校准和全量差异。
+- 修改 export：必须验证 JSONL、CSV、Excel 和 sheet 统计。
+- 修改 provider：必须测试 success/no_data/error/disabled、缓存、离线和凭据泄漏。
+- 无法完成全量验证时，明确报告旧故障、新故障和未覆盖风险。
+- 不允许删除断言、静默跳过或忽略收集错误来宣布完成。
+
+详细命令见 `docs/DEVELOPMENT.md`。
+
+## 12. 人工校准
+
+当前 11 条人工样本的自动目标：
+
+| 样本 | 目标 |
+|---|---|
+| R001-R004 | 黑 |
+| R005 | DGA 白 |
+| R006-R007 | 黑 |
+| R013 | 当前 ICP 确认不存在 + 运营恶意上下文，黑 |
+| R016 | 灰并保留 URL |
+| R018 | DGA 白 |
+| R023 | 结构化公开 APT，黑 |
+
+规则改动不能只通过 11 条样本。必须生成全量 before/after 转移，检查所有黑转白、白转黑和大规模变化组。
+
+## 13. 数据与安全
+
+- 示例使用 `.invalid` 和私网地址。
+- 不把真实 IOC、原始响应、缓存、客户数据或凭据写入源码和文档。
+- token 只进入环境变量或本地忽略文件。
+- diagnostics、日志和导出不得包含请求头或 secrets。
+- provider 原始响应必须可审计，但不进入发布源文件。
+- 修改脱敏逻辑时必须做敏感值残留扫描。
+
+## 14. 文档规则
+
+- README 只描述当前可用命令；规划能力必须标记“未实现”。
+- 架构文档记录稳定边界，不记录临时调试过程。
+- CHANGELOG 只记录用户可见行为和兼容性变化。
+- HISTORY 保存旧里程碑，不作为当前事实来源。
+- 有意义的代码、架构、测试或工作流变更完成后更新本文件进度。
+- 文档与源码冲突时，以可运行代码和可复现测试为当前事实，并修正文档。
+
+## 15. 历史实施计划
+
+1. `docs/superpowers/plans/2026-07-23-multi-source-core.md`
+2. `docs/superpowers/plans/2026-07-23-live-providers.md`
+
+两份计划均已实施完成，仅用于追溯决策。新的在线 HTTP 工作必须先取得正式外部契约并另立规格；ICP 当前契约已冻结但真实 endpoint 仍待授权验收。
+
+## 16. 进度记录
+
+| 日期 | 范围 | 完成内容与验证摘要 |
+|---|---|---|
+| 2026-06 | v1.4.1 | 建立离线快照解析、IOC 归一化、A-F 证据、画像、裁判、导出、诊断和发布脚本；历史详情见 `docs/HISTORY.md` |
+| 2026-07-22 | 人工校准 | 完成首批 7 条和第二批 4 条人工研判，识别 DGA、时序、ICP、URL 作用范围和公开 APT 边界 |
+| 2026-07-23 | 设计 | 确认多源聚合、DGA 专用规则、非 DGA ICP 人工门和灰状态；完成规格与两份实施计划 |
+| 2026-07-23 | 文档 | 重建 README、协作上下文、架构、开发指南、历史和更新日志；仅文档变更，业务代码未修改；验证 6 个文件存在、相对链接 0 损坏、占位符 0、代码围栏成对 |
+| 2026-07-23 | 开发提示词 | 将核心与在线实施计划拆成 22 份有依赖、可单独验证的开发提示词；validator 通过，最大任务 102 行、链接/启动词各 22、占位符 0；业务代码未修改 |
+| 2026-07-23 | 任务 1 | 恢复 IOC Info 兼容脚本、脱敏工具和仓库内集成 fixture；专项 15 passed，全量 172 passed，敏感值模式扫描无匹配 |
+| 2026-07-23 | 任务 2 | 新增 IocTarget、Observation、provider/freshness/route/disposition 类型，扩展灰结论、Evidence 来源和 Verdict 兼容字段；专项 9 passed，全量 178 passed |
+| 2026-07-24 | 任务 3-4 | 完成统一输入解析、结构校验、provider 协议和 sidecar 状态语义；返修后全量 240 passed |
+| 2026-07-24 | 任务 5 | 当前状态改为仅取最新记录，保留 RecordSnapshot 与历史 ICP，增加脏类型保护；全量 249 passed |
+| 2026-07-24 | 任务 6 | 统一恶意样本语义、英文词边界、公开 APT 结构证据和 URL 作用范围，二次返修后专项 135 passed、全量 297 passed |
+| 2026-07-24 | 任务 7 提示词 | 根据前四轮独立验收强化 DGA 优先级矩阵、时间等号边界、脏布尔/时间反例和真实 RED 门；提示词包 validator 通过 |
+| 2026-07-24 | 任务 7 | 完成 DGA 专用有序裁判并通过第三次返修独立验收；专项 50 passed、全量 338 passed、语法编译通过；当时混合 aware/naive 的不可比较项按保守语义跳过，该行为已由 2.1.0 H1 的统一 UTC 比较取代 |
+| 2026-07-24 | 任务 8 提示词 | 基于任务 7 验收强化非 DGA ICP 最高优先级、灰条件逐项反例、脏 WHOIS/ICP、DGA 隔离、真实 RED 与 disposition/scope_actions 契约；提示词包 validator 通过 |
+| 2026-07-24 | 任务 8 | 完成非 DGA ICP 最高优先级人工门、完整灰条件、DGA 隔离及 route/disposition/scope_actions 契约；联合专项 139 passed、全量 383 passed、语法检查和五分支真实探针通过 |
+| 2026-07-24 | 任务 9 | 完成精确 DGA-only 路由、provider 异常隔离、统一 pipeline、裸 IOC/sidecar CLI 和旧快照包装器兼容；专项 24 passed、全量 401 passed、CLI help 与三模块语法检查通过 |
+| 2026-07-24 | 任务 10 | 扩展 route/disposition/scope/provider 导出，JSONL 保留结构、CSV/Excel 稳定 JSON，Excel 分为统计/总/判黑/灰/误报/待复核且待复核不再计黑；联合专项 24 passed、全量 402 passed |
+| 2026-07-24 | 任务 11 | 将 11 类人工原因固化为合成 `.invalid` 证据回归，新增确定性 verdict diff；修复结构化公开 APT 被威胁残留误降复核的通用优先级；专项 19 passed、全量 421 passed、敏感模式扫描无匹配 |
+| 2026-07-24 | 任务 12 | 完成核心离线验收：全量 421 passed；裸 IOC DGA 与 legacy snapshot smoke 通过；全数据按 original_ioc 对齐 10,853 个唯一输入且结论迁移为 0；4 个临时输出已清理，fixture/新增源码无凭据匹配 |
+| 2026-07-24 | 任务 13 | 新增 secret-safe ProviderSettings 和 provider 级 append-only JsonlProviderCache；覆盖稳定 query key、TTL 等号、坏行恢复、200 路跨实例线程追加和落盘脱敏；专项 19 passed、全量 440 passed |
+| 2026-07-24 | 任务 14 | 新增可注入 RequestsTransport，将 timeout/connection/http/json_decode 精确分类并清洗 URL 凭据/query/header/body；transport 11 passed、共享基础设施 30 passed、全量 451 passed |
+| 2026-07-24 | 任务 15 | 将 IOC Info 请求、dict/list 规范化、定向空结果重试和历史 main 迁入统一 provider；根脚本改为薄重导出；专项 21 passed、CLI 联合 31 passed、全量 463 passed |
+| 2026-07-24 | 任务 16 | 新增 K01 compromises 批量 provider；保留五类 IOC 原始请求形态，按三个 ignore flag 隔离缓存，严格规范化 tags 并仅允许 DGA-only 进入专用路由；专项 21 passed、全量 473 passed、语法编译通过 |
+| 2026-07-24 | 任务 17 | 迁入 F-Dark 已审阅 IOC 查询变体，默认仅请求快速主变体；复用统一恶意样本语义并支持完整 query cache/offline/refresh；专项 11 passed、样本语义联合 102 passed、全量 484 passed |
+| 2026-07-24 | 任务 18 | 新增 domain/URL/domain:port WHOIS provider，区分获取时间、注册日期和缓存 freshness，失败时仅附 stale 审计；修复统一 facts 将查询时间误作到期时间；WHOIS+DGA 47 passed、全量 495 passed |
+| 2026-07-24 | 任务 19 | 新增 domain 类 pDNS provider，逐条保留完整解析记录和 raw cache，坏 Unix 时间不回退当前时间，stale 不参与 DGA 白；pDNS+DGA 47 passed、全量 506 passed |
+| 2026-07-24 | 任务 20 | 新增五源 Provider 工厂与在线 CLI 参数；密钥仅取环境变量，本地 JSON 只覆盖非密钥项，缺凭据独立 disabled；cache 与 run/raw 分离并支持无凭据 offline replay；联合 31 passed、全量 527 passed、哨兵扫描零匹配 |
+| 2026-07-24 | 任务 21 | 使用单个有界线程池并发不同 Provider，按配置/输入顺序确定性归并并隔离 future 异常；新增逐 IOC freshness 契约，必要样本 stale/unknown 不计完整；并发专项连续五轮各 12 passed、全量 534 passed |
+| 2026-07-24 | 任务 22 | 完成九场景全 mock 在线验收、移除凭据后的 offline exact replay、五源 raw 审计与 IP:port applicability；联合专项 13 passed、全量 535 passed；无真实网络，JSONL/CSV/Excel XML/diagnostics/cache/raw/log 的 sentinel 凭据扫描零匹配 |
+| 2026-07-25 | 2.0.0 发布准备 | legacy 坏 URL 改为按行隔离并写入 diagnostics；新增运行/开发依赖清单和纯文件系统 allow-list 打包器，发布包带 `RELEASE.json` 且排除数据、输出、缓存与内部实施材料；README、架构、开发指南和更新日志同步为当前能力；全量 538 passed，`pack.py --check` 通过 |
+| 2026-07-26 | 开发提示词 | 将显式 ICP 与运营证据计划审计并拆成 8 份串行、每份不超过 5 个可修改文件的开发提示词；修正 offline replay 无凭据与在线凭据门的计划冲突，记录未定义速率上限风险；生成前实测全量 538 passed、`pack.py --check` 通过，提示词包 validator 通过 |
+| 2026-07-26 | 总控开发提示词 | 任务 1-3 已完成并独立复验至全量 555 passed；新增 139 行剩余任务总控入口，先复验既有基线，再连续执行任务 4-8 的开发、返修、独立验收与最终文档闭环；bundle validator 通过、占位符 0、安全护栏和最终验证命令齐全 |
+| 2026-07-26 | 任务 4-8 总控闭环 | 完成 current ICP、显式 opt-in ICP provider/factory/CLI、R003/R013 校准与在线离线 exact replay；全量 588 passed，focused 78 passed，默认/缺凭据/offline miss zero-call，真实 requests fail-fast、sentinel 扫描、CLI help 与 pack check 通过；真实 endpoint 仍待授权凭据验收 |
+| 2026-07-26 | ICP 独立验收返修 | 修复 provider 聚合 error 仍消费残留 ICP Observation、响应回显凭据落盘/进入 Observation 和字段优先级错误；新增标准/DGA 状态门、cache/run raw 脱敏、确定性限速与 2-worker 峰值回归，全量 596 passed；匿名迁移为白转黑 1、转复核 1，其余关键变化 0；真实 endpoint 与 workers/rate 产品硬上限仍待外部确认 |
+| 2026-07-26 | 控制台可见性与迁移对比 | 统一模式新增启动 provider 清单与 disabled 原因、逐 provider 完成进度与耗时（`duration_seconds` 进 diagnostics）、结束逐源状态计数、被拒绝输入行计数与总耗时；新增 `--diff-baseline`/`--diff-output` 确定性迁移报告，baseline 运行前 fail-fast 并兼容旧快照模式；Excel 评审 sheet 新增判定原因（紧随结论）、评审建议与缺失必要来源列；14 项专项先失败后实现，全量 610 passed 零回归 |
+| 2026-07-27 | H2/H3 高危修复 | CSV/Excel 自由文本统一中和公式前缀且 JSONL 保真；脏 `level` 统一规约并补齐 legacy/统一 pipeline 逐 IOC 容错；专项 22 passed、全量 617 passed |
+| 2026-07-27 | H1 高危修复 | DGA aware/naive 时间统一为 UTC 比较，默认生产路径近期 pDNS 恢复判白且近期恶意样本恢复存活标签；联合专项 79 passed、全量 618 passed；脱敏全量代理 10,853 个唯一 IOC 变化 0、白转黑 0，定向默认路径验证旧失活有效转误报 |

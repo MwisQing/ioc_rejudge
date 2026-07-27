@@ -11,6 +11,13 @@ import sys
 # Import the module functions
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import iocProducer_api_ioc_info as mod
+import ioc_rejudge.providers.ioc_info as impl
+
+
+def test_root_module_is_thin_compatibility_reexport():
+    assert mod.main is impl.main
+    assert mod.query_batch is impl.query_batch
+    assert mod.normalize_list_data is impl.normalize_list_data
 
 
 class TestQueryBatch:
@@ -72,8 +79,8 @@ class TestRetryMechanism:
             mock_resp.json.return_value = resp_data
             return mock_resp
 
-        with patch.object(mod, "ROOT", tmpdir), \
-             patch.object(mod, "CACHE_DIR", cache_dir), \
+        with patch.object(impl, "ROOT", tmpdir), \
+             patch.object(impl, "CACHE_DIR", cache_dir), \
              patch("requests.post", mock_post), \
              patch("time.sleep", lambda x: None):
 
@@ -158,9 +165,9 @@ class TestRetryMechanism:
             mock_resp.json.return_value = {"data": {"new.com": [{"id": 2}]}}
             return mock_resp
 
-        with patch.object(mod, "ROOT", tmpdir), \
-             patch.object(mod, "CACHE_DIR", cache_dir), \
-             patch.object(mod, "cache_path_for_today", return_value=cache_file), \
+        with patch.object(impl, "ROOT", tmpdir), \
+             patch.object(impl, "CACHE_DIR", cache_dir), \
+             patch.object(impl, "cache_path_for_today", return_value=cache_file), \
              patch("requests.post", mock_post), \
              patch("time.sleep", lambda x: None):
             mod.main()
@@ -192,9 +199,9 @@ class TestRetryMechanism:
             call_count[0] += 1
             raise AssertionError("Should not be called when all IOCs cached")
 
-        with patch.object(mod, "ROOT", tmpdir), \
-             patch.object(mod, "CACHE_DIR", cache_dir), \
-             patch.object(mod, "cache_path_for_today", return_value=cache_file), \
+        with patch.object(impl, "ROOT", tmpdir), \
+             patch.object(impl, "CACHE_DIR", cache_dir), \
+             patch.object(impl, "cache_path_for_today", return_value=cache_file), \
              patch("requests.post", mock_post):
             mod.main()
 

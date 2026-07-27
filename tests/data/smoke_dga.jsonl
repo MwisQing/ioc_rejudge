@@ -1,0 +1,1 @@
+{"ioc":"example.invalid","kind":"dga_classification","status":"success","scope":"domain","fetched_at":"2026-07-24 12:00:00","observed_at":"","payload":{"tags":["dga"]},"raw_ref":"smoke:dga:1"}

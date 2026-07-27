@@ -4,7 +4,7 @@ import tempfile
 import os
 from datetime import datetime, timedelta
 from ioc_rejudge.config import Config, load_config
-from ioc_rejudge.evidence import extract_evidence, _ioc_aware_match
+from ioc_rejudge.evidence import extract_evidence, _ioc_aware_match, _indicator_match
 from ioc_rejudge.adjudicator import adjudicate
 from ioc_rejudge.normalize import normalize_ioc, merge_records
 from ioc_rejudge.models import Conclusion, EvidenceStrength, IocDossier
@@ -257,7 +257,7 @@ def test_weak_source_does_not_support_source_a():
 # --- Evidence strength drives conflict ---
 
 def test_strong_a_strong_e_conflict():
-    """Strong A + strong E should produce 待复核."""
+    """Non-DGA ICP should outrank the strong A/E conflict candidate."""
     records = [
         build_record(
             "conflict.com",
@@ -269,11 +269,14 @@ def test_strong_a_strong_e_conflict():
             level=70,
         )
     ]
+    cfg = Config()
     dossier = merge_records(records)
-    dossier = extract_evidence(dossier, Config())
-    verdict = adjudicate(dossier)
+    dossier = extract_evidence(dossier, cfg)
+    verdict = adjudicate(dossier, cfg)
     assert verdict.conclusion == Conclusion.PENDING_REVIEW
-    assert verdict.candidate_label is not None
+    assert verdict.candidate_label is None
+    assert verdict.disposition == "review"
+    assert "ICP" in verdict.reason
 
 
 def test_weak_e_strong_a_no_overturn():
@@ -288,9 +291,10 @@ def test_weak_e_strong_a_no_overturn():
             level=70,
         )
     ]
+    cfg = Config()
     dossier = merge_records(records)
-    dossier = extract_evidence(dossier, Config())
-    verdict = adjudicate(dossier)
+    dossier = extract_evidence(dossier, cfg)
+    verdict = adjudicate(dossier, cfg)
     assert verdict.conclusion == Conclusion.ALIVE_VALID
     assert verdict.confidence == "中"
     assert verdict.review_suggestion == "抽检"
@@ -379,6 +383,76 @@ def test_hash_without_ioc_not_a_level():
 
 
 # --- Existing tests still pass (regression) ---
+
+# ── Shared helper ──
+
+def _ctx_dossier(context: str, level: float = 0.0) -> IocDossier:
+    records = [build_record("evil.com", context=context, level=level)]
+    return extract_evidence(merge_records(records), Config())
+
+
+# ── Token-aware English word boundaries ──
+
+def test_rat_does_not_match_rate1():
+    """`rat` must match only as a complete English token, not inside `rate1`."""
+    dossier = _ctx_dossier("evil.com observed rate1:9e-05 rate2:7e-05")
+    assert not any(e.field == "context/comment" for e in dossier.evidence_a)
+
+
+def test_c2_does_not_match_hash_fragment():
+    """`c2` must not match inside hexadecimal hash fragments like ...157c2ab..."""
+    dossier = _ctx_dossier("evil.com sha1=aaaa157c2abbbb")
+    assert not any(e.field == "context/comment" for e in dossier.evidence_a)
+
+
+def test_rat_matches_with_punctuation_boundary():
+    """`rat` must match when adjacent to punctuation or whitespace."""
+    dossier = _ctx_dossier("evil.com is a RAT with (backdoor)")
+    a_ctx = [e for e in dossier.evidence_a if e.field == "context/comment"]
+    assert len(a_ctx) >= 1
+
+
+def test_c2_matches_with_punctuation_boundary():
+    """`c2` with surrounding punctuation must still match."""
+    dossier = _ctx_dossier("evil.com used as C2-server")
+    a_ctx = [e for e in dossier.evidence_a if e.field == "context/comment"]
+    assert len(a_ctx) >= 1
+
+
+def test_chinese_malicious_indicator_still_works():
+    """Chinese indicators must still use contains matching (no token boundary)."""
+    dossier = _ctx_dossier("evil.com 恶意样本通信")
+    a_ctx = [e for e in dossier.evidence_a if e.field == "context/comment"]
+    assert len(a_ctx) >= 1
+
+
+def test_regex_special_indicator_does_not_break_matching():
+    """Indicators with regex-special characters must be safely escaped."""
+    # Use a custom config with a special-char indicator
+    import json, tempfile, os
+    rules_data = {"context_comment_malicious_indicators": ["evil.com"]}
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump(rules_data, f)
+        f.flush()
+        config = load_config(rules_path=f.name)
+    os.unlink(f.name)
+    records = [build_record("evil.com", context="evil.com callback detected", level=70)]
+    dossier = merge_records(records)
+    dossier = extract_evidence(dossier, config)
+    a_ctx = [e for e in dossier.evidence_a if e.field == "context/comment"]
+    assert len(a_ctx) >= 1
+
+
+def test_empty_indicator_never_matches():
+    """An empty-string indicator must never trigger a match."""
+    assert _indicator_match("", "any text rat") is False
+    assert _indicator_match("", "") is False
+
+
+def test_indicator_uppercase_matches_lowercase_text():
+    """Indicators are internally lowercased before matching so 'RAT' matches 'rat'."""
+    assert _indicator_match("RAT", "evil.com observed as rat callback") is True
+    assert _indicator_match("C2", "evil.com used as c2-server") is True
 
 def test_parser_regression():
     """Parser should still handle JSONL correctly."""

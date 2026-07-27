@@ -1,0 +1,68 @@
+[
+  {
+    "case_id": "R001",
+    "human_label": "black",
+    "reason": "Detailed analyst context and a recent malicious sample form a direct closure.",
+    "pattern": "recent_direct_sample"
+  },
+  {
+    "case_id": "R002",
+    "human_label": "black",
+    "reason": "A recent mining-malware sample directly references the IOC.",
+    "pattern": "recent_mining_sample"
+  },
+  {
+    "case_id": "R003",
+    "human_label": "black",
+    "reason": "An authoritative clue-group comment overrides a conflicting ICP business field.",
+    "pattern": "operator_clue_group_conflict"
+  },
+  {
+    "case_id": "R004",
+    "human_label": "black",
+    "reason": "Old malicious context and sample evidence remain valid without a normal-business handover.",
+    "pattern": "historical_sample_no_handover"
+  },
+  {
+    "case_id": "R005",
+    "human_label": "false_positive",
+    "reason": "Reliable DGA classification, complete clean sample checks, and current ICP satisfy a DGA white rule.",
+    "pattern": "dga_current_icp"
+  },
+  {
+    "case_id": "R006",
+    "human_label": "black",
+    "reason": "A second synthetic mining-malware association validates the generalized sample rule.",
+    "pattern": "recent_mining_variant"
+  },
+  {
+    "case_id": "R007",
+    "human_label": "black",
+    "reason": "A recent remote-access-trojan sample directly references the IOC.",
+    "pattern": "recent_rat_sample"
+  },
+  {
+    "case_id": "R013",
+    "human_label": "black",
+    "reason": "Historical ICP is retained while the latest operator malicious record has a completed negative current check.",
+    "pattern": "standard_icp_historical_current_negative"
+  },
+  {
+    "case_id": "R016",
+    "human_label": "gray",
+    "reason": "Historical phishing URLs remain credible while the expired domain has no recent activity.",
+    "pattern": "expired_domain_retain_urls"
+  },
+  {
+    "case_id": "R018",
+    "human_label": "false_positive",
+    "reason": "A not-a-virus association is excluded and an unexpired WHOIS record satisfies a DGA white rule.",
+    "pattern": "dga_not_a_virus_whois"
+  },
+  {
+    "case_id": "R023",
+    "human_label": "black",
+    "reason": "A complete public APT field combination forms generalized historical malicious evidence.",
+    "pattern": "structured_public_apt"
+  }
+]

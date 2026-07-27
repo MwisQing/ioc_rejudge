@@ -2,9 +2,29 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+.venv/
 *.tmp
 *.temp
+*.log
 json_temp.*
 /dist/
 *.egg-info/
 *.zip
+/release/
+
+# Local credentials and non-source data
+token_icp.txt
+/ioc_info/
+/outputs/
+/其他接口/
+/回扫报告/
+/docs/agent-prompts/
+/docs/superpowers/
+
+# Provider/runtime artifacts
+/runs/
+/run/
+/cache/
+/provider-cache/
+/provider_cache/
+/raw/

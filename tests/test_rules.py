@@ -12,6 +12,58 @@ def test_load_rules_default():
     assert "sample" in rules.malicious_indicators
     assert "historical" in rules.context_comment_historical_indicators
     assert "icp_website" in rules.trusted_business_fields
+    assert "trojan" in rules.strong_malicious_indicators
+    assert "backdoor" in rules.strong_malicious_indicators
+    # neutral words belong to the broad list, not the strong list
+    assert "dns" in rules.malicious_indicators
+    assert "dns" not in rules.strong_malicious_indicators
+    assert "sample" not in rules.strong_malicious_indicators
+    assert rules.authoritative_clue_indicators == ["线索群"]
+    assert rules.operator_sources == ["manual", "alliocs_tpd"]
+
+
+def test_load_rules_deployment_defaults_match_builtin():
+    rules = load_rules("rules/default_rules.json")
+    assert rules.authoritative_clue_indicators == ["线索群"]
+    assert rules.operator_sources == ["manual", "alliocs_tpd"]
+
+
+def test_load_rules_new_fields_override_independently_and_fill_legacy_defaults():
+    data = {
+        "authoritative_clue_indicators": ["custom-clue"],
+        "operator_sources": ["custom-source"],
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+        f.flush()
+        rules = load_rules(f.name)
+    os.unlink(f.name)
+    assert rules.authoritative_clue_indicators == ["custom-clue"]
+    assert rules.operator_sources == ["custom-source"]
+    assert "sample" in rules.malicious_indicators
+
+
+def test_load_rules_list_defaults_are_isolated():
+    first = load_rules()
+    second = load_rules()
+    first.authoritative_clue_indicators.append("changed")
+    first.operator_sources.clear()
+    assert second.authoritative_clue_indicators == ["线索群"]
+    assert second.operator_sources == ["manual", "alliocs_tpd"]
+
+
+def test_load_rules_strong_indicators_missing_key_filled():
+    # A custom JSON without strong_malicious_indicators must fall back to defaults,
+    # not raise, so existing rule files stay forward-compatible.
+    data = {"malicious_indicators": ["evil"]}
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump(data, f)
+        f.flush()
+        rules = load_rules(f.name)
+        assert rules.malicious_indicators == ["evil"]
+        assert "trojan" in rules.strong_malicious_indicators
+    os.unlink(f.name)
+
 
 
 def test_load_rules_custom_json():

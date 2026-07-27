@@ -27,3 +27,12 @@ def test_dossier_default_values():
     assert d.evidence_b == []
     assert d.evidence_f == []
     assert d.ports == []
+
+
+def test_dossier_current_icp_check_defaults_and_isolates_instances():
+    first = IocDossier(ioc="first.invalid", ioc_type="domain")
+    second = IocDossier(ioc="second.invalid", ioc_type="domain")
+    assert first.current_icp_check_complete is False
+    assert second.current_icp_check_complete is False
+    first.current_icp_check_complete = True
+    assert second.current_icp_check_complete is False
