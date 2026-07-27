@@ -349,3 +349,4 @@ python -m pytest tests -q
 | 2026-07-27 | H2/H3 高危修复 | CSV/Excel 自由文本统一中和公式前缀且 JSONL 保真；脏 `level` 统一规约并补齐 legacy/统一 pipeline 逐 IOC 容错；专项 22 passed、全量 617 passed |
 | 2026-07-27 | H1 高危修复 | DGA aware/naive 时间统一为 UTC 比较，默认生产路径近期 pDNS 恢复判白且近期恶意样本恢复存活标签；联合专项 79 passed、全量 618 passed；脱敏全量代理 10,853 个唯一 IOC 变化 0、白转黑 0，定向默认路径验证旧失活有效转误报 |
 | 2026-07-27 | 2.1.0 发布 | 最终全量 620 passed、发布暂存树独立 620 passed、`pack.py --check` 91 个文件；生成 `ioc_rejudge_v2.1.0_20260727-094833.zip` 并审计禁入条目 0；保留 GitHub 既有 v1.2.0 历史，`master` 快进至 `fa8c270`，已推送附注标签 `v2.1.0`，无 force push |
+| 2026-07-27 | GitHub Release | 基于既有 `v2.1.0` 标签创建正式 GitHub Release，上传 `ioc_rejudge_v2.1.0_20260727-095236.zip`；资产大小 225,256 字节，SHA256 为 `715E97563E8D8FC5B3DC38F53EC17C616AE9130A86D2CCF90C8B389AB263C14B` |
