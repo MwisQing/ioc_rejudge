@@ -1,19 +1,19 @@
 # IOC Rejudge CLI
 
-IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.1.0` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。
+IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.1.2` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。
 
 ## 当前状态
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.1.0` |
+| 版本 | `2.1.2` |
 | Python | 已用 Python 3.12 验证 |
 | 输入 | 旧 JSONL 快照、裸 IOC 文件、重复 `--ioc` |
 | IOC 类型 | domain、URL、domain:port、IP、IP:port |
 | 结论 | `存活有效`、`失活有效`、`灰`、`误报`、`待复核` |
 | live provider | K01、IOC Info、F-Dark、WHOIS、pDNS；ICP 仅显式 opt-in |
 | 本地 provider | 任意 JSONL sidecar；可用于 ICP Observation 回放 |
-| 当前测试 | `620 passed` |
+| 当前测试 | `630 passed` |
 
 ICP provider 已按固定响应契约实现并通过 mock/cache 验收；真实 endpoint、认证和生产响应仍需在具备授权凭据的环境中单独确认。
 
@@ -122,13 +122,33 @@ k01_compromise,ioc_info,fdark,whois,pdns
 python -m ioc_rejudge `
   --ioc example.invalid `
   --providers k01_compromise,ioc_info,fdark,whois,pdns `
+  --credentials-file .\credentials.local.json `
   --provider-config .\provider-config.json `
   --cache-dir .\provider-cache `
   --run-dir .\runs\run-001 `
   -j .\result.jsonl
 ```
 
-凭据只从环境变量读取：
+推荐将凭据保存在项目根目录的 `credentials.local.json`。先复制发布包内的空白示例，再填写实际值：
+
+```powershell
+Copy-Item .\credentials.example.json .\credentials.local.json
+notepad .\credentials.local.json
+```
+
+运行时显式传入：
+
+```powershell
+python -m ioc_rejudge `
+  --ioc example.invalid `
+  --providers k01_compromise,ioc_info,fdark,whois,pdns `
+  --credentials-file .\credentials.local.json `
+  --cache-dir .\provider-cache `
+  --run-dir .\runs\run-001 `
+  -j .\result.jsonl
+```
+
+凭据字段如下；endpoint 仍可使用环境变量或 `--provider-config` 中的非密钥 `url`：
 
 | Provider | 凭据环境变量 | endpoint 环境变量 |
 |---|---|---|
@@ -139,7 +159,9 @@ python -m ioc_rejudge `
 | pDNS | `PDNS_ACCESS`、`PDNS_SECRET`；缺省回退 FDP 凭据 | `PDNS_URL` |
 | ICP（仅显式选择） | `ICP_UC`、`ICP_KEY` | `ICP_URL`（可选） |
 
-`--provider-config` 只允许非密钥设置，例如启用状态、超时、查询参数和 TTL。包含 secret、token、password 或 authorization 类字段的配置会被拒绝。缺少某个 provider 的凭据只会把该 provider 标记为 `disabled`，不会中止其他来源。
+`--credentials-file` 只接受表中的固定凭据字段；未知字段、非字符串值和坏 JSON 会在请求前报错。指定该参数后，本次运行只从这个文件读取凭据，不回退读取进程或系统环境变量。`credentials.local.json` 已加入 `.gitignore`，并被发布 allow-list 排除。
+
+`--provider-config` 只允许非密钥设置，例如 endpoint、启用状态、超时、查询参数和 TTL。包含 secret、token、password 或 authorization 类字段的配置会被拒绝。缺少某个 provider 的凭据只会把该 provider 标记为 `disabled`，不会中止其他来源。未使用 `--credentials-file` 时，原有环境变量凭据方式继续兼容。
 
 ICP 不在默认五源列表中；只有显式列出时才允许在线请求：
 
@@ -152,7 +174,7 @@ python -m ioc_rejudge `
   -j .\result.jsonl
 ```
 
-ICP 查询按 host 去重，凭据只来自上述环境变量，不读取 `token_icp.txt`。默认 provider 选择、缺凭据在线运行和无缓存 offline miss 都产生零 live ICP 请求。响应写入 cache 或 `run_dir/raw` 前会按当前 ICP 凭据值再次脱敏，避免服务端回显认证值。
+ICP 查询按 host 去重，凭据来自显式凭证文件或兼容环境变量，不读取 `token_icp.txt`。默认 provider 选择、缺凭据在线运行和无缓存 offline miss 都产生零 live ICP 请求。响应写入 cache 或 `run_dir/raw` 前会按当前 ICP 凭据值再次脱敏，避免服务端回显认证值。
 
 ICP 默认使用 2 workers 和 2 requests/second。本地 provider 配置可以调整这两个正数，但当前尚未定义或强制产品级硬上限；生产使用时应保持在接口所有者批准的范围内。
 

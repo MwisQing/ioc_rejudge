@@ -1,10 +1,12 @@
 """Update the project from a local release zip or GitHub."""
 
+import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Optional
@@ -12,9 +14,10 @@ from typing import Optional
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 _REPO = "MwisQing/ioc_rejudge"
-_REMOTE_URL = f"https://github.com/{_REPO}.git"
+_LATEST_RELEASE_API = f"https://api.github.com/repos/{_REPO}/releases/latest"
 
 _ZIP_PREFIX = "ioc_rejudge"
+_USER_AGENT = "ioc-rejudge-updater"
 
 
 def _read_version(root: Path) -> str:
@@ -46,28 +49,6 @@ def _read_version_from_zip(zf: zipfile.ZipFile) -> Optional[str]:
 
 def _show_version(root: Path, label: str = "当前版本") -> None:
     print(f"{label}: v{_read_version(root)}")
-
-
-def run_git(cmd: list[str], timeout: int = 30) -> tuple[int, str, str]:
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return result.returncode, result.stdout, result.stderr
-    except FileNotFoundError:
-        sys.exit("错误: 系统中未找到 git 命令，请确认 git 已安装并在 PATH 中")
-    except subprocess.TimeoutExpired:
-        sys.exit(f"错误: Git 操作超时 ({timeout}s): {' '.join(cmd)}")
-
-
-def resolve_branch() -> str:
-    code, stdout, _ = run_git(["git", "branch", "--show-current"])
-    branch = stdout.strip() if code == 0 else ""
-    if branch:
-        return branch
-    for name in ("main", "master"):
-        code2, stdout2, _ = run_git(["git", "branch", "--list", name])
-        if code2 == 0 and stdout2.strip():
-            return name
-    return "main"
 
 
 def _find_latest_zip(root: Path) -> Optional[Path]:
@@ -154,42 +135,90 @@ def _offline_update(root: Path, zip_path: Path) -> None:
     print("离线更新完成")
 
 
-def _get_remote_url() -> Optional[str]:
-    code, stdout, _ = run_git(["git", "remote", "get-url", "origin"])
-    if code == 0:
-        url = stdout.strip()
-        if url:
-            return url
-    return None
+def _select_release_asset(release: dict) -> tuple[str, str]:
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise ValueError("GitHub Release assets 格式无效")
+    candidates = []
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        name = str(asset.get("name", ""))
+        url = str(asset.get("browser_download_url", ""))
+        if name.startswith(f"{_ZIP_PREFIX}_v") and name.endswith(".zip") and url:
+            candidates.append((name, url))
+    if not candidates:
+        raise ValueError("最新 GitHub Release 没有可用的 ioc_rejudge ZIP 资产")
+    return sorted(candidates, reverse=True)[0]
 
 
-def _ensure_remote() -> None:
-    existing = _get_remote_url()
-    if existing is None:
-        print(f"正在添加 origin -> {_REMOTE_URL}")
-        code, _, stderr = run_git(["git", "remote", "add", "origin", _REMOTE_URL])
-        if code != 0:
-            sys.exit(f"错误: 添加远程仓库失败\n{stderr.strip()}")
-        return
+def _fetch_latest_release(timeout: int = 30) -> dict:
+    request = urllib.request.Request(
+        _LATEST_RELEASE_API,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": _USER_AGENT,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"GitHub Release 查询失败: HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"GitHub Release 查询失败: {exc.reason}") from exc
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("GitHub Release 返回了无效 JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("GitHub Release 返回格式无效")
+    return payload
 
-    if existing == _REMOTE_URL:
-        return
 
-    print("错误: origin 已指向其他远程仓库")
-    print(f"  当前: {existing}")
-    print(f"  目标: {_REMOTE_URL}")
-    sys.exit("请确认仓库地址后再从 GitHub 更新")
+def _download_release_asset(url: str, destination: Path, timeout: int = 120) -> None:
+    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    partial = destination.with_suffix(destination.suffix + ".part")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            with partial.open("wb") as output:
+                shutil.copyfileobj(response, output)
+        partial.replace(destination)
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError) as exc:
+        partial.unlink(missing_ok=True)
+        raise RuntimeError(f"GitHub Release 下载失败: {exc}") from exc
 
 
-def _github_update() -> None:
-    _ensure_remote()
-    branch = resolve_branch()
-    print(f"正在从 GitHub 拉取 {branch} 分支 ...")
-    code, stdout, stderr = run_git(["git", "pull", "origin", branch], timeout=120)
-    if code != 0:
-        output = (stderr + stdout).strip()
-        sys.exit(f"错误: 拉取失败\n{output}")
-    print(stdout.strip() or "GitHub 更新完成")
+def _download_latest_release(root: Path) -> Optional[Path]:
+    release = _fetch_latest_release()
+    tag = str(release.get("tag_name", "")).strip()
+    latest_version = tag[1:] if tag.lower().startswith("v") else tag
+    current_version = _read_version(root)
+    if not latest_version or _parse_version(latest_version) == (0,):
+        raise RuntimeError("GitHub Release 版本号无效")
+    print(f"GitHub 最新版本: v{latest_version}")
+    if _parse_version(latest_version) <= _parse_version(current_version):
+        print("当前已是最新版本")
+        return None
+
+    name, url = _select_release_asset(release)
+    release_dir = root / "release"
+    release_dir.mkdir(exist_ok=True)
+    destination = release_dir / name
+    print(f"正在下载: {name}")
+    _download_release_asset(url, destination)
+    try:
+        with zipfile.ZipFile(destination, "r") as zf:
+            _validate_zip(root, zf)
+            packaged_version = _read_version_from_zip(zf)
+    except (OSError, zipfile.BadZipFile):
+        destination.unlink(missing_ok=True)
+        raise RuntimeError("下载的 GitHub Release ZIP 无效")
+    if packaged_version != latest_version:
+        destination.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"GitHub Release 版本不一致: tag v{latest_version}, ZIP v{packaged_version}"
+        )
+    print("下载完成并通过版本与路径检查")
+    return destination
 
 
 def _confirm(prompt: str) -> bool:
@@ -212,8 +241,14 @@ def main() -> None:
         _offline_update(root, zip_path)
     else:
         print("未找到本地更新包")
-        if _confirm("是否从 GitHub 拉取更新？"):
-            _github_update()
+        if _confirm("是否从 GitHub Release 检查并下载更新？"):
+            try:
+                zip_path = _download_latest_release(root)
+            except (OSError, RuntimeError, ValueError) as exc:
+                sys.exit(f"错误: {exc}")
+            if zip_path is None:
+                return
+            _offline_update(root, zip_path)
         else:
             print("已取消更新")
             return

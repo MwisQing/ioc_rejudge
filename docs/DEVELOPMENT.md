@@ -1,6 +1,6 @@
 # 开发与验证
 
-本文是 IOC Rejudge CLI `2.1.0` 的开发准入说明。发布脚本只可在用户明确授权后初始化、提交、打 tag 或推送。
+本文是 IOC Rejudge CLI `2.1.2` 的开发准入说明。发布脚本只可在用户明确授权后初始化、提交、打 tag 或推送。
 
 ## 1. 开发前阅读
 
@@ -14,7 +14,7 @@
 
 ## 2. 环境
 
-- 当前版本：`2.1.0`
+- 当前版本：`2.1.2`
 - 已验证 Python：3.12
 - 运行依赖：`openpyxl`、`requests`
 - 开发依赖：pytest
@@ -46,7 +46,7 @@ python -m pytest tests -q
 结果：
 
 ```text
-620 passed
+630 passed
 ```
 
 其中包括：
@@ -150,7 +150,8 @@ Provider 必须：
 
 ### 7.3 配置和凭据
 
-- endpoint 与认证值只从明确环境变量读取。
+- endpoint 从非密钥配置或明确环境变量读取；认证值从显式 `--credentials-file` 或兼容环境变量读取。
+- 指定凭证文件后不得回退读取进程环境；凭证文件只接受固定字段白名单，真实 `credentials.local.json` 必须保持在发布与版本控制之外。
 - 本地 provider JSON 只承载非密钥配置。
 - 不把完整 request headers/body/query 写入异常。
 - 新 provider 若需要在线 ICP/HTTP 一类新契约，先取得正式 endpoint、认证和响应样例，不猜字段。

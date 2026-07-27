@@ -1,5 +1,18 @@
 # 更新日志
 
+## 2.1.2 - 2026-07-27
+
+- 变更：解压版项目的 `upgrade.py` 联网更新改为查询 GitHub Releases API、下载最新 `ioc_rejudge` ZIP 并复用安全合并安装，不再对 Release 解压目录执行 `git pull`。
+- 校验：联网包在安装前验证 tag、ZIP 内 `VERSION` 和安全成员路径；当前版本不低于最新 Release 时直接报告已是最新。
+- 验证：GitHub Release 选择、API 查询、流式下载、当前版本跳过和版本不一致清理专项 `5 passed`；全量 `630 passed`。
+
+## 2.1.1 - 2026-07-27
+
+- 新增：`--credentials-file` 支持从项目目录的独立 JSON 文件读取固定白名单凭据；指定后不回退系统或进程环境变量。
+- 新增：发布包包含空白 `credentials.example.json`；实际 `credentials.local.json` 已加入 `.gitignore` 并保持在发布 allow-list 之外。
+- 保持：`--provider-config` 继续只承载 endpoint、TTL、超时等非密钥配置，原环境变量凭据方式继续兼容。
+- 验证：凭证文件结构、未知字段、类型、来源隔离、CLI 参数、发布排除和全量回归 `625 passed`。
+
 ## 2.1.0 - 2026-07-27
 
 - 新增：ICP provider 作为显式 opt-in live source，支持按 host 去重、secret-safe cache、限速并发和 positive/negative `icp_registration` Observation。

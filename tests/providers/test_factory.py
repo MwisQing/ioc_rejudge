@@ -13,6 +13,7 @@ from ioc_rejudge.providers.factory import (
     DEFAULT_PROVIDERS,
     SUPPORTED_PROVIDERS,
     build_providers,
+    load_credentials_file,
     load_local_config,
     parse_provider_names,
 )
@@ -108,6 +109,52 @@ def test_environment_builds_all_enabled_providers_with_exact_secret_sources():
         "pdns-access"
     )
     assert SENTINEL not in repr(providers)
+
+
+def test_credentials_file_is_an_explicit_secret_source_without_environment_fallback(tmp_path):
+    path = tmp_path / "credentials.local.json"
+    credentials = {
+        "K01_COMPROMISE_API_KEY": f"k01-{SENTINEL}",
+        "IOC_INFO_API_KEY": f"ioc-{SENTINEL}",
+        "FDP_ACCESS": f"access-{SENTINEL}",
+        "FDP_SECRET": f"secret-{SENTINEL}",
+    }
+    path.write_text(json.dumps(credentials), encoding="utf-8")
+
+    loaded = load_credentials_file(path)
+    assert loaded == credentials
+    providers = build_providers(
+        credentials_path=path,
+        adjudication_config=Config(),
+    )
+
+    assert all(provider.settings.enabled for provider in providers)
+    assert SENTINEL not in repr(providers)
+
+
+@pytest.mark.parametrize(
+    "payload,match",
+    [
+        ([], "JSON object"),
+        ({"UNKNOWN_SECRET": "value"}, "unknown credentials file key"),
+        ({"FDP_SECRET": 123}, "must be a string"),
+    ],
+)
+def test_credentials_file_rejects_invalid_shapes_without_echoing_values(
+    tmp_path, payload, match
+):
+    path = tmp_path / "credentials.local.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match=match) as exc:
+        load_credentials_file(path)
+    assert SENTINEL not in str(exc.value)
+
+
+def test_credentials_file_and_explicit_env_are_mutually_exclusive(tmp_path):
+    path = tmp_path / "credentials.local.json"
+    path.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="cannot be used together"):
+        build_providers(env={}, credentials_path=path)
 
 
 def test_whois_and_pdns_fall_back_to_shared_fdp_credentials():

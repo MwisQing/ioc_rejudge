@@ -14,6 +14,7 @@ json_temp.*
 
 # Local credentials and non-source data
 token_icp.txt
+/credentials.local.json
 /ioc_info/
 /outputs/
 /其他接口/

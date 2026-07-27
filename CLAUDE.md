@@ -2,7 +2,7 @@
 
 > 操作本项目前先读本文件。完成有意义的变更后，更新底部进度记录。
 >
-> 当前版本为 `2.1.0`。它保留 v1.4.1 离线快照兼容入口，并已完成多源聚合、五个默认在线 provider、显式 opt-in ICP、分路裁判、离线回放和 mock 端到端验收。
+> 当前版本为 `2.1.2`。它保留 v1.4.1 离线快照兼容入口，并已完成多源聚合、五个默认在线 provider、显式 opt-in ICP、分路裁判、离线回放、mock 端到端验收和项目内独立凭证文件。
 
 ## 1. 阅读顺序
 
@@ -27,7 +27,7 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.1.0` |
+| 版本 | `2.1.2` |
 | 项目类型 | Python CLI |
 | 当前输入 | iocProducer 风格 JSONL 快照、裸 IOC 文件或重复 `--ioc` |
 | 当前联网 | 裸 IOC 统一模式可按所选 provider 联网；`--offline` 与旧快照兼容模式不联网 |
@@ -250,7 +250,7 @@ ioc_rejudge_cli_1.4.1/
 python -m pytest tests -q
 ```
 
-当前结果：`620 passed`。另含控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间与发布 allow-list/忽略规则安全专项。任务 1-22 及 opt-in ICP 闭环已覆盖核心离线链路、五个默认在线 Provider、显式 ICP、工厂/CLI、有界并发、cache/run 分离、必要来源 freshness 门、聚合错误 ICP 门、响应回显凭据脱敏、历史入口和最终 mock 回放验收；另含 legacy 坏 URL 行级隔离和非 Git 发布工具测试。
+当前结果：`630 passed`。另含 GitHub Release 下载更新、本地凭证文件来源隔离、控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间与发布 allow-list/忽略规则安全专项。任务 1-22 及 opt-in ICP 闭环已覆盖核心离线链路、五个默认在线 Provider、显式 ICP、工厂/CLI、有界并发、cache/run 分离、必要来源 freshness 门、聚合错误 ICP 门、响应回显凭据脱敏、历史入口和最终 mock 回放验收；另含 legacy 坏 URL 行级隔离和非 Git 发布工具测试。
 
 任务 22 在线端到端验收：`tests/test_live_acceptance.py` 与 live pipeline 联合为 `13 passed`。九个合成场景全程使用注入 transport，并对 `requests.Session.get/post` 设置 fail-fast 网络哨兵；online mock 填充五源 cache/raw 后移除全部凭据，offline replay 的 verdict、原因、来源、顺序及 Observation 稳定字段与 online 完全一致。递归扫描 JSONL、CSV、Excel 及解压后的 XML/rels、diagnostics、cache、raw 和 log，sentinel 凭据零匹配。
 
@@ -349,4 +349,5 @@ python -m pytest tests -q
 | 2026-07-27 | H2/H3 高危修复 | CSV/Excel 自由文本统一中和公式前缀且 JSONL 保真；脏 `level` 统一规约并补齐 legacy/统一 pipeline 逐 IOC 容错；专项 22 passed、全量 617 passed |
 | 2026-07-27 | H1 高危修复 | DGA aware/naive 时间统一为 UTC 比较，默认生产路径近期 pDNS 恢复判白且近期恶意样本恢复存活标签；联合专项 79 passed、全量 618 passed；脱敏全量代理 10,853 个唯一 IOC 变化 0、白转黑 0，定向默认路径验证旧失活有效转误报 |
 | 2026-07-27 | 2.1.0 发布 | 最终全量 620 passed、发布暂存树独立 620 passed、`pack.py --check` 91 个文件；生成 `ioc_rejudge_v2.1.0_20260727-094833.zip` 并审计禁入条目 0；保留 GitHub 既有 v1.2.0 历史，`master` 快进至 `fa8c270`，已推送附注标签 `v2.1.0`，无 force push |
-| 2026-07-27 | GitHub Release | 基于既有 `v2.1.0` 标签创建正式 GitHub Release，上传 `ioc_rejudge_v2.1.0_20260727-095236.zip`；资产大小 225,256 字节，SHA256 为 `715E97563E8D8FC5B3DC38F53EC17C616AE9130A86D2CCF90C8B389AB263C14B` |
+| 2026-07-27 | 2.1.1 本地凭证文件 | 新增 `--credentials-file` 固定字段 JSON 来源，指定后不回退环境变量；发布包带空白示例并排除 `credentials.local.json`；专项 36 passed、全量 625 passed、发布清单 92 个文件 |
+| 2026-07-27 | 2.1.2 联网更新 | 解压版更新器改用 GitHub Releases API 下载并校验最新 ZIP，不再对非 Git 工作树执行 pull；更新器专项 5 passed、全量 630 passed |

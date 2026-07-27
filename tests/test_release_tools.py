@@ -46,6 +46,7 @@ REQUIRED_INIT_PATHS = {
 
 REQUIRED_GITIGNORE_ENTRIES = {
     "token_icp.txt",
+    "credentials.local.json",
     "ioc_info/",
     "outputs/",
     "其他接口/",

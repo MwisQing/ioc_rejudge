@@ -550,6 +550,10 @@ def main():
               "listed (default: " + ",".join(DEFAULT_PROVIDERS) + ")"),
     )
     parser.add_argument("--provider-config", help="Local JSON provider configuration")
+    parser.add_argument(
+        "--credentials-file",
+        help="Local JSON credentials file; when set, provider credentials are read only from this file",
+    )
     parser.add_argument("--cache-dir", help="Reusable provider response cache directory")
     parser.add_argument("--run-dir", help="Current run audit directory")
     parser.add_argument(
@@ -611,6 +615,7 @@ def main():
         or args.refresh
         or args.providers is not None
         or args.provider_config
+        or args.credentials_file
         or args.cache_dir
         or args.run_dir
     )
@@ -643,6 +648,9 @@ def main():
             try:
                 live_providers = build_providers(
                     live_names,
+                    credentials_path=(
+                        Path(args.credentials_file) if args.credentials_file else None
+                    ),
                     config_path=Path(args.provider_config) if args.provider_config else None,
                     cache_dir=Path(args.cache_dir) if args.cache_dir else None,
                     run_dir=Path(args.run_dir) if args.run_dir else None,

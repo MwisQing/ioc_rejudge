@@ -1,6 +1,6 @@
 # 架构说明
 
-本文描述 IOC Rejudge CLI `2.1.0` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
+本文描述 IOC Rejudge CLI `2.1.2` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
 
 ## 1. 总体数据流
 
@@ -135,13 +135,13 @@ ICP 响应按 `resultObject.website_icp_num`、`resultObject.icp`、`rows[0].web
 `providers/factory.py` 负责：
 
 - 保持默认 provider 顺序。
-- 从环境变量读取 endpoint 和凭据。
+- 从非密钥配置或环境变量读取 endpoint，从显式本地凭证文件或兼容环境变量读取凭据。
 - 从本地 JSON 读取非密钥配置。
 - 对缺凭据来源单独标记 `disabled`。
 - 构造 live 或 fail-closed offline transport。
 - 分离持久 cache 与当前 run 审计目录。
 
-本地配置拒绝 secret/token/password/authorization 类字段，ProviderSettings 的表示形式和异常信息不会暴露认证值。
+非密钥 provider 配置拒绝 secret/token/password/authorization 类字段。独立凭证文件只接受固定认证字段，指定后不回退环境变量；ProviderSettings 的表示形式和异常信息不会暴露认证值。
 
 ICP 默认限制为 2 workers 和 2 requests/second。配置层目前只校验二者为正数，尚未定义产品级硬上限；生产配置必须遵守接口所有者批准的上限。
 

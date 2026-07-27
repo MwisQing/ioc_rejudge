@@ -23,6 +23,7 @@ _INCLUDE_PATHS = [
     "VERSION",
     "requirements.txt",
     "requirements-dev.txt",
+    "credentials.example.json",
     "docs/ARCHITECTURE.md",
     "docs/DEVELOPMENT.md",
     "docs/HISTORY.md",

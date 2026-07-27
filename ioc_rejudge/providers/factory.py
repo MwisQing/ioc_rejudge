@@ -89,6 +89,18 @@ _SECRET_KEY_PARTS = (
     "whoisaccess",
     "pdnsaccess",
 )
+_CREDENTIAL_KEYS = frozenset({
+    "K01_COMPROMISE_API_KEY",
+    "IOC_INFO_API_KEY",
+    "FDP_ACCESS",
+    "FDP_SECRET",
+    "WHOIS_ACCESS",
+    "WHOIS_SECRET",
+    "PDNS_ACCESS",
+    "PDNS_SECRET",
+    "ICP_UC",
+    "ICP_KEY",
+})
 
 
 class _OfflineTransport:
@@ -214,6 +226,34 @@ def load_local_config(path: str | Path | None) -> dict[str, dict]:
     return validated
 
 
+def load_credentials_file(path: str | Path) -> dict[str, str]:
+    """Load only documented credential names from a local JSON object."""
+    source = Path(path)
+    if not source.is_file():
+        raise FileNotFoundError(f"credentials file not found: {source}")
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"credentials file is not valid JSON: line {exc.lineno}, column {exc.colno}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ValueError("credentials file must contain a JSON object")
+    unknown = set(payload).difference(_CREDENTIAL_KEYS)
+    if unknown:
+        raise ValueError(
+            "unknown credentials file key(s): " + ", ".join(sorted(unknown))
+        )
+    credentials: dict[str, str] = {}
+    for key, value in payload.items():
+        if not isinstance(value, str):
+            raise ValueError(f"credentials file value for {key} must be a string")
+        normalized = value.strip()
+        if normalized:
+            credentials[key] = normalized
+    return credentials
+
+
 def _validate_url(name: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"provider {name} URL must be a non-empty string")
@@ -333,6 +373,7 @@ def build_providers(
     names: str | Iterable[str] | None = None,
     *,
     env: Mapping[str, str] | None = None,
+    credentials_path: str | Path | None = None,
     config_path: str | Path | None = None,
     cache_dir: str | Path | None = None,
     run_dir: str | Path | None = None,
@@ -341,7 +382,12 @@ def build_providers(
     offline: bool = False,
 ) -> list:
     selected = parse_provider_names(names)
-    environment = os.environ if env is None else env
+    if env is not None and credentials_path is not None:
+        raise ValueError("env and credentials_path cannot be used together")
+    if credentials_path is not None:
+        environment = load_credentials_file(credentials_path)
+    else:
+        environment = os.environ if env is None else env
     local = load_local_config(config_path)
     core_config = adjudication_config or Config()
     cache_root = Path(cache_dir) if cache_dir is not None else None
@@ -434,6 +480,7 @@ __all__ = [
     "DEFAULT_PROVIDERS",
     "SUPPORTED_PROVIDERS",
     "build_providers",
+    "load_credentials_file",
     "load_local_config",
     "parse_provider_names",
 ]
