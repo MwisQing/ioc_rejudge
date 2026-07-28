@@ -76,6 +76,7 @@ def test_cli_prints_provider_summary_and_disabled_warning(tmp_path, monkeypatch,
 def test_cli_prints_sidecar_marker_and_provider_status_summary(tmp_path, monkeypatch, capsys):
     sidecar = _write_sidecar(tmp_path / "side.jsonl")
     output = tmp_path / "result.jsonl"
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -166,6 +167,7 @@ def test_unified_pipeline_progress_callback_errors_do_not_break_run():
 def test_cli_prints_progress_and_total_time(tmp_path, monkeypatch, capsys):
     sidecar = _write_sidecar(tmp_path / "side.jsonl")
     output = tmp_path / "result.jsonl"
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         sys,
         "argv",

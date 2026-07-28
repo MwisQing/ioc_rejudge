@@ -21,6 +21,7 @@ _INIT_PATHS = [
     "VERSION",
     "requirements.txt",
     "requirements-dev.txt",
+    "provider-config.example.json",
     "iocProducer_api_ioc_info.py",
     "docs/ARCHITECTURE.md",
     "docs/DEVELOPMENT.md",

@@ -64,7 +64,11 @@ def test_factory_provider_runs_through_pipeline_and_writes_audit_raw(tmp_path):
     assert len(transport.calls) == 1
     assert result.verdicts[0]["provider_statuses"]["whois"] == "success"
     assert result.diagnostics.providers["whois"].success == 1
-    assert (tmp_path / "run" / "raw" / "whois.jsonl").is_file()
+    assert list(
+        (tmp_path / "run" / "raw" / ".cache_whois").glob(
+            "cache_*.jsonl"
+        )
+    )
 
 
 def test_online_then_offline_cache_replay_uses_no_network(tmp_path):
@@ -185,6 +189,31 @@ def test_cli_passes_explicit_live_configuration_and_context(
     assert captured["run_dir"] == tmp_path / "run"
     assert captured["offline"] is False
     assert output.is_file()
+
+
+def test_cli_uses_reusable_provider_cache_by_default(tmp_path, monkeypatch):
+    output = tmp_path / "result.jsonl"
+    captured = {}
+
+    def fake_build(names, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("ioc_rejudge.cli.build_providers", fake_build)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ioc_rejudge",
+            "--ioc", "cache-default.invalid",
+            "--jsonl", str(output),
+        ],
+    )
+
+    main()
+
+    assert captured["cache_dir"].resolve() == tmp_path / "provider-cache"
 
 
 def test_cli_offline_sidecar_wins_same_name_without_live_factory_call(
@@ -373,6 +402,99 @@ class _StaticProvider:
 
     def collect(self, targets, context):
         return self.factory(targets)
+
+
+class _PlannedLiveProvider(_StaticProvider):
+    is_live_provider = True
+
+    def __init__(self, name, factory):
+        super().__init__(name, factory)
+        self.requested = []
+
+    def collect(self, targets, context):
+        self.requested.extend(target.normalized for target in targets)
+        return super().collect(targets, context)
+
+
+def _planning_provider(name, *, dga=False):
+    def result(targets):
+        observations = []
+        statuses = {}
+        for target in targets:
+            statuses[target.normalized] = ProviderStatus.NO_DATA
+            if name == "k01_compromise" and dga:
+                statuses[target.normalized] = ProviderStatus.SUCCESS
+                observations.append(Observation(
+                    ioc=target.normalized,
+                    scope=target.ioc_type,
+                    provider=name,
+                    kind="dga_classification",
+                    status=ProviderStatus.SUCCESS,
+                    freshness=Freshness.FRESH,
+                    payload={"tags": ["dga"]},
+                ))
+            elif name == "icp":
+                statuses[target.normalized] = ProviderStatus.SUCCESS
+                observations.append(Observation(
+                    ioc=target.normalized,
+                    scope=target.ioc_type,
+                    provider=name,
+                    kind="icp_registration",
+                    status=ProviderStatus.SUCCESS,
+                    freshness=Freshness.FRESH,
+                    payload={"current": False, "registration": ""},
+                ))
+        return ProviderResult(name, observations, statuses)
+
+    return _PlannedLiveProvider(name, result)
+
+
+def test_live_request_planner_skips_lifecycle_queries_not_needed_by_standard_ioc():
+    providers = [
+        _planning_provider("k01_compromise"),
+        _planning_provider("ioc_info"),
+        _planning_provider("fdark"),
+        _planning_provider("whois"),
+        _planning_provider("pdns"),
+        _planning_provider("icp"),
+    ]
+    result = run_unified_pipeline(
+        read_input_bundle(None, ["standard.invalid", "192.0.2.8"]),
+        providers,
+        Config(),
+        ProviderContext(),
+    )
+    by_name = {provider.name: provider for provider in providers}
+
+    assert by_name["icp"].requested == ["standard.invalid"]
+    assert by_name["whois"].requested == []
+    assert by_name["pdns"].requested == []
+    domain_row, ip_row = result.verdicts
+    assert domain_row["provider_statuses"]["icp"] == "success"
+    assert domain_row["provider_statuses"]["whois"] == "disabled"
+    assert ip_row["provider_statuses"]["icp"] == "disabled"
+
+
+def test_live_request_planner_adds_whois_and_pdns_only_after_dga_classification():
+    providers = [
+        _planning_provider("k01_compromise", dga=True),
+        _planning_provider("ioc_info"),
+        _planning_provider("fdark"),
+        _planning_provider("whois"),
+        _planning_provider("pdns"),
+        _planning_provider("icp"),
+    ]
+    run_unified_pipeline(
+        read_input_bundle(None, ["dga-route.invalid"]),
+        providers,
+        Config(),
+        ProviderContext(),
+    )
+    by_name = {provider.name: provider for provider in providers}
+
+    assert by_name["whois"].requested == ["dga-route.invalid"]
+    assert by_name["pdns"].requested == ["dga-route.invalid"]
+    assert by_name["icp"].requested == ["dga-route.invalid"]
 
 
 def _dga_gate_providers(sample_freshness):

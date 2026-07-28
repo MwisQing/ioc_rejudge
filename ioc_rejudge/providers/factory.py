@@ -20,6 +20,7 @@ from ioc_rejudge.providers.pdns import PDNSProvider
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import TransportError
 from ioc_rejudge.providers.whois import WhoisProvider
+from ioc_rejudge.result_cache import ResultCacheSettings
 
 
 DEFAULT_PROVIDERS = (
@@ -28,8 +29,9 @@ DEFAULT_PROVIDERS = (
     "fdark",
     "whois",
     "pdns",
+    "icp",
 )
-SUPPORTED_PROVIDERS = DEFAULT_PROVIDERS + ("icp",)
+SUPPORTED_PROVIDERS = DEFAULT_PROVIDERS
 
 _DEFAULTS = {
     "k01_compromise": {
@@ -42,15 +44,15 @@ _DEFAULTS = {
     },
     "fdark": {
         "url": "http://fdp.qianxin-inc.cn/api/v1/fdark/abstract",
-        "ttl": timedelta(days=1),
+        "ttl": timedelta(days=7),
     },
     "whois": {
         "url": "http://fdp.qianxin-inc.cn/v3/whois/detail",
-        "ttl": timedelta(days=1),
+        "ttl": timedelta(days=7),
     },
     "pdns": {
         "url": "https://fdp.qianxin-inc.cn/api/v1/passivedns/flint/rrset",
-        "ttl": timedelta(days=1),
+        "ttl": timedelta(days=7),
     },
     "icp": {
         "url": "https://icp.xuanji.qianxin.com/v2/open-api/icp-info",
@@ -201,8 +203,32 @@ def load_local_config(path: str | Path | None) -> dict[str, dict]:
         raise ValueError(f"invalid provider config JSON at line {exc.lineno}") from exc
     if not isinstance(parsed, dict):
         raise ValueError("provider config top-level must be an object")
-    if set(parsed) - {"providers"}:
+    if set(parsed) - {"providers", "result_cache"}:
         raise ValueError("provider config has unknown top-level options")
+    result_cache = parsed.get("result_cache", {})
+    if not isinstance(result_cache, dict):
+        raise ValueError("provider config 'result_cache' must be an object")
+    unknown_result_options = set(result_cache) - {
+        "enabled", "ttl_seconds", "ttl_hours", "ttl_days"
+    }
+    if unknown_result_options:
+        joined = ", ".join(sorted(unknown_result_options))
+        raise ValueError(f"unknown result_cache option: {joined}")
+    if "enabled" in result_cache and not isinstance(
+        result_cache["enabled"], bool
+    ):
+        raise ValueError("result_cache enabled must be boolean")
+    ttl_options = [
+        key
+        for key in ("ttl_seconds", "ttl_hours", "ttl_days")
+        if key in result_cache
+    ]
+    if len(ttl_options) > 1:
+        raise ValueError("result_cache must set only one TTL option")
+    if ttl_options:
+        _positive_number(
+            "result_cache", ttl_options[0], result_cache[ttl_options[0]], integer=False
+        )
     providers = parsed.get("providers", {})
     if not isinstance(providers, dict):
         raise ValueError("provider config 'providers' must be an object")
@@ -224,6 +250,47 @@ def load_local_config(path: str | Path | None) -> dict[str, dict]:
             raise ValueError(f"provider {name} query_params must be an object")
         validated[name] = dict(options)
     return validated
+
+
+def load_result_cache_settings(
+    path: str | Path | None,
+) -> ResultCacheSettings:
+    if path is None:
+        return ResultCacheSettings()
+    source = Path(path)
+    try:
+        parsed = json.loads(source.read_text(encoding="utf-8-sig"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"provider config does not exist: {source}") from exc
+    except OSError as exc:
+        raise ValueError(f"cannot read provider config {source}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid provider config JSON at line {exc.lineno}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("provider config top-level must be an object")
+    # Reuse the complete validation contract before reading this section.
+    load_local_config(source)
+    options = parsed.get("result_cache", {})
+    enabled = options.get("enabled", True)
+    ttl_options = [
+        key
+        for key in ("ttl_seconds", "ttl_hours", "ttl_days")
+        if key in options
+    ]
+    if not ttl_options:
+        ttl = timedelta(days=7)
+    else:
+        key = ttl_options[0]
+        value = _positive_number(
+            "result_cache", key, options[key], integer=False
+        )
+        if key == "ttl_seconds":
+            ttl = timedelta(seconds=value)
+        elif key == "ttl_hours":
+            ttl = timedelta(hours=value)
+        else:
+            ttl = timedelta(days=value)
+    return ResultCacheSettings(enabled=enabled, ttl=ttl)
 
 
 def load_credentials_file(path: str | Path) -> dict[str, str]:
@@ -482,5 +549,6 @@ __all__ = [
     "build_providers",
     "load_credentials_file",
     "load_local_config",
+    "load_result_cache_settings",
     "parse_provider_names",
 ]

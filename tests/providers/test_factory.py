@@ -15,6 +15,7 @@ from ioc_rejudge.providers.factory import (
     build_providers,
     load_credentials_file,
     load_local_config,
+    load_result_cache_settings,
     parse_provider_names,
 )
 
@@ -73,9 +74,10 @@ def test_default_and_explicit_provider_name_parsing():
         "fdark",
         "whois",
         "pdns",
+        "icp",
     )
     assert parse_provider_names(None) == list(DEFAULT_PROVIDERS)
-    assert SUPPORTED_PROVIDERS == DEFAULT_PROVIDERS + ("icp",)
+    assert SUPPORTED_PROVIDERS == DEFAULT_PROVIDERS
     assert parse_provider_names("icp") == ["icp"]
     assert parse_provider_names("whois,pdns") == ["whois", "pdns"]
     assert parse_provider_names(["pdns", "whois"]) == ["pdns", "whois"]
@@ -90,6 +92,7 @@ def test_default_and_explicit_provider_name_parsing():
 def test_environment_builds_all_enabled_providers_with_exact_secret_sources():
     providers = build_providers(env=_full_env(), adjudication_config=Config())
     assert [provider.name for provider in providers] == list(DEFAULT_PROVIDERS)
+    by_name = {provider.name: provider for provider in providers}
     assert all(provider.settings.enabled for provider in providers)
     by_name = {provider.name: provider for provider in providers}
     assert by_name["ioc_info"].settings.secrets == {
@@ -128,7 +131,13 @@ def test_credentials_file_is_an_explicit_secret_source_without_environment_fallb
         adjudication_config=Config(),
     )
 
-    assert all(provider.settings.enabled for provider in providers)
+    by_name = {provider.name: provider for provider in providers}
+    assert all(
+        provider.settings.enabled
+        for name, provider in by_name.items()
+        if name != "icp"
+    )
+    assert by_name["icp"].settings.enabled is False
     assert SENTINEL not in repr(providers)
 
 
@@ -207,6 +216,21 @@ def test_local_json_overrides_only_non_secret_options(tmp_path):
     assert pdns.settings.enabled is False
 
 
+def test_result_cache_config_defaults_to_seven_days_and_can_be_overridden(tmp_path):
+    defaults = load_result_cache_settings(None)
+    assert defaults.enabled is True
+    assert defaults.ttl == timedelta(days=7)
+
+    path = tmp_path / "providers.json"
+    path.write_text(json.dumps({
+        "result_cache": {"enabled": False, "ttl_days": 3},
+        "providers": {},
+    }), encoding="utf-8")
+    configured = load_result_cache_settings(path)
+    assert configured.enabled is False
+    assert configured.ttl == timedelta(days=3)
+
+
 @pytest.mark.parametrize(
     "bad_config,match",
     [
@@ -232,10 +256,17 @@ def test_missing_credentials_disable_each_provider_independently():
     assert SENTINEL not in repr(providers)
 
 
-def test_icp_is_opt_in_and_uses_special_defaults():
+def test_all_providers_default_to_seven_days_except_icp_thirty_days():
     defaults = build_providers(env=_full_env(), adjudication_config=Config())
-    assert all(provider.name != "icp" for provider in defaults)
-    icp = build_providers(["icp"], env=_full_env(), adjudication_config=Config())[0]
+    assert {provider.name: provider.settings.ttl for provider in defaults} == {
+        "k01_compromise": timedelta(days=7),
+        "ioc_info": timedelta(days=7),
+        "fdark": timedelta(days=7),
+        "whois": timedelta(days=7),
+        "pdns": timedelta(days=7),
+        "icp": timedelta(days=30),
+    }
+    icp = next(provider for provider in defaults if provider.name == "icp")
     assert icp.settings.enabled is True
     assert icp.settings.ttl == timedelta(days=30)
     assert icp.settings.workers == 2
@@ -315,8 +346,8 @@ def test_cache_dir_and_run_dir_receive_raw_without_credentials(tmp_path):
     raw = {"code": 200, "status": "ok", "data": {"expiresDate": ["2027-01-01"]}}
     provider.cache.put(target.host, raw, provider.cache_params(target))
 
-    assert (cache_dir / "whois.jsonl").is_file()
-    assert (run_dir / "raw" / "whois.jsonl").is_file()
+    assert list((cache_dir / ".cache_whois").glob("cache_*.jsonl"))
+    assert list((run_dir / "raw" / ".cache_whois").glob("cache_*.jsonl"))
     all_text = "\n".join(
         path.read_text(encoding="utf-8")
         for path in tmp_path.rglob("*")

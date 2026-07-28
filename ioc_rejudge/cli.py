@@ -22,9 +22,11 @@ from ioc_rejudge.providers.base import ProviderContext
 from ioc_rejudge.providers.factory import (
     DEFAULT_PROVIDERS,
     build_providers,
+    load_result_cache_settings,
     parse_provider_names,
 )
 from ioc_rejudge.providers.sidecar import SidecarProvider
+from ioc_rejudge.result_cache import AdjudicationResultCache
 
 _SAMPLE_LIMIT = 20
 
@@ -434,6 +436,13 @@ def _warn_input_errors(diag: Diagnostics | PipelineDiagnostics) -> None:
 
 
 def _print_provider_status(diag: Diagnostics | PipelineDiagnostics) -> None:
+    result_cache_hit = getattr(diag, "result_cache_hit", 0)
+    result_cache_miss = getattr(diag, "result_cache_miss", 0)
+    if result_cache_hit or result_cache_miss:
+        print(
+            f"Adjudication result cache: hit={result_cache_hit} "
+            f"miss={result_cache_miss}"
+        )
     providers = getattr(diag, "providers", None)
     if not providers:
         return
@@ -546,15 +555,18 @@ def main():
     parser.add_argument("--refresh", action="store_true", help="Bypass provider cache")
     parser.add_argument(
         "--providers",
-        help=("Comma-separated live providers; ICP is opt-in and runs only when explicitly "
-              "listed (default: " + ",".join(DEFAULT_PROVIDERS) + ")"),
+        help=("Comma-separated live providers (default: "
+              + ",".join(DEFAULT_PROVIDERS) + ")"),
     )
     parser.add_argument("--provider-config", help="Local JSON provider configuration")
     parser.add_argument(
         "--credentials-file",
         help="Local JSON credentials file; when set, provider credentials are read only from this file",
     )
-    parser.add_argument("--cache-dir", help="Reusable provider response cache directory")
+    parser.add_argument(
+        "--cache-dir",
+        help="Reusable provider response cache directory (default: .\\provider-cache)",
+    )
     parser.add_argument("--run-dir", help="Current run audit directory")
     parser.add_argument(
         "--provider-data",
@@ -641,18 +653,28 @@ def main():
                     "live/sidecar provider name collision: "
                     + ", ".join(sorted(collisions))
                 )
+            cache_path = (
+                Path(args.cache_dir) if args.cache_dir else Path("provider-cache")
+            )
             if args.offline:
                 live_names = [name for name in live_names if name not in sidecar_names]
-                if args.providers is None and not args.cache_dir:
+                if (
+                    args.providers is None
+                    and not args.cache_dir
+                    and sidecar_providers
+                ):
                     live_names = []
             try:
+                result_cache_settings = load_result_cache_settings(
+                    Path(args.provider_config) if args.provider_config else None
+                )
                 live_providers = build_providers(
                     live_names,
                     credentials_path=(
                         Path(args.credentials_file) if args.credentials_file else None
                     ),
                     config_path=Path(args.provider_config) if args.provider_config else None,
-                    cache_dir=Path(args.cache_dir) if args.cache_dir else None,
+                    cache_dir=cache_path,
                     run_dir=Path(args.run_dir) if args.run_dir else None,
                     adjudication_config=config,
                     offline=args.offline,
@@ -661,6 +683,13 @@ def main():
                 parser.error(str(exc))
             providers = [*live_providers, *sidecar_providers]
             _print_provider_startup(providers)
+            result_cache = (
+                AdjudicationResultCache(
+                    cache_path, ttl=result_cache_settings.ttl
+                )
+                if result_cache_settings.enabled
+                else None
+            )
             result = run_unified_pipeline(
                 bundle,
                 providers,
@@ -671,6 +700,7 @@ def main():
                     run_dir=Path(args.run_dir) if args.run_dir else None,
                 ),
                 progress=lambda message: print(message, file=sys.stderr),
+                result_cache=result_cache,
             )
     verdicts = result.verdicts
     diag = result.diagnostics

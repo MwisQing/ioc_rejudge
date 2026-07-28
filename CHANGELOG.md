@@ -1,5 +1,15 @@
 # 更新日志
 
+## 2.2.0 - 2026-07-28
+
+- 新增：六个 live provider 均进入默认来源；domain 类目标执行当前 ICP 验证，DGA 路由再追加 WHOIS/pDNS，普通路由仅在历史 URL/钓鱼灰分支需要时追加 WHOIS，IP 类跳过三类生命周期接口。
+- 变更：K01、IOC Info、F-Dark、WHOIS、pDNS 默认缓存 7 天，ICP 默认 30 天；每个 provider 均可通过本地配置单独覆盖 TTL。
+- 变更：缓存改为 `.cache_<provider>/cache_YYYY-MM-DD.jsonl` 的逐接口日期分片，并兼容读取旧 `<provider>.jsonl`；统一模式未指定 `--cache-dir` 时默认使用 `.\provider-cache`。
+- 新增：发布包包含 `provider-config.example.json`，列出六个接口的默认缓存天数及 ICP 并发/限速配置。
+- 新增：规范化 IOC 的完整研判结果默认缓存 7 天，使用独立日期分片；输入快照、规则、provider 选择或公开查询配置变化时自动重新研判，命中时跳过 provider 请求。
+- 变更：`provider-config.json` 顶层 `result_cache` 可设置 `enabled` 和单一 TTL；`--refresh` 同时绕过 provider 与研判结果缓存，diagnostics/控制台显示结果缓存 hit/miss。
+- 验证：全量 `641 passed`，实际 CLI 双跑第二次 `hit=1 miss=0` 且无 provider 采集；`python -m compileall -q ioc_rejudge tests`、`python pack.py --check` 和示例配置解析通过。
+
 ## 2.1.2 - 2026-07-27
 
 - 变更：解压版项目的 `upgrade.py` 联网更新改为查询 GitHub Releases API、下载最新 `ioc_rejudge` ZIP 并复用安全合并安装，不再对 Release 解压目录执行 `git pull`。

@@ -51,16 +51,44 @@ def test_cache_put_get_latest_and_append_only(tmp_path):
     cache.put(
         "example.invalid",
         {"value": "second"},
-        fetched_at=datetime(2026, 7, 23, 12, 0, 0),
+        fetched_at=datetime(2026, 7, 22, 13, 0, 0),
     )
     text = cache.path.read_text(encoding="utf-8")
     assert text.startswith(first_text)
     assert len(text.splitlines()) == 2
-    entry = cache.get("example.invalid", now=datetime(2026, 7, 23, 12, 0, 0))
+    entry = cache.get("example.invalid", now=datetime(2026, 7, 22, 13, 0, 0))
     assert entry is not None
     assert entry.raw == {"value": "second"}
     assert entry.fresh is True
     assert entry.stale is False
+    assert cache.path == (
+        tmp_path / ".cache_whois" / "cache_2026-07-22.jsonl"
+    )
+    assert not (tmp_path / "whois.jsonl").exists()
+
+
+def test_cache_is_provider_scoped_and_rotates_by_fetch_date(tmp_path):
+    cache = JsonlProviderCache(tmp_path, "whois", ttl=timedelta(days=7))
+    cache.put(
+        "example.invalid",
+        {"value": "day-one"},
+        fetched_at=datetime(2026, 7, 22, 23, 59, tzinfo=timezone.utc),
+    )
+    cache.put(
+        "example.invalid",
+        {"value": "day-two"},
+        fetched_at=datetime(2026, 7, 23, 0, 1, tzinfo=timezone.utc),
+    )
+
+    assert sorted(path.name for path in cache.provider_dir.glob("*.jsonl")) == [
+        "cache_2026-07-22.jsonl",
+        "cache_2026-07-23.jsonl",
+    ]
+    entry = cache.get(
+        "example.invalid",
+        now=datetime(2026, 7, 23, 0, 2, tzinfo=timezone.utc),
+    )
+    assert entry is not None and entry.raw == {"value": "day-two"}
 
 
 def test_cache_ttl_equality_is_fresh_and_one_microsecond_later_is_stale(tmp_path):

@@ -1,19 +1,19 @@
 # IOC Rejudge CLI
 
-IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.1.2` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。
+IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.2.0` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。
 
 ## 当前状态
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.1.2` |
+| 版本 | `2.2.0` |
 | Python | 已用 Python 3.12 验证 |
 | 输入 | 旧 JSONL 快照、裸 IOC 文件、重复 `--ioc` |
 | IOC 类型 | domain、URL、domain:port、IP、IP:port |
 | 结论 | `存活有效`、`失活有效`、`灰`、`误报`、`待复核` |
-| live provider | K01、IOC Info、F-Dark、WHOIS、pDNS；ICP 仅显式 opt-in |
+| live provider | K01、IOC Info、F-Dark、WHOIS、pDNS、ICP；按 IOC 类型和研判需要分流 |
 | 本地 provider | 任意 JSONL sidecar；可用于 ICP Observation 回放 |
-| 当前测试 | `630 passed` |
+| 当前测试 | `641 passed` |
 
 ICP provider 已按固定响应契约实现并通过 mock/cache 验收；真实 endpoint、认证和生产响应仍需在具备授权凭据的环境中单独确认。
 
@@ -113,7 +113,7 @@ sidecar 每行是一个 Observation，至少包含 `ioc`、`kind`、`status`、`
 默认顺序为：
 
 ```text
-k01_compromise,ioc_info,fdark,whois,pdns
+k01_compromise,ioc_info,fdark,whois,pdns,icp
 ```
 
 可显式选择和排序：
@@ -121,7 +121,7 @@ k01_compromise,ioc_info,fdark,whois,pdns
 ```powershell
 python -m ioc_rejudge `
   --ioc example.invalid `
-  --providers k01_compromise,ioc_info,fdark,whois,pdns `
+  --providers k01_compromise,ioc_info,fdark,whois,pdns,icp `
   --credentials-file .\credentials.local.json `
   --provider-config .\provider-config.json `
   --cache-dir .\provider-cache `
@@ -141,7 +141,7 @@ notepad .\credentials.local.json
 ```powershell
 python -m ioc_rejudge `
   --ioc example.invalid `
-  --providers k01_compromise,ioc_info,fdark,whois,pdns `
+  --providers k01_compromise,ioc_info,fdark,whois,pdns,icp `
   --credentials-file .\credentials.local.json `
   --cache-dir .\provider-cache `
   --run-dir .\runs\run-001 `
@@ -157,32 +157,43 @@ python -m ioc_rejudge `
 | F-Dark | `FDP_ACCESS`、`FDP_SECRET` | `FDARK_URL` |
 | WHOIS | `WHOIS_ACCESS`、`WHOIS_SECRET`；缺省回退 FDP 凭据 | `WHOIS_URL` |
 | pDNS | `PDNS_ACCESS`、`PDNS_SECRET`；缺省回退 FDP 凭据 | `PDNS_URL` |
-| ICP（仅显式选择） | `ICP_UC`、`ICP_KEY` | `ICP_URL`（可选） |
+| ICP | `ICP_UC`、`ICP_KEY` | `ICP_URL`（可选） |
 
 `--credentials-file` 只接受表中的固定凭据字段；未知字段、非字符串值和坏 JSON 会在请求前报错。指定该参数后，本次运行只从这个文件读取凭据，不回退读取进程或系统环境变量。`credentials.local.json` 已加入 `.gitignore`，并被发布 allow-list 排除。
 
-`--provider-config` 只允许非密钥设置，例如 endpoint、启用状态、超时、查询参数和 TTL。包含 secret、token、password 或 authorization 类字段的配置会被拒绝。缺少某个 provider 的凭据只会把该 provider 标记为 `disabled`，不会中止其他来源。未使用 `--credentials-file` 时，原有环境变量凭据方式继续兼容。
-
-ICP 不在默认五源列表中；只有显式列出时才允许在线请求：
+`--provider-config` 只允许非密钥设置，例如 endpoint、启用状态、超时、查询参数和 TTL。包含 secret、token、password 或 authorization 类字段的配置会被拒绝。缺少某个 provider 的凭据只会把该 provider 标记为 `disabled`，不会中止其他来源。未使用 `--credentials-file` 时，原有环境变量凭据方式继续兼容。可直接复制发布包内的缓存配置示例：
 
 ```powershell
-python -m ioc_rejudge `
-  --ioc example.invalid `
-  --providers k01_compromise,ioc_info,fdark,whois,pdns,icp `
-  --cache-dir .\provider-cache `
-  --run-dir .\runs\run-icp `
-  -j .\result.jsonl
+Copy-Item .\provider-config.example.json .\provider-config.json
+notepad .\provider-config.json
 ```
 
-ICP 查询按 host 去重，凭据来自显式凭证文件或兼容环境变量，不读取 `token_icp.txt`。默认 provider 选择、缺凭据在线运行和无缓存 offline miss 都产生零 live ICP 请求。响应写入 cache 或 `run_dir/raw` 前会按当前 ICP 凭据值再次脱敏，避免服务端回显认证值。
+K01、IOC Info、F-Dark、WHOIS、pDNS 默认缓存 7 天，ICP 默认缓存 30 天；每个 provider 都可在配置文件中使用 `ttl_days`、`ttl_hours` 或 `ttl_seconds` 单独覆盖，三者只能设置一个。未传 `--cache-dir` 时，统一模式默认使用 `.\provider-cache`。
+
+每个接口使用独立目录和日期分片：`.cache_<provider>/cache_YYYY-MM-DD.jsonl`。读取时会跨日期分片选择同一 query key 的最新记录，并兼容旧版根目录 `<provider>.jsonl`；因此缓存不会继续无限堆在一个文件里。
+
+完整研判结果也默认缓存 7 天，写入 `.cache_adjudication_results/cache_YYYY-MM-DD.jsonl`。缓存行同时保存规范化 IOC、输入/规则/provider 配置指纹、研判时间和完整输出对象；重复研判同一规范化 IOC 时，只有快照内容、规则阈值、provider 选择及影响查询的公开配置均一致才会复用，命中后直接跳过 provider 请求。可在 `provider-config.json` 顶层配置：
+
+```json
+"result_cache": {
+  "enabled": true,
+  "ttl_days": 7
+}
+```
+
+结果缓存 TTL 也支持 `ttl_hours` 或 `ttl_seconds`。过期、坏行或指纹不一致时重新研判；provider `error` 或必要来源缺失的未完成结果不写入缓存，下一次继续重试；`--refresh` 会同时绕过 provider 缓存和研判结果缓存。离线运行可以复用兼容的研判结果缓存。
+
+请求规划先调用 K01、IOC Info、F-Dark 完成分类与恶意样本发现，再按规则调用生命周期接口：domain/URL/domain:port 进行当前 ICP 验证；只有 DGA 路由再请求 WHOIS 和 pDNS，普通路由仅在历史 URL/钓鱼证据可能进入过期域名灰分支时请求 WHOIS；IP/IP:port 跳过 ICP、WHOIS 和 pDNS。
+
+ICP 查询按 host 去重，凭据来自显式凭证文件或兼容环境变量，不读取 `token_icp.txt`。缺凭据在线运行和无缓存 offline miss 都产生零 live ICP 请求。响应写入 cache 或 `run_dir/raw` 前会按当前 ICP 凭据值再次脱敏，避免服务端回显认证值。
 
 ICP 默认使用 2 workers 和 2 requests/second。本地 provider 配置可以调整这两个正数，但当前尚未定义或强制产品级硬上限；生产使用时应保持在接口所有者批准的范围内。
 
-`--refresh` 绕过已有 cache；它与 `--offline` 互斥。
+`--refresh` 绕过已有 provider cache 和研判结果 cache；它与 `--offline` 互斥。
 
 ### 离线回放
 
-在线运行把可复用响应写入 `--cache-dir`，把本次原始响应审计副本写入 `--run-dir/raw`。之后可移除凭据并回放：
+在线运行把可复用响应写入 `--cache-dir`（未指定时为 `.\provider-cache`），把本次原始响应审计副本写入 `--run-dir/raw`。之后可移除凭据并回放：
 
 ```powershell
 python -m ioc_rejudge `
@@ -199,7 +210,7 @@ ICP 的 fresh 成功空结果是 typed negative Observation（`current=false`）
 
 ### 运行可见性
 
-统一模式启动时打印本次 provider 清单：disabled 项标注 `[disabled]` 并在 stderr 给出原因（如缺少凭据），本地 sidecar 标注 `(sidecar)`。每个 provider 完成采集时在 stderr 输出一行进度与耗时；结束时打印逐 provider 状态计数（success/no_data/error/disabled/cache_hit 与耗时）和总耗时。被拒绝的输入行在 stderr 汇总计数，逐行详情仍写入 diagnostics；diagnostics 的 `provider_metrics` 新增 `duration_seconds` 字段。
+统一模式启动时打印本次 provider 清单：disabled 项标注 `[disabled]` 并在 stderr 给出原因（如缺少凭据），本地 sidecar 标注 `(sidecar)`。每个 provider 完成采集时在 stderr 输出一行进度与耗时；结束时打印研判结果缓存 `hit/miss`、逐 provider 状态计数（success/no_data/error/disabled/cache_hit 与耗时）和总耗时。diagnostics 包含 `result_cache_hit`、`result_cache_miss`、`result_cache_errors` 与 `provider_metrics.duration_seconds`。
 
 ### 结论迁移对比
 

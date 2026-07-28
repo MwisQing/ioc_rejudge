@@ -5,10 +5,16 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
+import hashlib
+import json
 from typing import Callable, Iterable
 
-from ioc_rejudge.adjudicator import adjudicate, _has_threat_residue
+from ioc_rejudge.adjudicator import (
+    adjudicate,
+    _has_historical_or_phishing_url_evidence,
+    _has_threat_residue,
+)
 from ioc_rejudge.config import Config
 from ioc_rejudge.dga import DgaFacts, adjudicate_dga
 from ioc_rejudge.evidence import (
@@ -29,11 +35,14 @@ from ioc_rejudge.observations import (
 from ioc_rejudge.parser import parse_time
 from ioc_rejudge.providers.base import Provider, ProviderContext, ProviderResult
 from ioc_rejudge.routing import RouteDecision, select_route
+from ioc_rejudge.result_cache import AdjudicationResultCache
 
 
 DGA_PROVIDER_NAME = "k01_compromise"
 REQUIRED_SAMPLE_PROVIDERS = ("ioc_info", "fdark")
 _COMPLETE_STATUSES = {ProviderStatus.SUCCESS, ProviderStatus.NO_DATA}
+_DISCOVERY_PROVIDER_NAMES = {DGA_PROVIDER_NAME, *REQUIRED_SAMPLE_PROVIDERS}
+_LIFECYCLE_PROVIDER_NAMES = {"whois", "pdns", "icp"}
 
 
 @dataclass
@@ -59,6 +68,9 @@ class PipelineDiagnostics:
     classification_unknown: list[str] = field(default_factory=list)
     missing_required_providers: dict[str, list[str]] = field(default_factory=dict)
     processing_errors: dict[str, str] = field(default_factory=dict)
+    result_cache_hit: int = 0
+    result_cache_miss: int = 0
+    result_cache_errors: list[str] = field(default_factory=list)
     processed_count: int = 0
 
     def to_dict(self) -> dict:
@@ -72,6 +84,27 @@ class UnifiedPipelineResult:
     verdicts: list[dict] = field(default_factory=list)
     diagnostics: PipelineDiagnostics = field(default_factory=PipelineDiagnostics)
     observations: list[Observation] = field(default_factory=list)
+
+
+class _PlannedProvider:
+    """Restrict a live provider to targets selected by the request planner."""
+
+    def __init__(self, provider: Provider, target_keys: set[str]) -> None:
+        self._provider = provider
+        self._target_keys = target_keys
+        self.name = provider.name
+        self.disabled_reason = getattr(provider, "disabled_reason", "")
+
+    def supports(self, target: IocTarget) -> bool:
+        return (
+            target.normalized in self._target_keys
+            and self._provider.supports(target)
+        )
+
+    def collect(
+        self, targets: list[IocTarget], context: ProviderContext
+    ) -> ProviderResult:
+        return self._provider.collect(targets, context)
 
 
 def _safe_provider_error(exc: Exception) -> str:
@@ -719,7 +752,110 @@ def _fallback_review(target: IocTarget, reason: str) -> Verdict:
     )
 
 
-def run_unified_pipeline(
+def _uses_live_request_planning(providers: list[Provider]) -> bool:
+    return any(
+        getattr(provider, "is_live_provider", False)
+        and provider.name == DGA_PROVIDER_NAME
+        for provider in providers
+    )
+
+
+def _merge_collection_stage(
+    targets: list[IocTarget],
+    provider_names: list[str],
+    stages: list[tuple[
+        dict[str, list[Observation]],
+        dict[str, dict[str, ProviderStatus]],
+        dict[str, dict[str, Freshness]],
+        list[Observation],
+    ]],
+) -> tuple[
+    dict[str, list[Observation]],
+    dict[str, dict[str, ProviderStatus]],
+    dict[str, dict[str, Freshness]],
+    list[Observation],
+]:
+    observations = {target.normalized: [] for target in targets}
+    statuses = {
+        target.normalized: {
+            name: ProviderStatus.DISABLED for name in provider_names
+        }
+        for target in targets
+    }
+    freshnesses = {target.normalized: {} for target in targets}
+    all_observations: list[Observation] = []
+    for stage_observations, stage_statuses, stage_freshnesses, stage_all in stages:
+        for target in targets:
+            key = target.normalized
+            observations[key].extend(stage_observations.get(key, []))
+            statuses[key].update(stage_statuses.get(key, {}))
+            freshnesses[key].update(stage_freshnesses.get(key, {}))
+        all_observations.extend(stage_all)
+
+    provider_order = {name: index for index, name in enumerate(provider_names)}
+    target_order = {target.normalized: index for index, target in enumerate(targets)}
+    all_observations.sort(key=lambda item: (
+        provider_order.get(item.provider, len(provider_order)),
+        target_order.get(item.ioc, len(target_order)),
+    ))
+    for key in observations:
+        observations[key].sort(
+            key=lambda item: provider_order.get(item.provider, len(provider_order))
+        )
+    return observations, statuses, freshnesses, all_observations
+
+
+def _lifecycle_request_keys(
+    targets: list[IocTarget],
+    observations_by_ioc: dict[str, list[Observation]],
+    statuses_by_ioc: dict[str, dict[str, ProviderStatus]],
+    snapshots: dict[str, list[dict]],
+    config: Config,
+    dga_configured: bool,
+) -> dict[str, set[str]]:
+    plan = {name: set() for name in _LIFECYCLE_PROVIDER_NAMES}
+    for target in targets:
+        if target.ioc_type not in {"domain", "url", "domain_port"}:
+            continue
+        key = target.normalized
+        observations = observations_by_ioc.get(key, [])
+        statuses = statuses_by_ioc.get(key, {})
+        records = snapshots.get(key, [])
+        authoritative_clue = has_authoritative_clue(
+            _route_records(records, observations),
+            config,
+        )
+        decision = select_route(
+            target,
+            observations,
+            dga_configured,
+            statuses.get(DGA_PROVIDER_NAME),
+            authoritative_clue=authoritative_clue,
+        )
+
+        # Current ICP is decisive for both standard and DGA domain judgments.
+        plan["icp"].add(key)
+        if decision.route == Route.DGA:
+            plan["whois"].add(key)
+            plan["pdns"].add(key)
+            continue
+
+        # WHOIS is only useful on the standard route when historical URL or
+        # phishing evidence could form the expired-domain gray branch.
+        try:
+            dossier, _ = _build_standard_dossier(
+                target, records, observations, statuses, config
+            )
+        except Exception:
+            continue
+        if dossier.retained_urls and _has_historical_or_phishing_url_evidence(
+            dossier
+        ):
+            plan["whois"].add(key)
+    return plan
+
+
+def _run_unified_pipeline_uncached(
     bundle: InputBundle,
     providers: Iterable[Provider],
     config: Config,
@@ -733,22 +869,73 @@ def run_unified_pipeline(
     provider_names = [str(provider.name) for provider in provider_list]
     if len(provider_names) != len(set(provider_names)):
         raise ValueError("provider names must be unique within one pipeline run")
-    diagnostics = PipelineDiagnostics(input_errors=list(bundle.errors))
-    (
-        observations_by_ioc,
-        statuses_by_ioc,
-        freshness_by_ioc,
-        all_observations,
-    ) = _collect_observations(
-        bundle.targets,
-        provider_list,
-        context,
-        diagnostics,
-        config.provider_workers,
-        progress,
-    )
     snapshots = _snapshot_records(bundle)
     dga_configured = any(provider.name == DGA_PROVIDER_NAME for provider in provider_list)
+    diagnostics = PipelineDiagnostics(input_errors=list(bundle.errors))
+    if _uses_live_request_planning(provider_list):
+        live_lifecycle = [
+            provider
+            for provider in provider_list
+            if getattr(provider, "is_live_provider", False)
+            and provider.name in _LIFECYCLE_PROVIDER_NAMES
+        ]
+        discovery = [
+            provider for provider in provider_list if provider not in live_lifecycle
+        ]
+        first_stage = _collect_observations(
+            bundle.targets,
+            discovery,
+            context,
+            diagnostics,
+            config.provider_workers,
+            progress,
+        )
+        request_keys = _lifecycle_request_keys(
+            bundle.targets,
+            first_stage[0],
+            first_stage[1],
+            snapshots,
+            config,
+            dga_configured,
+        )
+        planned_lifecycle = [
+            _PlannedProvider(
+                provider, request_keys.get(str(provider.name), set())
+            )
+            for provider in live_lifecycle
+        ]
+        second_stage = _collect_observations(
+            bundle.targets,
+            planned_lifecycle,
+            context,
+            diagnostics,
+            config.provider_workers,
+            progress,
+        )
+        (
+            observations_by_ioc,
+            statuses_by_ioc,
+            freshness_by_ioc,
+            all_observations,
+        ) = _merge_collection_stage(
+            bundle.targets,
+            provider_names,
+            [first_stage, second_stage],
+        )
+    else:
+        (
+            observations_by_ioc,
+            statuses_by_ioc,
+            freshness_by_ioc,
+            all_observations,
+        ) = _collect_observations(
+            bundle.targets,
+            provider_list,
+            context,
+            diagnostics,
+            config.provider_workers,
+            progress,
+        )
     verdicts: list[dict] = []
 
     for target in bundle.targets:
@@ -842,3 +1029,179 @@ def run_unified_pipeline(
 
     diagnostics.processed_count = len(verdicts)
     return UnifiedPipelineResult(verdicts, diagnostics, all_observations)
+
+
+def _provider_result_cache_shape(provider: Provider) -> dict:
+    shape: dict[str, object] = {
+        "name": str(provider.name),
+        "class": f"{type(provider).__module__}.{type(provider).__qualname__}",
+    }
+    settings = getattr(provider, "settings", None)
+    public_dict = getattr(settings, "public_dict", None)
+    if callable(public_dict):
+        shape["settings"] = public_dict()
+    secrets = getattr(settings, "secrets", None)
+    if isinstance(secrets, dict) and secrets:
+        secret_identity = json.dumps(
+            secrets, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        shape["credential_identity_sha256"] = hashlib.sha256(
+            secret_identity
+        ).hexdigest()
+    for name in (
+        "ignore_port",
+        "ignore_url",
+        "ignore_top",
+        "max_attempts",
+        "include_slow_variants",
+        "include_url_param",
+        "query_params",
+    ):
+        value = getattr(provider, name, None)
+        if isinstance(value, (str, int, float, bool, list, tuple, dict, type(None))):
+            shape[name] = value
+    sidecar_path = getattr(provider, "_path", None)
+    if sidecar_path is not None:
+        try:
+            content = sidecar_path.read_bytes()
+        except OSError:
+            content = b""
+        shape["sidecar_sha256"] = hashlib.sha256(content).hexdigest()
+    return shape
+
+
+def result_cache_fingerprint(
+    target: IocTarget,
+    snapshot_records: list[dict],
+    providers: Iterable[Provider],
+    config: Config,
+) -> str:
+    """Hash every local input that can change a completed verdict row."""
+    shape = {
+        "contract": 1,
+        "target": {
+            "normalized": target.normalized,
+            "ioc_type": target.ioc_type,
+            "host": target.host,
+            "ports": list(target.ports),
+        },
+        "snapshot_records": snapshot_records,
+        "config": asdict(config),
+        "providers": [
+            _provider_result_cache_shape(provider) for provider in providers
+        ],
+    }
+    encoded = json.dumps(
+        shape,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _is_cacheable_verdict_row(row: dict) -> bool:
+    statuses = row.get("provider_statuses")
+    if isinstance(statuses, dict) and any(
+        status == ProviderStatus.ERROR.value for status in statuses.values()
+    ):
+        return False
+    missing = row.get("missing_required_providers")
+    return not isinstance(missing, list) or not missing
+
+
+def run_unified_pipeline(
+    bundle: InputBundle,
+    providers: Iterable[Provider],
+    config: Config,
+    context: ProviderContext,
+    *,
+    now: datetime | None = None,
+    progress: Callable[[str], None] | None = None,
+    result_cache: AdjudicationResultCache | None = None,
+) -> UnifiedPipelineResult:
+    """Reuse compatible completed verdicts and adjudicate cache misses."""
+    provider_list = list(providers)
+    if result_cache is None:
+        return _run_unified_pipeline_uncached(
+            bundle, provider_list, config, context, now=now, progress=progress
+        )
+
+    snapshots = _snapshot_records(bundle)
+    fingerprints = {
+        target.normalized: result_cache_fingerprint(
+            target, snapshots.get(target.normalized, []), provider_list, config
+        )
+        for target in bundle.targets
+    }
+    cached_rows: dict[str, dict] = {}
+    pending_targets: list[IocTarget] = []
+    cache_errors: list[str] = []
+    current = now or datetime.now(timezone.utc)
+    for target in bundle.targets:
+        entry = None
+        if not context.refresh:
+            entry = result_cache.get(
+                target.normalized, fingerprints[target.normalized], now=current
+            )
+            cache_errors.extend(result_cache.diagnostics)
+        if entry is not None and entry.fresh:
+            cached_row = dict(entry.result)
+            cached_row["original_ioc"] = target.original
+            cached_rows[target.normalized] = cached_row
+        else:
+            pending_targets.append(target)
+
+    if pending_targets:
+        pending_bundle = InputBundle(
+            kind=bundle.kind,
+            targets=pending_targets,
+            snapshots=bundle.snapshots,
+            errors=bundle.errors,
+        )
+        result = _run_unified_pipeline_uncached(
+            pending_bundle,
+            provider_list,
+            config,
+            context,
+            now=now,
+            progress=progress,
+        )
+    else:
+        result = UnifiedPipelineResult(
+            diagnostics=PipelineDiagnostics(input_errors=list(bundle.errors))
+        )
+
+    computed_rows = {row["ioc"]: row for row in result.verdicts}
+    for target in pending_targets:
+        row = computed_rows.get(target.normalized)
+        if row is None or not _is_cacheable_verdict_row(row):
+            continue
+        try:
+            result_cache.put(
+                target.normalized,
+                fingerprints[target.normalized],
+                row,
+                fetched_at=current,
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            cache_errors.append(
+                f"result cache write failed for {target.normalized}: {exc}"
+            )
+
+    result.verdicts = [
+        cached_rows.get(target.normalized)
+        or computed_rows[target.normalized]
+        for target in bundle.targets
+        if target.normalized in cached_rows or target.normalized in computed_rows
+    ]
+    result.diagnostics.result_cache_hit = len(cached_rows)
+    result.diagnostics.result_cache_miss = len(pending_targets)
+    result.diagnostics.result_cache_errors.extend(dict.fromkeys(cache_errors))
+    for target in bundle.targets:
+        row = cached_rows.get(target.normalized)
+        if row is not None and isinstance(row.get("route"), str):
+            result.diagnostics.routes[target.normalized] = row["route"]
+    result.diagnostics.processed_count = len(result.verdicts)
+    return result

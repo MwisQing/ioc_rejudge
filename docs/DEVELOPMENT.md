@@ -1,6 +1,6 @@
 # 开发与验证
 
-本文是 IOC Rejudge CLI `2.1.2` 的开发准入说明。发布脚本只可在用户明确授权后初始化、提交、打 tag 或推送。
+本文是 IOC Rejudge CLI `2.2.0` 的开发准入说明。发布脚本只可在用户明确授权后初始化、提交、打 tag 或推送。
 
 ## 1. 开发前阅读
 
@@ -14,7 +14,7 @@
 
 ## 2. 环境
 
-- 当前版本：`2.1.2`
+- 当前版本：`2.2.0`
 - 已验证 Python：3.12
 - 运行依赖：`openpyxl`、`requests`
 - 开发依赖：pytest
@@ -46,14 +46,15 @@ python -m pytest tests -q
 结果：
 
 ```text
-630 passed
+641 passed
 ```
 
 其中包括：
 
 - 旧快照兼容、裸 IOC 输入和 CLI 行为。
 - 时序聚合、证据边界、DGA/普通路由和人工校准。
-- 五个默认 live provider、显式 opt-in ICP、sidecar、cache、transport、factory 和并发 pipeline。
+- 六个默认 live provider、按 IOC/证据需要分流的生命周期查询、sidecar、分接口日期缓存、transport、factory 和分阶段并发 pipeline。
+- 完整研判结果默认 7 天缓存、配置指纹失效、partial hit、refresh 绕过、坏行恢复和离线复用。
 - online mock 到无凭据 offline exact replay。
 - JSONL、CSV、六表 Excel、diagnostics 和凭据残留扫描。
 - ICP positive/negative、fresh/stale/offline/refresh、host 去重、聚合错误门、缺凭据 zero-call、确定性限速和内部并发上限。

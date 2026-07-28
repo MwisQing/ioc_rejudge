@@ -313,7 +313,7 @@ def test_live_nine_scenarios_offline_replay_and_credential_safety(
     transports = _build_transports()
 
     online_providers = build_providers(
-        list(DEFAULT_PROVIDERS) + ["icp"],
+        list(DEFAULT_PROVIDERS),
         cache_dir=cache_dir,
         run_dir=online_run_dir,
         adjudication_config=config,
@@ -371,8 +371,8 @@ def test_live_nine_scenarios_offline_replay_and_credential_safety(
     assert rows[IP_PORT]["provider_statuses"]["whois"] == "disabled"
     assert rows[IP_PORT]["provider_statuses"]["pdns"] == "disabled"
 
-    assert len(transports["whois"].calls) == 8
-    assert len(transports["pdns"].calls) == 8
+    assert len(transports["whois"].calls) == 6
+    assert len(transports["pdns"].calls) == 5
     assert len(transports["icp"].calls) == 8
     assert {call["params"]["dm"] for call in transports["icp"].calls} == {
         ioc for ioc in TARGETS if ioc != IP_PORT
@@ -389,20 +389,24 @@ def test_live_nine_scenarios_offline_replay_and_credential_safety(
     )
 
     for name in DEFAULT_PROVIDERS:
-        assert (online_run_dir / "raw" / f"{name}.jsonl").is_file()
+        assert list(
+            (online_run_dir / "raw" / f".cache_{name}").glob(
+                "cache_*.jsonl"
+            )
+        )
     assert online.diagnostics.providers["ioc_info"].error == 1
     assert online.diagnostics.providers["fdark"].no_data == 7
-    assert online.diagnostics.providers["whois"].disabled == 1
-    assert online.diagnostics.providers["pdns"].disabled == 1
+    assert online.diagnostics.providers["whois"].disabled == 3
+    assert online.diagnostics.providers["pdns"].disabled == 4
     assert all(
         observation.raw_ref.startswith("cache:")
         for observation in online.observations
-        if observation.provider in DEFAULT_PROVIDERS + ("icp",)
+        if observation.provider in DEFAULT_PROVIDERS
     )
 
     _remove_credentials(monkeypatch)
     offline_providers = build_providers(
-        list(DEFAULT_PROVIDERS) + ["icp"],
+        list(DEFAULT_PROVIDERS),
         cache_dir=cache_dir,
         run_dir=offline_run_dir,
         adjudication_config=config,
@@ -427,8 +431,8 @@ def test_live_nine_scenarios_offline_replay_and_credential_safety(
     assert offline.diagnostics.providers["k01_compromise"].cache_hit == 9
     assert offline.diagnostics.providers["ioc_info"].cache_hit == 8
     assert offline.diagnostics.providers["fdark"].cache_hit == 9
-    assert offline.diagnostics.providers["whois"].cache_hit == 8
-    assert offline.diagnostics.providers["pdns"].cache_hit == 8
+    assert offline.diagnostics.providers["whois"].cache_hit == 6
+    assert offline.diagnostics.providers["pdns"].cache_hit == 5
     assert offline.diagnostics.providers["icp"].cache_hit == 8
 
     output_dir = tmp_path / "outputs"

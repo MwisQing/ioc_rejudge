@@ -1,6 +1,6 @@
 # 架构说明
 
-本文描述 IOC Rejudge CLI `2.1.2` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
+本文描述 IOC Rejudge CLI `2.2.0` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
 
 ## 1. 总体数据流
 
@@ -123,10 +123,10 @@ strength, payload, raw_ref
 | `fdark` | 关联恶意样本与活动时间 | live |
 | `whois` | 当前注册和到期事实 | live |
 | `pdns` | 完整解析活动记录 | live |
-| `icp` | 按 host 去重的当前备案 positive/negative Observation | live, explicit opt-in |
+| `icp` | 按 host 去重的当前备案 positive/negative Observation | live |
 | `SidecarProvider` | 任意预取 Observation，包括 ICP | local |
 
-factory 将默认列表与支持列表分离：默认仍为五源，ICP 只有 `--providers ...,icp` 显式选择时才构造。自动验收只使用 mock/cache，真实 endpoint 风险单独保留。
+factory 默认构造六源；缺少 ICP 凭据时只将 ICP 标记为 `disabled`。自动验收只使用 mock/cache，真实 endpoint 风险单独保留。
 
 ICP 响应按 `resultObject.website_icp_num`、`resultObject.icp`、`rows[0].website_icp_num`、`rows[0].icp` 逐级短路规范化；已获得有效高优先级值后，不再让无关的低优先级坏字段推翻结果。成功空结果输出 `kind=icp_registration`、`status=success`、`payload={"current": false, "registration": ""}`；这是真实的 typed negative fact，不是 `no_data`。正结果只输出非空字符串备案号。
 
@@ -159,9 +159,11 @@ ICP 默认限制为 2 workers 和 2 requests/second。配置层目前只校验�
 
 ### 4.3 Cache 与审计
 
-`JsonlProviderCache` 使用稳定 query key 和 append-only JSONL：
+`JsonlProviderCache` 使用稳定 query key、provider 独立目录和按日 append-only JSONL：
 
-- TTL 按 provider 和 query profile 判断。
+- 默认缓存目录为 `.\provider-cache`；每个接口写入 `.cache_<provider>/cache_YYYY-MM-DD.jsonl`，不共用永久单文件。
+- K01、IOC Info、F-Dark、WHOIS、pDNS 默认 TTL 7 天，ICP 默认 30 天；本地配置可逐接口覆盖。
+- 读取跨日期分片选择同一 query key 的最新响应，并兼容旧 `<provider>.jsonl`。
 - 坏 cache 行不会阻断其他有效行。
 - stale 结果可用于审计，但不能伪装成新鲜白证据。
 - ICP cache key 只含 endpoint/host；写入 cache 和 `run_dir/raw` 前按当前 `uc`/`key` 值递归脱敏，避免服务端回显值进入 raw 或错误文本。
@@ -169,9 +171,24 @@ ICP 默认限制为 2 workers 和 2 requests/second。配置层目前只校验�
 - `--offline` 只能读取 sidecar/cache，不允许网络回退。
 - 在线响应同时写入持久 cache 和 `run_dir/raw` 审计副本。
 
+### 4.4 请求规划
+
+live pipeline 分两阶段收集，避免每个 IOC 无条件请求全部接口：
+
+1. K01、IOC Info、F-Dark 完成分类、情报详情和关联样本发现。
+2. domain 类目标总是验证当前 ICP；DGA 路由追加 WHOIS/pDNS；standard 路由只有历史 URL/钓鱼证据可能形成灰分支时追加 WHOIS；IP 类跳过三类生命周期接口。
+
+Sidecar 和自定义非 live provider 继续按原 provider 协议执行，不被 live 请求规划器改写。未请求的 provider/IOC 组合显式记录为 `disabled`，与查询完成后的 `no_data` 区分。
+
+### 4.5 研判结果缓存
+
+`AdjudicationResultCache` 位于 provider 缓存根目录的 `.cache_adjudication_results/cache_YYYY-MM-DD.jsonl`，默认 TTL 7 天。每行保存规范化 IOC、配置指纹、研判时间和完整 verdict 输出。
+
+配置指纹覆盖 IOC 规范化形态、输入快照记录、规则/阈值、provider 顺序、公开 settings、查询选项、sidecar 内容摘要和凭据身份摘要；凭据原文不序列化、不落盘。只有新鲜且指纹完全相同的结果才会命中，命中目标在 provider 收集前被移出 pending 集合。部分命中时只为 miss 目标执行 provider pipeline，最终按输入顺序归并。provider `error` 或必要来源缺失的结果不落盘。`--refresh` 强制全部 miss；坏行只进入 `result_cache_errors`，不阻断其他有效结果。
+
 ## 5. 并发与确定性
 
-pipeline 使用单个有界线程池并发不同 provider。并发只影响采集时延，不改变业务顺序：
+pipeline 在每个收集阶段使用有界线程池并发不同 provider。并发只影响采集时延，不改变业务顺序：
 
 - IOC 按输入首次出现顺序输出。
 - provider 按配置顺序归并。

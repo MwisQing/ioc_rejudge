@@ -24,6 +24,7 @@ _INCLUDE_PATHS = [
     "requirements.txt",
     "requirements-dev.txt",
     "credentials.example.json",
+    "provider-config.example.json",
     "docs/ARCHITECTURE.md",
     "docs/DEVELOPMENT.md",
     "docs/HISTORY.md",

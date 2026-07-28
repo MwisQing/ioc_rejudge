@@ -1,4 +1,4 @@
-"""Provider-scoped append-only JSONL response cache."""
+"""Provider-scoped, daily-rotated append-only JSONL response cache."""
 
 from __future__ import annotations
 
@@ -65,15 +65,31 @@ class JsonlProviderCache:
         self.provider_name = provider_name
         self.ttl = ttl
         self.root.mkdir(parents=True, exist_ok=True)
-        self.path = self.root / f"{provider_name}.jsonl"
+        self.provider_dir = self.root / f".cache_{provider_name}"
+        self.provider_dir.mkdir(parents=True, exist_ok=True)
+        self.legacy_path = self.root / f"{provider_name}.jsonl"
+        self.path = self._path_for(datetime.now(timezone.utc))
         self.diagnostics: list[str] = []
-        resolved = str(self.path.resolve())
-        with self._registry_lock:
-            self._lock = self._path_locks.setdefault(resolved, Lock())
 
     @property
     def errors(self) -> list[str]:
         return self.diagnostics
+
+    def _path_for(self, fetched_at: datetime) -> Path:
+        day = self._utc_naive(fetched_at).date().isoformat()
+        return self.provider_dir / f"cache_{day}.jsonl"
+
+    @classmethod
+    def _lock_for(cls, path: Path) -> Lock:
+        resolved = str(path.resolve())
+        with cls._registry_lock:
+            return cls._path_locks.setdefault(resolved, Lock())
+
+    def _read_paths(self) -> list[Path]:
+        paths = sorted(self.provider_dir.glob("cache_*.jsonl"))
+        if self.legacy_path.is_file():
+            paths.insert(0, self.legacy_path)
+        return paths
 
     @staticmethod
     def _stable_json(value: Any) -> str:
@@ -149,10 +165,13 @@ class JsonlProviderCache:
             "raw": stored_raw,
         }
         line = self._stable_json(row) + "\n"
-        with self._lock:
-            with self.path.open("a", encoding="utf-8", newline="") as handle:
+        path = self._path_for(fetched)
+        lock = self._lock_for(path)
+        with lock:
+            with path.open("a", encoding="utf-8", newline="") as handle:
                 handle.write(line)
                 handle.flush()
+        self.path = path
         return CacheEntry(
             key=cache_key,
             ioc=normalized,
@@ -192,34 +211,47 @@ class JsonlProviderCache:
         query_params = dict(params or {})
         normalized = self._normalize_ioc(ioc)
         expected_key = self.key(normalized, query_params)
-        if not self.path.exists():
+        paths = self._read_paths()
+        if not paths:
             return None
 
-        with self._lock:
+        lines: list[tuple[Path, int, str]] = []
+        for path in paths:
             try:
-                lines = self.path.read_text(encoding="utf-8").splitlines()
+                with self._lock_for(path):
+                    path_lines = path.read_text(encoding="utf-8").splitlines()
             except (OSError, UnicodeDecodeError) as exc:
-                self.diagnostics.append(f"cache read failed: {exc}")
-                return None
+                self.diagnostics.append(f"{path.name}: cache read failed: {exc}")
+                continue
+            lines.extend((path, line_no, line) for line_no, line in enumerate(path_lines, 1))
 
         latest: tuple[dict, datetime] | None = None
         required = {"key", "ioc", "params", "fetched_at", "raw"}
-        for line_no, line in enumerate(lines, 1):
+        for path, line_no, line in lines:
             if not line.strip():
                 continue
             try:
                 row = json.loads(line)
             except json.JSONDecodeError as exc:
-                self.diagnostics.append(f"line {line_no}: bad JSON: {exc.msg}")
+                self.diagnostics.append(
+                    f"{path.name}: line {line_no}: bad JSON: {exc.msg}"
+                )
                 continue
             if not isinstance(row, dict) or not required.issubset(row):
-                self.diagnostics.append(f"line {line_no}: missing required fields")
+                self.diagnostics.append(
+                    f"{path.name}: line {line_no}: missing required fields"
+                )
                 continue
             fetched = self._parse_datetime(row.get("fetched_at"))
             if fetched is None:
-                self.diagnostics.append(f"line {line_no}: invalid fetched_at")
+                self.diagnostics.append(
+                    f"{path.name}: line {line_no}: invalid fetched_at"
+                )
                 continue
-            if row.get("key") == expected_key:
+            if row.get("key") == expected_key and (
+                latest is None
+                or self._utc_naive(fetched) >= self._utc_naive(latest[1])
+            ):
                 latest = (row, fetched)
 
         if latest is None:

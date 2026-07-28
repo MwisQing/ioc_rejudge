@@ -1,0 +1,28 @@
+{
+  "result_cache": {
+    "enabled": true,
+    "ttl_days": 7
+  },
+  "providers": {
+    "k01_compromise": {
+      "ttl_days": 7
+    },
+    "ioc_info": {
+      "ttl_days": 7
+    },
+    "fdark": {
+      "ttl_days": 7
+    },
+    "whois": {
+      "ttl_days": 7
+    },
+    "pdns": {
+      "ttl_days": 7
+    },
+    "icp": {
+      "ttl_days": 30,
+      "workers": 2,
+      "rate_per_second": 2
+    }
+  }
+}
