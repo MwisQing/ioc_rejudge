@@ -187,18 +187,32 @@ def _download_release_asset(url: str, destination: Path, timeout: int = 120) -> 
         raise RuntimeError(f"GitHub Release 下载失败: {exc}") from exc
 
 
-def _download_latest_release(root: Path) -> Optional[Path]:
+def _check_latest_release(root: Path) -> Optional[tuple[dict, str]]:
+    """Fetch GitHub latest release and compare with the local version.
+
+    Returns ``(release, latest_version)`` when a newer version exists, and
+    ``None`` when the local version is already up to date.
+    """
     release = _fetch_latest_release()
     tag = str(release.get("tag_name", "")).strip()
     latest_version = tag[1:] if tag.lower().startswith("v") else tag
-    current_version = _read_version(root)
     if not latest_version or _parse_version(latest_version) == (0,):
         raise RuntimeError("GitHub Release 版本号无效")
+    current_version = _read_version(root)
     print(f"GitHub 最新版本: v{latest_version}")
     if _parse_version(latest_version) <= _parse_version(current_version):
         print("当前已是最新版本")
         return None
+    print(f"当前版本: v{current_version} -> 最新版本: v{latest_version}")
+    return release, latest_version
 
+
+def _download_latest_release(root: Path, release: dict, latest_version: str) -> Path:
+    """Download, validate and save the latest release asset.
+
+    The caller must have confirmed ``latest_version`` is newer than the local
+    version (via :func:`_check_latest_release`).
+    """
     name, url = _select_release_asset(release)
     release_dir = root / "release"
     release_dir.mkdir(exist_ok=True)
@@ -241,17 +255,22 @@ def main() -> None:
         _offline_update(root, zip_path)
     else:
         print("未找到本地更新包")
-        if _confirm("是否从 GitHub Release 检查并下载更新？"):
-            try:
-                zip_path = _download_latest_release(root)
-            except (OSError, RuntimeError, ValueError) as exc:
-                sys.exit(f"错误: {exc}")
-            if zip_path is None:
-                return
-            _offline_update(root, zip_path)
-        else:
+        print("正在检查 GitHub 最新版本...")
+        try:
+            latest_info = _check_latest_release(root)
+        except (OSError, RuntimeError, ValueError) as exc:
+            sys.exit(f"错误: {exc}")
+        if latest_info is None:
+            return
+        release, latest_version = latest_info
+        if not _confirm(f"发现新版本 v{latest_version}，是否下载并安装更新？"):
             print("已取消更新")
             return
+        try:
+            zip_path = _download_latest_release(root, release, latest_version)
+        except (OSError, RuntimeError, ValueError) as exc:
+            sys.exit(f"错误: {exc}")
+        _offline_update(root, zip_path)
 
     print("[2/2] 确认版本...")
     _show_version(root, "更新后版本")

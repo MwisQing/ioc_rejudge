@@ -29,3 +29,6 @@ token_icp.txt
 /provider-cache/
 /provider_cache/
 /raw/
+
+# Orchestrator runtime artifacts
+/.orchestrator/

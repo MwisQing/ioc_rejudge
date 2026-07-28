@@ -53,35 +53,51 @@ def test_fetch_latest_release_uses_github_api(monkeypatch):
     assert upgrade._fetch_latest_release()["tag_name"] == "v2.1.2"
 
 
-def test_download_latest_release_validates_and_saves_zip(tmp_path, monkeypatch):
+def test_check_latest_release_reports_newer_version(tmp_path, monkeypatch):
     (tmp_path / "VERSION").write_text("2.1.0", encoding="utf-8")
     monkeypatch.setattr(upgrade, "_fetch_latest_release", lambda: _release())
+    result = upgrade._check_latest_release(tmp_path)
+    assert result is not None
+    release, latest_version = result
+    assert latest_version == "2.1.2"
+    assert release["tag_name"] == "v2.1.2"
+
+
+def test_check_latest_release_skips_current_version(tmp_path, monkeypatch):
+    (tmp_path / "VERSION").write_text("2.1.2", encoding="utf-8")
+    monkeypatch.setattr(upgrade, "_fetch_latest_release", lambda: _release())
+    assert upgrade._check_latest_release(tmp_path) is None
+
+
+def test_check_latest_release_rejects_invalid_tag(tmp_path, monkeypatch):
+    (tmp_path / "VERSION").write_text("2.1.0", encoding="utf-8")
+    broken = {"tag_name": "not-a-version", "assets": []}
+    monkeypatch.setattr(upgrade, "_fetch_latest_release", lambda: broken)
+    with pytest.raises(RuntimeError, match="版本号无效"):
+        upgrade._check_latest_release(tmp_path)
+
+
+def test_download_latest_release_validates_and_saves_zip(tmp_path, monkeypatch):
+    (tmp_path / "VERSION").write_text("2.1.0", encoding="utf-8")
     monkeypatch.setattr(
         upgrade.urllib.request,
         "urlopen",
         lambda request, timeout: _Response(_zip_bytes()),
     )
 
-    path = upgrade._download_latest_release(tmp_path)
+    path = upgrade._download_latest_release(tmp_path, _release(), "2.1.2")
 
     assert path is not None and path.is_file()
     assert path.parent == tmp_path / "release"
 
 
-def test_download_latest_release_skips_current_version(tmp_path, monkeypatch):
-    (tmp_path / "VERSION").write_text("2.1.2", encoding="utf-8")
-    monkeypatch.setattr(upgrade, "_fetch_latest_release", lambda: _release())
-    assert upgrade._download_latest_release(tmp_path) is None
-
-
 def test_download_latest_release_removes_mismatched_package(tmp_path, monkeypatch):
     (tmp_path / "VERSION").write_text("2.1.0", encoding="utf-8")
-    monkeypatch.setattr(upgrade, "_fetch_latest_release", lambda: _release())
     monkeypatch.setattr(
         upgrade.urllib.request,
         "urlopen",
         lambda request, timeout: _Response(_zip_bytes("9.9.9")),
     )
     with pytest.raises(RuntimeError, match="版本不一致"):
-        upgrade._download_latest_release(tmp_path)
+        upgrade._download_latest_release(tmp_path, _release(), "2.1.2")
     assert not list((tmp_path / "release").glob("*.zip"))

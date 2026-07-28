@@ -1,5 +1,11 @@
 # 更新日志
 
+## 2.2.1 - 2026-07-28
+
+- 变更：`upgrade.py` 联网更新流程改为先查询 GitHub Release 发现是否有新版，确认存在新版本后再询问用户是否下载并安装；不再在不知道是否有新版时即要求用户决定是否联网检查。
+- 重构：拆分 `_check_latest_release`（只查版本不下载）与 `_download_latest_release`（确认新版后下载安装），`main` 的 GitHub 分支按检查→确认→下载→安装顺序串联。
+- 验证：更新器专项 7 passed（新增 `_check_latest_release` 版本比较、当前版本跳过与非法 tag 三项），全量 643 passed。
+
 ## 2.2.0 - 2026-07-28
 
 - 新增：六个 live provider 均进入默认来源；domain 类目标执行当前 ICP 验证，DGA 路由再追加 WHOIS/pDNS，普通路由仅在历史 URL/钓鱼灰分支需要时追加 WHOIS，IP 类跳过三类生命周期接口。
