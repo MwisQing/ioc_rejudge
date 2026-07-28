@@ -359,3 +359,4 @@ python -m pytest tests -q
 | 2026-07-27 | 2.1.2 联网更新 | 解压版更新器改用 GitHub Releases API 下载并校验最新 ZIP，不再对非 Git 工作树执行 pull；更新器专项 5 passed、全量 630 passed |
 | 2026-07-28 | 分接口缓存与请求规划 | 六源默认启用；K01/IOC Info/F-Dark/WHOIS/pDNS 默认缓存 7 天、ICP 30 天并支持逐接口配置；缓存改为 provider 独立日期分片且兼容旧格式；pipeline 先发现再按 domain/DGA/灰分支规则请求 ICP/WHOIS/pDNS；统一模式默认使用 `provider-cache`，发布包加入配置示例；全量 634 passed、语法编译、pack check 和示例解析通过 |
 | 2026-07-28 | 研判结果缓存 | 新增 `.cache_adjudication_results/cache_YYYY-MM-DD.jsonl`，默认缓存规范化 IOC 与完整结果 7 天；以快照/规则/provider 公开配置及凭据身份摘要防止误用旧结论，支持 partial hit、离线复用、refresh 绕过、错误结果重试和坏行恢复；控制台/diagnostics 显示 hit/miss；全量 641 passed，实际 CLI 双跑第二次 hit=1/miss=0 且无 provider 采集 |
+| 2026-07-28 | 2.2.0 发布 | 源树、发布包独立树及远端临时克隆均为 641 passed；发布包 `ioc_rejudge_v2.2.0_20260728-121130.zip` 含 96 个发布文件与 `RELEASE.json`，禁入项 0；发布提交 `aca70478ca086487a18f2ec8b225c7a18b4c64db` 已快进推送，附注标签 `v2.2.0` 已推送且无 force push；GitHub Release 已发布并上传同名 ZIP 资产 |
