@@ -365,4 +365,4 @@ python -m pytest tests -q
 | 2026-07-28 | 2.2.0 发布 | 源树、发布包独立树及远端临时克隆均为 641 passed；发布包 `ioc_rejudge_v2.2.0_20260728-121130.zip` 含 96 个发布文件与 `RELEASE.json`，禁入项 0；发布提交 `aca70478ca086487a18f2ec8b225c7a18b4c64db` 已快进推送，附注标签 `v2.2.0` 已推送且无 force push；GitHub Release 已发布并上传同名 ZIP 资产 |
 | 2026-07-28 | 更新器确认门 | `upgrade.py` 联网流程改为先查 GitHub Release 是否有新版，发现新版后再询问是否下载安装；拆分 `_check_latest_release` 与 `_download_latest_release`；更新器专项 7 passed、全量 643 passed |
 | 2026-07-28 | 2.2.1 发布 | 更新器确认门改动；提交 53ad8b2 已快进推送 master 并推送标签 v2.2.1，无 force push；GitHub Release v2.2.1 已发布并上传同名 ZIP 资产 |
-| 2026-07-29 | 2.2.2 发布准备 | 普通 operator/context 改为同记录 level 准入，低等级 domain 的具体恶意 URL 输出灰并保留 path，高等级在强业务闭环+显式资产变化+无残留时保留误报出口；完整结果缓存契约升级；规则专项 163 passed、人工校准 12 passed、全量 650 passed、真实缓存复判为灰 1/黑保持 1、黑白互转 0；发布清单 96 个文件检查通过 |
+| 2026-07-29 | 2.2.2 发布 | 普通 operator/context 改为同记录 level 准入，低等级 domain 的具体恶意 URL 输出灰并保留 path，高等级在强业务闭环+显式资产变化+无残留时保留误报出口；完整结果缓存契约升级；源树与独立发布包均为 650 passed；发布提交 `6dfb85431e2ba9ddc38d7371dab54815c0c9a7c8` 已快进推送并创建附注标签 `v2.2.2`；发布包 `ioc_rejudge_v2.2.2_20260729-165700.zip` 含 96 个发布文件、禁入项 0，GitHub Release 与 ZIP 资产已发布，无 force push |
