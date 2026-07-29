@@ -1,6 +1,6 @@
 # 架构说明
 
-本文描述 IOC Rejudge CLI `2.2.0` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
+本文描述 IOC Rejudge CLI `2.2.3` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
 
 ## 1. 总体数据流
 
@@ -164,6 +164,7 @@ ICP 默认限制为 2 workers 和 2 requests/second。配置层目前只校验�
 - 默认缓存目录为 `.\provider-cache`；每个接口写入 `.cache_<provider>/cache_YYYY-MM-DD.jsonl`，不共用永久单文件。
 - K01、IOC Info、F-Dark、WHOIS、pDNS 默认 TTL 7 天，ICP 默认 30 天；本地配置可逐接口覆盖。
 - 读取跨日期分片选择同一 query key 的最新响应，并兼容旧 `<provider>.jsonl`。
+- K01 批量请求在为 per-IOC query key 写入缓存时保留响应包络，但 `data` 只保留当前 IOC 节点；离线回放与在线解析使用同一响应契约。
 - 坏 cache 行不会阻断其他有效行。
 - stale 结果可用于审计，但不能伪装成新鲜白证据。
 - ICP cache key 只含 endpoint/host；写入 cache 和 `run_dir/raw` 前按当前 `uc`/`key` 值递归脱敏，避免服务端回显值进入 raw 或错误文本。

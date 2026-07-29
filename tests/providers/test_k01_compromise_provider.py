@@ -238,6 +238,47 @@ def test_cache_key_separates_every_ignore_profile(tmp_path):
     assert len(keys) == 8
 
 
+def test_batch_response_cache_is_scoped_to_each_ioc(tmp_path):
+    targets = _targets("first.invalid", "second.invalid")
+    response = {
+        "status": 10000,
+        "msg": "ok",
+        "data": {
+            target.original: {
+                "level": "malicious",
+                "data": [{"ioc_host": target.original, "tags": ["dga"]}],
+            }
+            for target in targets
+        },
+    }
+    provider, _, cache = _provider(tmp_path, [response])
+
+    result = provider.collect(targets, ProviderContext())
+
+    assert set(result.statuses.values()) == {ProviderStatus.SUCCESS}
+    for target in targets:
+        entry = cache.get(
+            target.original,
+            provider.cache_params(target),
+            now=NOW,
+        )
+        assert entry is not None
+        assert entry.raw == {
+            "status": 10000,
+            "msg": "ok",
+            "data": {target.original: response["data"][target.original]},
+        }
+
+    replay_provider, replay_transport, _ = _provider(tmp_path, [])
+    replay = replay_provider.collect(targets, ProviderContext(offline=True))
+    assert replay_transport.calls == []
+    assert replay.cache_hits == 2
+    assert set(replay.statuses.values()) == {ProviderStatus.SUCCESS}
+    assert [item.ioc for item in replay.observations] == [
+        target.normalized for target in targets
+    ]
+
+
 def test_fresh_cache_and_offline_stale_cache_do_not_call_transport(tmp_path):
     target = _targets("cached.invalid")[0]
     response = _response(target.original, ["dga"])

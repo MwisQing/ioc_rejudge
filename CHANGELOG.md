@@ -1,5 +1,11 @@
 # 更新日志
 
+## 2.2.3 - 2026-07-30
+
+- 修复：K01 批量查询不再将包含整批 IOC 的完整 `data` 重复写入每个 per-IOC cache key；每个 `.cache_k01_compromise` 条目只保留当前 IOC 节点。
+- 兼容：缓存仍保留 K01 `status`、`msg` 等响应包络，新缓存可按原 provider 解析路径完成无网络离线回放。
+- 验证：K01 回归先复现了整批响应串入每个 key 的旧行为，修复后 K01 专项 `11 passed`，provider/pipeline/online-offline 联合专项 `161 passed`，源树全量 `651 passed`。
+
 ## 2.2.2 - 2026-07-29
 
 - 修复：普通运营来源和上下文恶意词不再绕过 `historical_malicious_level` 直接把低等级 domain 判黑；多记录聚合时由承载恶意上下文的记录自身完成等级准入，禁止借用其他记录的高 level。

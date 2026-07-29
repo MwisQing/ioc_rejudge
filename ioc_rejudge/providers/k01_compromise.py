@@ -62,6 +62,25 @@ def _normalize_tags(value: object) -> tuple[list[str] | None, str | None]:
     return tags, None
 
 
+def _scope_response_to_target(response: object, target: IocTarget) -> object:
+    """Preserve the K01 envelope while isolating one target's response node."""
+
+    if not isinstance(response, dict):
+        return response
+    data = response.get("data")
+    if not isinstance(data, dict):
+        return response
+
+    scoped = dict(response)
+    if target.original in data:
+        scoped["data"] = {target.original: data[target.original]}
+    elif target.normalized in data:
+        scoped["data"] = {target.original: data[target.normalized]}
+    else:
+        scoped["data"] = {}
+    return scoped
+
+
 class K01CompromiseProvider:
     """Collect K01 classifications while preserving route-safety semantics."""
 
@@ -195,7 +214,7 @@ class K01CompromiseProvider:
         try:
             entry = self.cache.put(
                 target.original,
-                response,
+                _scope_response_to_target(response, target),
                 self.cache_params(target),
                 fetched_at=fetched_at,
             )
