@@ -407,21 +407,23 @@ def test_c2_does_not_match_hash_fragment():
 
 def test_rat_matches_with_punctuation_boundary():
     """`rat` must match when adjacent to punctuation or whitespace."""
-    dossier = _ctx_dossier("evil.com is a RAT with (backdoor)")
+    dossier = _ctx_dossier(
+        "evil.com is a RAT with (backdoor)", level=70
+    )
     a_ctx = [e for e in dossier.evidence_a if e.field == "context/comment"]
     assert len(a_ctx) >= 1
 
 
 def test_c2_matches_with_punctuation_boundary():
     """`c2` with surrounding punctuation must still match."""
-    dossier = _ctx_dossier("evil.com used as C2-server")
+    dossier = _ctx_dossier("evil.com used as C2-server", level=70)
     a_ctx = [e for e in dossier.evidence_a if e.field == "context/comment"]
     assert len(a_ctx) >= 1
 
 
 def test_chinese_malicious_indicator_still_works():
     """Chinese indicators must still use contains matching (no token boundary)."""
-    dossier = _ctx_dossier("evil.com 恶意样本通信")
+    dossier = _ctx_dossier("evil.com 恶意样本通信", level=70)
     a_ctx = [e for e in dossier.evidence_a if e.field == "context/comment"]
     assert len(a_ctx) >= 1
 

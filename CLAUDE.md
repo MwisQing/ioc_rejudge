@@ -2,7 +2,7 @@
 
 > 操作本项目前先读本文件。完成有意义的变更后，更新底部进度记录。
 >
-> 当前版本为 `2.2.0`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收和项目内独立凭证文件。
+> 当前版本为 `2.2.2`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收和项目内独立凭证文件。
 
 ## 1. 阅读顺序
 
@@ -27,7 +27,7 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.2.0` |
+| 版本 | `2.2.2` |
 | 项目类型 | Python CLI |
 | 当前输入 | iocProducer 风格 JSONL 快照、裸 IOC 文件或重复 `--ioc` |
 | 当前联网 | 裸 IOC 统一模式可按所选 provider 联网；`--offline` 与旧快照兼容模式不联网 |
@@ -79,6 +79,7 @@ HTTP 状态仍未提供；ICP 使用 typed `icp_registration` positive/negative 
 - 不打分、不平均、不让弱证据推翻强证据。
 - `updatetime` 是情报记录时间，不是存活证据。
 - `level` 是威胁等级，不是活跃状态。
+- 普通情报必须由承载恶意上下文的同一条记录达到 `historical_malicious_level` 才能进入 A/C 黑证据裁判；高 level 只表示准入，不锁死最终结论。
 - 误报表示恶意关联不成立，不是“现在不活了”。
 - 失活有效仍是黑情报，仍可用于拦截。
 - 同一 IOC 必须先聚合证据再裁判。
@@ -105,6 +106,8 @@ HTTP 状态仍未提供；ICP 使用 typed `icp_registration` positive/negative 
 ### 5.3 非 DGA
 
 - 非 DGA domain 未解决 ICP 时进入人工研判；clue-group evidence 无条件 standard block。
+- 普通 operator source 与恶意上下文不能绕过 level，也不能跨记录借级；低等级 domain 若保留具体恶意 URL，则 domain 降灰并保留 path 级 URL。
+- 高等级 operator 情报在强正常业务闭环、显式结构化资产变化且无威胁残留时仍可判误报。
 - 非 DGA 的 WHOIS 未过期和近期 pDNS 不独立判白。
 - 公开 APT 通过结构化字段组合建立历史恶意闭环，不通过“人工来源优先”例外。
 - 英文恶意词使用词法边界，`rat` 不命中 `rate1/rate2`，`c2` 不命中更长字母数字串。
@@ -361,3 +364,5 @@ python -m pytest tests -q
 | 2026-07-28 | 研判结果缓存 | 新增 `.cache_adjudication_results/cache_YYYY-MM-DD.jsonl`，默认缓存规范化 IOC 与完整结果 7 天；以快照/规则/provider 公开配置及凭据身份摘要防止误用旧结论，支持 partial hit、离线复用、refresh 绕过、错误结果重试和坏行恢复；控制台/diagnostics 显示 hit/miss；全量 641 passed，实际 CLI 双跑第二次 hit=1/miss=0 且无 provider 采集 |
 | 2026-07-28 | 2.2.0 发布 | 源树、发布包独立树及远端临时克隆均为 641 passed；发布包 `ioc_rejudge_v2.2.0_20260728-121130.zip` 含 96 个发布文件与 `RELEASE.json`，禁入项 0；发布提交 `aca70478ca086487a18f2ec8b225c7a18b4c64db` 已快进推送，附注标签 `v2.2.0` 已推送且无 force push；GitHub Release 已发布并上传同名 ZIP 资产 |
 | 2026-07-28 | 更新器确认门 | `upgrade.py` 联网流程改为先查 GitHub Release 是否有新版，发现新版后再询问是否下载安装；拆分 `_check_latest_release` 与 `_download_latest_release`；更新器专项 7 passed、全量 643 passed |
+| 2026-07-28 | 2.2.1 发布 | 更新器确认门改动；提交 53ad8b2 已快进推送 master 并推送标签 v2.2.1，无 force push；GitHub Release v2.2.1 已发布并上传同名 ZIP 资产 |
+| 2026-07-29 | 2.2.2 发布准备 | 普通 operator/context 改为同记录 level 准入，低等级 domain 的具体恶意 URL 输出灰并保留 path，高等级在强业务闭环+显式资产变化+无残留时保留误报出口；完整结果缓存契约升级；规则专项 163 passed、人工校准 12 passed、全量 650 passed、真实缓存复判为灰 1/黑保持 1、黑白互转 0；发布清单 96 个文件检查通过 |

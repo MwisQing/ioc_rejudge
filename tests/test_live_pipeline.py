@@ -781,6 +781,7 @@ def _historical_icp_snapshot(tmp_path, ioc="pipeline-icp-state.invalid"):
             {
                 "key": ioc,
                 "host": ioc,
+                "level": 70,
                 "updatetime": "2026-01-01 00:00:00",
                 "source": ["manual"],
                 "context": "rootkit 独狼病毒",

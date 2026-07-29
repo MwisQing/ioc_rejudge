@@ -6,7 +6,8 @@ import json
 from ioc_rejudge.config import Config
 from ioc_rejudge.inputs import read_input_bundle
 from ioc_rejudge.observations import ProviderStatus
-from ioc_rejudge.pipeline import run_unified_pipeline
+from ioc_rejudge import pipeline
+from ioc_rejudge.pipeline import result_cache_fingerprint, run_unified_pipeline
 from ioc_rejudge.providers.base import ProviderContext, ProviderResult
 from ioc_rejudge.result_cache import AdjudicationResultCache
 
@@ -33,6 +34,21 @@ class CountingProvider:
 class SelectiveProvider(CountingProvider):
     def supports(self, target):
         return target.normalized != "cached.invalid"
+
+
+def test_adjudication_contract_version_changes_fingerprint(monkeypatch):
+    target = read_input_bundle(None, ["contract.invalid"]).targets[0]
+    provider = CountingProvider()
+    before = result_cache_fingerprint(target, [], [provider], Config())
+
+    monkeypatch.setattr(
+        pipeline,
+        "ADJUDICATION_CACHE_CONTRACT",
+        pipeline.ADJUDICATION_CACHE_CONTRACT + 1,
+    )
+    after = result_cache_fingerprint(target, [], [provider], Config())
+
+    assert before != after
 
 
 def test_second_identical_run_reuses_complete_rows_without_provider_calls(tmp_path):

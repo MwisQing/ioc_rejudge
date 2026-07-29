@@ -168,6 +168,109 @@ def test_operator_context_blocks_after_current_icp_is_confirmed_absent():
     assert verdict.disposition == "block"
 
 
+def test_low_level_service_abuse_is_gray_and_retains_urls():
+    config = Config()
+    retained = [
+        "https://business-service.invalid/assets/poisoned.js",
+        "https://business-service.invalid/event/log",
+    ]
+    dossier = extract_evidence(merge_records([build_record(
+        "business-service.invalid",
+        level=30,
+        source=["manual", "vt_contacted", "sample-base"],
+        context=(
+            "Supply-chain malware contacted business-service.invalid through "
+            "a poisoned client component."
+        ),
+        hash_entries=[{
+            "md5": "zero-confidence",
+            "level": 70,
+            "confidence": 0,
+            "time": _days_ago(5),
+        }],
+        relate_url=[
+            {"url": retained[0], "level": 70},
+            {"url": retained[1], "level": 70},
+        ],
+        flint={"last_seen": _days_ago(1), "records": 8_000_000},
+        risk=-70,
+    )]), config)
+
+    verdict = adjudicate(dossier, config)
+
+    assert not any(
+        evidence.field == "operator_confirmed_malicious_context"
+        for evidence in dossier.evidence_a
+    )
+    assert verdict.conclusion == Conclusion.GRAY
+    assert verdict.disposition == "gray"
+    assert verdict.review_suggestion == "抽检"
+    assert verdict.retained_urls == retained
+    assert verdict.scope_actions == [
+        {"ioc": "business-service.invalid", "scope": "domain", "action": "gray"},
+        {"ioc": retained[0], "scope": "url", "action": "retain"},
+        {"ioc": retained[1], "scope": "url", "action": "retain"},
+    ]
+
+
+def test_low_level_domain_ignores_relate_url_for_other_host():
+    verdict = _test_case([build_record(
+        "business-service.invalid",
+        level=30,
+        source=["manual"],
+        context="Malware report mentions business-service.invalid.",
+        relate_url=[{
+            "url": "https://other-service.invalid/poisoned.js",
+            "level": 70,
+        }],
+    )])
+
+    assert verdict.conclusion != Conclusion.GRAY
+    assert verdict.retained_urls == []
+
+
+def test_high_level_operator_context_can_be_false_positive_after_asset_change():
+    config = Config()
+    dossier = extract_evidence(merge_records([build_record(
+        "reassigned-business.invalid",
+        level=70,
+        source=["manual"],
+        context="Historical malware used reassigned-business.invalid as C2.",
+        official_website="https://reassigned-business.invalid",
+        icp_website="CURRENT-ICP",
+        ownership_change={
+            "previous": "malicious owner",
+            "current": "verified business owner",
+        },
+    )]), config)
+
+    verdict = adjudicate(dossier, config)
+
+    assert verdict.conclusion == Conclusion.FALSE_POSITIVE
+    assert verdict.disposition == "false_positive"
+    assert verdict.review_suggestion == "抽检"
+    assert "资产变化" in verdict.reason
+    assert any(
+        evidence.field == "ownership_change"
+        for evidence in dossier.evidence_d
+    )
+
+
+def test_high_level_operator_context_without_business_closure_stays_black():
+    verdict = _test_case([build_record(
+        "active-c2.invalid",
+        level=60,
+        source=["manual"],
+        context="Malware actively uses active-c2.invalid as a C2 domain.",
+        hash_entries=[build_hash_entry(
+            "active-malware", level=70, time=_days_ago(2)
+        )],
+    )])
+
+    assert verdict.conclusion == Conclusion.ALIVE_VALID
+    assert verdict.disposition == "block"
+
+
 def _operator_history_dossier():
     config = Config()
     dossier = extract_evidence(merge_records([

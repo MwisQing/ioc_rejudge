@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from ioc_rejudge.config import Config
 from ioc_rejudge.inputs import is_valid_host, is_valid_port
 from ioc_rejudge.models import Evidence, EvidenceLevel, EvidenceStrength, IocDossier
-from ioc_rejudge.normalize import normalize_ioc
+from ioc_rejudge.normalize import coerce_level, normalize_ioc
 from ioc_rejudge.parser import parse_time
 from ioc_rejudge.profile import extract_profile
 
@@ -82,10 +82,59 @@ def extract_evidence(dossier: IocDossier, config: Config) -> IocDossier:
     _extract_c(dossier, config)
     _extract_structured_public_apt(dossier, config)
     _extract_d(dossier, config)
+    _extract_asset_change_evidence(dossier)
     _extract_e(dossier, config)
     _extract_f(dossier, config)
     _extract_profile_evidence(dossier, config)
     return dossier
+
+
+_ASSET_CHANGE_FIELDS = (
+    "asset_change",
+    "ownership_change",
+    "whois_change",
+    "registrant_change",
+    "resolv_ip_change",
+    "pdns_change",
+)
+
+
+def _is_explicit_change_value(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        return normalized not in {"", "0", "false", "no", "none", "null", "unknown"}
+    if isinstance(value, (dict, list, tuple, set)):
+        return bool(value)
+    return False
+
+
+def _extract_asset_change_evidence(dossier: IocDossier) -> None:
+    """Map only explicit structured before/after markers into D evidence."""
+    seen: set[tuple[str, str]] = set()
+    for snapshot in dossier.record_snapshots:
+        record = snapshot.raw
+        if not isinstance(record, dict):
+            continue
+        for field in _ASSET_CHANGE_FIELDS:
+            value = record.get(field)
+            if not _is_explicit_change_value(value):
+                continue
+            detail = str(value)
+            marker = (field, detail)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            dossier.evidence_d.append(Evidence(
+                level=EvidenceLevel.D,
+                field=field,
+                detail=f"explicit structured asset change: {detail}",
+                strength=EvidenceStrength.NORMAL,
+                tags=["asset_change", "structured_change"],
+            ))
 
 
 def _indicator_match(indicator: str, text_lower: str) -> bool:
@@ -148,6 +197,8 @@ def _extract_operator_evidence(dossier: IocDossier, config: Config) -> None:
     operator_sources = set(config.rules.operator_sources)
     for record in records:
         if not (_record_sources(record) & operator_sources):
+            continue
+        if coerce_level(record.get("level")) < config.historical_malicious_level:
             continue
         if not _has_strong_malicious_indicator(_record_context(record), config):
             continue
@@ -290,12 +341,38 @@ def _is_valid_retained_url(url: str) -> bool:
     return True
 
 
+def _url_matches_domain_scope(dossier: IocDossier, url: str) -> bool:
+    if dossier.ioc_type != "domain":
+        return True
+    try:
+        hostname = urlsplit(url).hostname
+    except ValueError:
+        return False
+    return bool(hostname) and hostname.lower().rstrip(".") == dossier.ioc.lower().rstrip(".")
+
+
 def _extract_a(dossier: IocDossier, config: Config):
     ioc = dossier.ioc
     combined_text = f"{dossier.context}\n{dossier.comment}"
     ioc_matched = _ioc_aware_match(ioc, combined_text)
+    eligible_records = [
+        snapshot.raw
+        for snapshot in dossier.record_snapshots
+        if isinstance(snapshot.raw, dict)
+        and coerce_level(snapshot.raw.get("level"))
+        >= config.historical_malicious_level
+    ]
+    eligible_ioc_records = [
+        record
+        for record in eligible_records
+        if _ioc_aware_match(ioc, _record_context(record))
+    ]
+    has_eligible_strong_context = any(
+        _has_strong_malicious_indicator(_record_context(record), config)
+        for record in eligible_ioc_records
+    )
 
-    if ioc_matched and _has_strong_malicious_indicator(combined_text, config):
+    if has_eligible_strong_context:
         dossier.evidence_a.append(Evidence(
             level=EvidenceLevel.A,
             field="context/comment",
@@ -316,7 +393,7 @@ def _extract_a(dossier: IocDossier, config: Config):
             tags=["indirect", "context", "neutral_indicator"],
         ))
 
-    if ioc_matched:
+    if eligible_ioc_records:
         for h in dossier.hash_entries:
             if is_malicious_sample(h, config):
                 dossier.evidence_a.append(Evidence(
@@ -327,7 +404,12 @@ def _extract_a(dossier: IocDossier, config: Config):
                     tags=["direct", "hash"],
                 ))
 
-        strong_sources = [s for s in dossier.source_set if _is_strong_source(s, config)]
+        strong_sources = sorted({
+            source
+            for record in eligible_ioc_records
+            for source in _record_sources(record)
+            if _is_strong_source(source, config)
+        })
         if strong_sources:
             dossier.evidence_a.append(Evidence(
                 level=EvidenceLevel.A,
@@ -340,7 +422,10 @@ def _extract_a(dossier: IocDossier, config: Config):
     # Collect qualifying relate_url entries into retained_urls.
     for url_entry in dossier.relate_url_entries:
         url = str(url_entry.get("url", ""))
-        if not _is_valid_retained_url(url):
+        if (
+            not _is_valid_retained_url(url)
+            or not _url_matches_domain_scope(dossier, url)
+        ):
             continue
         try:
             url_level = float(url_entry.get("level", 0))
@@ -420,13 +505,28 @@ def _extract_c(dossier: IocDossier, config: Config):
         return
 
     ioc = dossier.ioc
-    combined_text = f"{dossier.context}\n{dossier.comment}"
-    ioc_matched = _ioc_aware_match(ioc, combined_text)
+    eligible_ioc_records = [
+        snapshot.raw
+        for snapshot in dossier.record_snapshots
+        if isinstance(snapshot.raw, dict)
+        and coerce_level(snapshot.raw.get("level"))
+        >= config.historical_malicious_level
+        and _ioc_aware_match(ioc, _record_context(snapshot.raw))
+    ]
+    combined_text = "\n".join(
+        _record_context(record) for record in eligible_ioc_records
+    )
+    ioc_matched = bool(eligible_ioc_records)
 
     has_context_loop = ioc_matched and _has_malicious_indicator(combined_text, config)
     has_historical_context = ioc_matched and _has_historical_indicator(combined_text, config)
 
-    strong_sources = [s for s in dossier.source_set if _is_strong_source(s, config)]
+    strong_sources = sorted({
+        source
+        for record in eligible_ioc_records
+        for source in _record_sources(record)
+        if _is_strong_source(source, config)
+    })
     has_source_loop = bool(
         strong_sources and
         (dossier.hash_entries or dossier.relate_url_entries or
@@ -436,9 +536,6 @@ def _extract_c(dossier: IocDossier, config: Config):
     if not (has_context_loop or has_source_loop or has_historical_context):
         return
 
-    if dossier.level < config.historical_malicious_level:
-        return
-
     tags = ["historical"]
     if has_historical_context:
         tags.append("historical_context")
@@ -446,7 +543,10 @@ def _extract_c(dossier: IocDossier, config: Config):
     dossier.evidence_c.append(Evidence(
         level=EvidenceLevel.C,
         field="historical_malicious",
-        detail=f"历史恶意闭环成立，level={dossier.level} >= {config.historical_malicious_level}，情报曾经有效",
+        detail=(
+            "历史恶意闭环成立，承载恶意上下文的记录达到"
+            f"level >= {config.historical_malicious_level}，情报曾经有效"
+        ),
         strength=EvidenceStrength.NORMAL,
         tags=tags,
     ))

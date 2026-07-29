@@ -6,7 +6,7 @@ IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.2.0` 同时支
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.2.0` |
+| 版本 | `2.2.2` |
 | Python | 已用 Python 3.12 验证 |
 | 输入 | 旧 JSONL 快照、裸 IOC 文件、重复 `--ioc` |
 | IOC 类型 | domain、URL、domain:port、IP、IP:port |
@@ -231,7 +231,7 @@ python -m ioc_rejudge `
 系统不使用证据打分或平均。强弱证据按明确优先级组合：
 
 - `updatetime` 是情报记录时间，不是活跃证据。
-- `level` 是威胁等级，不直接证明当前存活。
+- `level` 先决定普通情报能否进入黑证据裁判，默认门槛为 40；达到门槛仍不等于最终必黑，也不直接证明当前存活。
 - `失活有效` 仍是黑情报，处置为 `block`。
 - provider `error`、`disabled` 与 `no_data` 严格区分。
 - 同一 IOC 先聚合 Observation，再统一裁判。
@@ -245,7 +245,9 @@ DGA 只有在可靠 K01 分类精确为 DGA-only 时进入专用路由：
 
 普通 IOC 规则包括：
 
-- 非 DGA domain 的 clue-group 证据无条件 standard block；其他 operator malicious context 仅在当前 ICP 冲突已解决时 block。当前或历史 ICP 未解决时进入 `待复核`，不自动洗白。
+- 非 DGA domain 的 clue-group 证据无条件 standard block；其他 operator malicious context 必须由达到恶意等级门槛的同一条记录承载，且仅在当前 ICP 冲突已解决时 block。
+- 低于恶意等级门槛的 domain 不因 `manual`、强来源或上下文恶意词自动升黑；若仍有达到 URL 门槛的具体恶意 URL，则 domain 输出 `灰` 并保留 path 级 URL。
+- 达到 40/50/60/70 等级只表示进入黑证据裁判；当强正常业务闭环、明确结构化资产变化和无威胁残留同时成立时，仍可判 `误报`。
 - WHOIS 未过期或近期 pDNS 不足以单独把普通 IOC 判白。
 - `relate_url` 只证明有效 HTTP(S) URL 作用范围，不自动扩大为 domain 强证据。
 - `灰` 表示当前范围不继续拦截但也不加入白名单，可通过 `retained_urls` 保留具体 URL。

@@ -39,6 +39,7 @@ from ioc_rejudge.result_cache import AdjudicationResultCache
 
 
 DGA_PROVIDER_NAME = "k01_compromise"
+ADJUDICATION_CACHE_CONTRACT = 2
 REQUIRED_SAMPLE_PROVIDERS = ("ioc_info", "fdark")
 _COMPLETE_STATUSES = {ProviderStatus.SUCCESS, ProviderStatus.NO_DATA}
 _DISCOVERY_PROVIDER_NAMES = {DGA_PROVIDER_NAME, *REQUIRED_SAMPLE_PROVIDERS}
@@ -1078,7 +1079,7 @@ def result_cache_fingerprint(
 ) -> str:
     """Hash every local input that can change a completed verdict row."""
     shape = {
-        "contract": 1,
+        "contract": ADJUDICATION_CACHE_CONTRACT,
         "target": {
             "normalized": target.normalized,
             "ioc_type": target.ioc_type,

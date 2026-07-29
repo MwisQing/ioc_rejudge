@@ -147,9 +147,11 @@ def test_strong_a_neutral_indicators_do_not_promote_strong_a():
 
 
 def test_strong_a_malicious_nature_word_promotes_strong_a():
-    # trojan/backdoor/rat/c2/malware carry malicious nature and still form strong A.
+    # Eligible intelligence plus malicious-nature words still forms strong A.
     for word in ("trojan", "backdoor", "rat", "c2", "malware"):
-        dossier = _ctx_dossier(f"evil.com observed as {word} callback")
+        dossier = _ctx_dossier(
+            f"evil.com observed as {word} callback", level=70
+        )
         strong_ctx_a = [
             e for e in dossier.evidence_a
             if e.field == "context/comment" and e.strength == EvidenceStrength.STRONG
@@ -159,12 +161,50 @@ def test_strong_a_malicious_nature_word_promotes_strong_a():
 
 def test_strong_a_neutral_then_malicious_word_still_strong_a():
     # When both neutral and strong words are present, strong word wins.
-    dossier = _ctx_dossier("Sample evil.com connected to trojan C2")
+    dossier = _ctx_dossier(
+        "Sample evil.com connected to trojan C2", level=70
+    )
     strong_ctx_a = [
         e for e in dossier.evidence_a
         if e.field == "context/comment" and e.strength == EvidenceStrength.STRONG
     ]
     assert len(strong_ctx_a) == 1
+
+
+def test_low_level_malicious_context_does_not_promote_strong_a():
+    dossier = _ctx_dossier(
+        "Malware used evil.com as a C2 callback", level=30
+    )
+
+    assert not [
+        evidence for evidence in dossier.evidence_a
+        if evidence.field == "context/comment"
+    ]
+
+
+def test_unrelated_high_level_record_does_not_lift_low_level_context():
+    dossier = extract_evidence(merge_records([
+        build_record(
+            "evil.com",
+            level=30,
+            source=["manual"],
+            context="Malware used evil.com as a C2 callback.",
+        ),
+        build_record(
+            "evil.com",
+            level=70,
+            source=["spider"],
+            context="Unrelated high-level review record.",
+            hash_entries=[build_hash_entry(
+                "unrelated-high-level", level=70, time=_days_ago(2)
+            )],
+        ),
+    ]), Config())
+
+    fields = {evidence.field for evidence in dossier.evidence_a}
+    assert "operator_confirmed_malicious_context" not in fields
+    assert "context/comment" not in fields
+    assert not [evidence for evidence in dossier.evidence_c]
 
 
 def test_clue_group_comment_creates_authoritative_a():

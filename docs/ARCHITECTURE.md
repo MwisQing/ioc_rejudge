@@ -226,12 +226,14 @@ DGA 规则按固定顺序执行：
 
 ### 7.2 普通路由
 
-- clue-group evidence 无条件 standard block；operator source + 明确恶意 context 仅在当前 ICP 冲突已解决时 block。未解决的当前/历史 ICP 对非 DGA domain 进入待复核。
+- clue-group evidence 无条件 standard block。普通 operator source + 明确恶意 context 必须由达到 `historical_malicious_level` 的同一条记录承载，不能借用其他记录的高 level；当前/历史 ICP 未解决时进入待复核。
+- 低于恶意等级门槛的 domain 不形成普通 A/C 黑证据；若存在达到 `relate_url_malicious_level` 的具体 URL 且无合格恶意样本，则 domain 降灰并优先保留带 path 的 URL。
+- 高等级只提供黑证据准入，不锁死结论；强业务闭环、显式结构化资产变化与无威胁残留同时成立时允许输出误报。
 - WHOIS 未过期或近期 pDNS 不独立判白。
 - 英文恶意 indicator 使用字母数字词法边界；中文保持包含匹配。
 - 公开 APT 只在结构化条件闭环时形成历史恶意证据。
 - `relate_url` 仅对结构、host 和端口均有效的 HTTP(S) URL 建立精确作用范围。
-- 灰要求完整历史 URL 闭环和对应正常化条件，不能由弱白证据单独触发。
+- 灰包括既有的历史 URL/失活域名分支，以及低等级但具体恶意 URL 仍需保留的正常服务滥用分支；弱白证据本身不能单独触发灰。
 
 ## 8. 输出与诊断
 

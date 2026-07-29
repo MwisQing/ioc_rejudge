@@ -1,6 +1,7 @@
 """Judgment tree - A-F evidence to verdict."""
 from datetime import datetime, timedelta
 import re
+from urllib.parse import urlsplit
 
 from ioc_rejudge.config import Config
 from ioc_rejudge.models import IocDossier, Verdict, Conclusion
@@ -90,6 +91,57 @@ def _is_gray_domain_candidate(dossier: IocDossier, config: Config) -> bool:
         return False
 
     return _has_historical_or_phishing_url_evidence(dossier)
+
+
+def _is_low_level_url_scope_candidate(
+    dossier: IocDossier, config: Config
+) -> bool:
+    """Keep real URL-level abuse without escalating a low-level domain."""
+    if dossier.ioc_type != "domain":
+        return False
+    if dossier.level >= config.historical_malicious_level:
+        return False
+    if not dossier.retained_urls:
+        return False
+    return not any(
+        is_malicious_sample(entry, config) for entry in dossier.hash_entries
+    )
+
+
+def _scoped_retained_urls(dossier: IocDossier) -> list[str]:
+    """Prefer path-specific URLs when a domain-level verdict is gray."""
+    path_scoped = []
+    for url in dossier.retained_urls:
+        try:
+            path = urlsplit(url).path
+        except ValueError:
+            continue
+        if path and path != "/":
+            path_scoped.append(url)
+    return path_scoped or list(dossier.retained_urls)
+
+
+def _gray_url_scope_verdict(
+    dossier: IocDossier, *, reason: str, review_suggestion: str
+) -> Verdict:
+    verdict = _make_verdict(
+        dossier,
+        Conclusion.GRAY,
+        "正常服务被滥用",
+        "作用范围受限",
+        "中",
+        review_suggestion,
+        reason=reason,
+    )
+    verdict.retained_urls = _scoped_retained_urls(dossier)
+    verdict.scope_actions = [
+        {"ioc": dossier.ioc, "scope": "domain", "action": "gray"},
+        *[
+            {"ioc": url, "scope": "url", "action": "retain"}
+            for url in verdict.retained_urls
+        ],
+    ]
+    return verdict
 
 
 def _has_normal_business_closure(dossier: IocDossier) -> bool:
@@ -307,6 +359,25 @@ def adjudicate(dossier: IocDossier, config: Config | None = None) -> Verdict:
             "判定为黑：命中运营线索群确定恶意证据，无需人工复核。",
         )
 
+    if (
+        _has_evidence_field(dossier, "operator_confirmed_malicious_context")
+        and _has_normal_business_closure(dossier)
+        and _has_asset_change_candidate(dossier)
+        and not _has_threat_residue(dossier, config)
+    ):
+        return _make_verdict(
+            dossier,
+            Conclusion.FALSE_POSITIVE,
+            "情报过期",
+            "无实质活动",
+            "中",
+            "抽检",
+            reason=(
+                "判定为误报：情报等级达到恶意准入门槛，但当前正常业务闭环与"
+                "明确资产变化证据同时成立，且未发现未解决威胁残留。"
+            ),
+        )
+
     if _has_meaningful_icp(dossier):
         return _make_verdict(
             dossier,
@@ -319,6 +390,16 @@ def adjudicate(dossier: IocDossier, config: Config | None = None) -> Verdict:
                 "判定为待复核：非DGA IOC存在ICP记录，备案可能属于历史或当前资产，"
                 "必须人工确认。"
             ),
+        )
+
+    if _is_low_level_url_scope_candidate(dossier, config):
+        return _gray_url_scope_verdict(
+            dossier,
+            reason=(
+                "判定为灰：domain情报等级未达到恶意准入门槛，"
+                "但仍存在需要保留的具体恶意URL；domain不继续拦截且不加入白名单。"
+            ),
+            review_suggestion="抽检",
         )
 
     if _has_evidence_field(dossier, "operator_confirmed_malicious_context"):
