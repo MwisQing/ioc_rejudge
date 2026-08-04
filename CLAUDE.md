@@ -321,7 +321,7 @@ python -m pytest tests -q
 
 | 日期 | 范围 | 完成内容与验证摘要 |
 |---|---|---|
-| 2026-08-04 | comment/context 直接判黑规则 | 新增 `authoritative_context_indicators` 默认关键词“黑产/扩展/扩线”；命中记录生成高优先级 A 证据，强制标准路由并跳过 ICP/DGA 白证据，输出 block；关键词/路由/pipeline/人工校准专项通过，全量 `656 passed`；10,856 条脱敏快照 before/after 迁移仅有 253 条待复核转黑、黑白互转 0 |
+| 2026-08-04 | 2.2.4 发布 | 新增 `authoritative_context_indicators` 默认关键词“黑产/扩展/扩线”，命中后强制标准路由并跳过 ICP/DGA 白证据，直接输出 block；源树与独立发布包均为 `656 passed`，10,856 条脱敏快照迁移仅有 253 条待复核转黑、黑白互转 0；发布提交 `19f58ef13a07c38d2f922b86160bf9f6f19229a8` 与附注标签 `v2.2.4` 已推送；发布包 `ioc_rejudge_v2.2.4_20260804-161114.zip` 含 96 个发布文件、禁入项 0、SHA-256 `a4e64b68a727095fa570e0e2692a8d8ece39ff212358f3332fb6208032985791`，GitHub Release 与 ZIP 资产已发布，无 force push |
 | 2026-06 | v1.4.1 | 建立离线快照解析、IOC 归一化、A-F 证据、画像、裁判、导出、诊断和发布脚本；历史详情见 `docs/HISTORY.md` |
 | 2026-07-22 | 人工校准 | 完成首批 7 条和第二批 4 条人工研判，识别 DGA、时序、ICP、URL 作用范围和公开 APT 边界 |
 | 2026-07-23 | 设计 | 确认多源聚合、DGA 专用规则、非 DGA ICP 人工门和灰状态；完成规格与两份实施计划 |
