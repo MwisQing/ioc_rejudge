@@ -179,11 +179,40 @@ def has_authoritative_clue(records: list[dict], config: Config) -> bool:
     )
 
 
+def authoritative_context_matches(
+    records: list[dict], config: Config
+) -> list[str]:
+    """Return configured context/comment keywords that force a black verdict."""
+    matches: list[str] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        text = _record_context(record).lower()
+        for indicator in config.rules.authoritative_context_indicators:
+            if indicator not in matches and _indicator_match(indicator, text):
+                matches.append(indicator)
+    return matches
+
+
 def _extract_operator_evidence(dossier: IocDossier, config: Config) -> None:
     records = [
         snapshot.raw for snapshot in dossier.record_snapshots
         if isinstance(snapshot.raw, dict)
     ]
+    keyword_matches = authoritative_context_matches(records, config)
+    if keyword_matches:
+        dossier.evidence_a.append(Evidence(
+            level=EvidenceLevel.A,
+            field="authoritative_context_keyword",
+            detail=(
+                "comment/context 命中直接判黑关键词: "
+                + ", ".join(keyword_matches)
+            ),
+            strength=EvidenceStrength.STRONG,
+            tags=["authoritative", "context_keyword"],
+        ))
+        return
+
     if has_authoritative_clue(records, config):
         dossier.evidence_a.append(Evidence(
             level=EvidenceLevel.A,

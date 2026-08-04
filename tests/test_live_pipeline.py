@@ -702,6 +702,36 @@ def test_snapshot_clue_forces_standard_before_exact_dga(tmp_path):
     assert result.verdicts[0]["disposition"] == "block"
 
 
+def test_snapshot_context_keyword_forces_black_before_exact_dga(tmp_path):
+    snapshot = tmp_path / "keyword.jsonl"
+    snapshot.write_text(json.dumps({
+        "ioc": "snapshot-keyword.invalid",
+        "data": [{
+            "key": "snapshot-keyword.invalid",
+            "host": "snapshot-keyword.invalid",
+            "level": 0,
+            "context": "记录为黑产扩线流程",
+            "source": ["spider"],
+            "icp_website": "CURRENT-ICP",
+        }],
+    }, ensure_ascii=False) + "\n", encoding="utf-8")
+    providers = [_StaticProvider(
+        "k01_compromise",
+        _dga_classification_provider(),
+    )]
+
+    result = run_unified_pipeline(
+        read_input_bundle(str(snapshot)), providers, Config(), ProviderContext()
+    )
+
+    row = result.verdicts[0]
+    assert result.diagnostics.routes["snapshot-keyword.invalid"] == "standard"
+    assert row["conclusion"] == "失活有效"
+    assert row["disposition"] == "block"
+    assert "黑产" in row["reason"]
+    assert "扩线" in row["reason"]
+
+
 def test_successful_ioc_info_clue_forces_standard_before_exact_dga():
     record = {
         "key": "ioc-info-clue.invalid",

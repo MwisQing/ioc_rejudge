@@ -1,19 +1,19 @@
 # IOC Rejudge CLI
 
-IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.2.3` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。
+IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.2.4` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。
 
 ## 当前状态
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.2.3` |
+| 版本 | `2.2.4` |
 | Python | 已用 Python 3.12 验证 |
 | 输入 | 旧 JSONL 快照、裸 IOC 文件、重复 `--ioc` |
 | IOC 类型 | domain、URL、domain:port、IP、IP:port |
 | 结论 | `存活有效`、`失活有效`、`灰`、`误报`、`待复核` |
 | live provider | K01、IOC Info、F-Dark、WHOIS、pDNS、ICP；按 IOC 类型和研判需要分流 |
 | 本地 provider | 任意 JSONL sidecar；可用于 ICP Observation 回放 |
-| 当前测试 | `651 passed` |
+| 当前测试 | `656 passed` |
 
 ICP provider 已按固定响应契约实现并通过 mock/cache 验收；真实 endpoint、认证和生产响应仍需在具备授权凭据的环境中单独确认。
 

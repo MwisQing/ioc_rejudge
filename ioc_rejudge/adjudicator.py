@@ -323,7 +323,9 @@ def _has_evidence_field(dossier: IocDossier, field: str) -> bool:
     return any(evidence.field == field for evidence in dossier.evidence_a)
 
 
-def _authoritative_black_verdict(dossier: IocDossier, reason: str) -> Verdict:
+def _authoritative_black_verdict(
+    dossier: IocDossier, reason: str, malicious_nature: str = "运营人员确定恶意"
+) -> Verdict:
     conclusion = (
         Conclusion.ALIVE_VALID if dossier.evidence_b
         else Conclusion.INACTIVE_VALID
@@ -332,7 +334,7 @@ def _authoritative_black_verdict(dossier: IocDossier, reason: str) -> Verdict:
     return _make_verdict(
         dossier,
         conclusion,
-        "运营人员确定恶意",
+        malicious_nature,
         "近一年活跃" if dossier.evidence_b else "历史有效",
         "高",
         "不看",
@@ -352,6 +354,17 @@ def adjudicate(dossier: IocDossier, config: Config | None = None) -> Verdict:
         and "structured_public_apt" in evidence.tags
         for evidence in dossier.evidence_c
     )
+
+    if _has_evidence_field(dossier, "authoritative_context_keyword"):
+        evidence = next(
+            item for item in dossier.evidence_a
+            if item.field == "authoritative_context_keyword"
+        )
+        return _authoritative_black_verdict(
+            dossier,
+            f"判定为黑：{evidence.detail}，按高优先级规则直接拦截。",
+            malicious_nature="规则关键词确定恶意",
+        )
 
     if _has_evidence_field(dossier, "operator_clue_group"):
         return _authoritative_black_verdict(

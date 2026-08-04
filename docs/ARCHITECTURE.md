@@ -1,6 +1,6 @@
 # 架构说明
 
-本文描述 IOC Rejudge CLI `2.2.3` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
+本文描述 IOC Rejudge CLI `2.2.4` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
 
 ## 1. 总体数据流
 

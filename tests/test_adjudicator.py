@@ -143,6 +143,35 @@ def test_clue_group_overrides_current_icp_and_is_black():
     assert verdict.review_suggestion == "不看"
 
 
+@pytest.mark.parametrize(
+    ("field", "keyword"),
+    [
+        ("comment", "黑产"),
+        ("context", "扩展"),
+        ("comment", "扩线"),
+    ],
+)
+def test_authoritative_context_keyword_directly_blocks(field, keyword):
+    dossier = extract_evidence(merge_records([build_record(
+        "keyword-priority.invalid",
+        level=0,
+        source=["spider"],
+        icp_website="CURRENT-ICP",
+        **{field: f"分析记录包含{keyword}流程"},
+    )]), Config())
+
+    verdict = adjudicate(dossier, Config())
+
+    assert verdict.conclusion == Conclusion.INACTIVE_VALID
+    assert verdict.disposition == "block"
+    assert verdict.malicious_nature == "规则关键词确定恶意"
+    assert keyword in verdict.reason
+    assert any(
+        evidence.field == "authoritative_context_keyword"
+        for evidence in dossier.evidence_a
+    )
+
+
 def test_operator_context_waits_when_historical_icp_is_unresolved():
     dossier = extract_evidence(merge_records([build_record(
         "operator-history.invalid",

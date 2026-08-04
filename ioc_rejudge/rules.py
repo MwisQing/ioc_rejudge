@@ -23,6 +23,7 @@ _BUILT_IN_DEFAULTS: dict = {
         "dropper", "ransom", "蠕虫", "病毒", "漏洞", "勒索",
     ],
     "context_comment_malicious_indicators": [],
+    "authoritative_context_indicators": ["黑产", "扩展", "扩线"],
     "context_comment_historical_indicators": [
         "historical", "history", "曾", "历史", "曾经",
     ],
@@ -44,6 +45,7 @@ _LIST_FIELDS = [
     "strong_sources", "weak_sources", "malicious_indicators",
     "strong_malicious_indicators",
     "context_comment_malicious_indicators", "context_comment_historical_indicators",
+    "authoritative_context_indicators",
     "normalization_indicators", "review_indicators", "trusted_business_fields",
     "authoritative_clue_indicators", "operator_sources",
 ]
@@ -57,6 +59,7 @@ class RuleConfig:
     malicious_indicators: list[str] = field(default_factory=list)
     strong_malicious_indicators: list[str] = field(default_factory=list)
     context_comment_malicious_indicators: list[str] = field(default_factory=list)
+    authoritative_context_indicators: list[str] = field(default_factory=list)
     context_comment_historical_indicators: list[str] = field(default_factory=list)
     normalization_indicators: list[str] = field(default_factory=list)
     review_indicators: list[str] = field(default_factory=list)

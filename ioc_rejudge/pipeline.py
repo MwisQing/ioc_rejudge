@@ -18,6 +18,7 @@ from ioc_rejudge.adjudicator import (
 from ioc_rejudge.config import Config
 from ioc_rejudge.dga import DgaFacts, adjudicate_dga
 from ioc_rejudge.evidence import (
+    authoritative_context_matches,
     extract_evidence,
     has_authoritative_clue,
     is_malicious_sample,
@@ -39,7 +40,7 @@ from ioc_rejudge.result_cache import AdjudicationResultCache
 
 
 DGA_PROVIDER_NAME = "k01_compromise"
-ADJUDICATION_CACHE_CONTRACT = 2
+ADJUDICATION_CACHE_CONTRACT = 3
 REQUIRED_SAMPLE_PROVIDERS = ("ioc_info", "fdark")
 _COMPLETE_STATUSES = {ProviderStatus.SUCCESS, ProviderStatus.NO_DATA}
 _DISCOVERY_PROVIDER_NAMES = {DGA_PROVIDER_NAME, *REQUIRED_SAMPLE_PROVIDERS}
@@ -826,12 +827,17 @@ def _lifecycle_request_keys(
             _route_records(records, observations),
             config,
         )
+        authoritative_context = bool(authoritative_context_matches(
+            _route_records(records, observations),
+            config,
+        ))
         decision = select_route(
             target,
             observations,
             dga_configured,
             statuses.get(DGA_PROVIDER_NAME),
             authoritative_clue=authoritative_clue,
+            authoritative_context=authoritative_context,
         )
 
         # Current ICP is decisive for both standard and DGA domain judgments.
@@ -947,12 +953,17 @@ def _run_unified_pipeline_uncached(
             _route_records(snapshot_records, observations),
             config,
         )
+        authoritative_context = bool(authoritative_context_matches(
+            _route_records(snapshot_records, observations),
+            config,
+        ))
         decision: RouteDecision = select_route(
             target,
             observations,
             dga_configured,
             statuses.get(DGA_PROVIDER_NAME),
             authoritative_clue=authoritative_clue,
+            authoritative_context=authoritative_context,
         )
         diagnostics.routes[target.normalized] = decision.route.value
         if decision.classification_unknown:

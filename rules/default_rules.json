@@ -60,6 +60,11 @@
     "勒索"
   ],
   "context_comment_malicious_indicators": [],
+  "authoritative_context_indicators": [
+    "黑产",
+    "扩展",
+    "扩线"
+  ],
   "context_comment_historical_indicators": [
     "historical",
     "history",

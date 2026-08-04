@@ -1,5 +1,10 @@
 # 更新日志
 
+## 2.2.4 - 2026-08-04
+
+- 新增：规则配置支持 `authoritative_context_indicators`，默认识别 comment/context 中的“黑产”“扩展”“扩线”；命中后跳过 DGA 白证据和普通 ICP 门，直接输出 `block` 黑结论，并在原因中记录命中词。
+- 验证：关键词、路由、统一 pipeline 与人工校准专项通过；全量测试 `656 passed`；脱敏快照 before/after 共 10,856 条，新增规则只产生 `待复核→存活有效/失活有效`，黑白互转为 0。
+
 ## 2.2.3 - 2026-07-30
 
 - 修复：K01 批量查询不再将包含整批 IOC 的完整 `data` 重复写入每个 per-IOC cache key；每个 `.cache_k01_compromise` 条目只保留当前 IOC 节点。

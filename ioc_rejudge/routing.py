@@ -24,9 +24,16 @@ def select_route(
     dga_provider_status: ProviderStatus | None,
     *,
     authoritative_clue: bool = False,
+    authoritative_context: bool = False,
 ) -> RouteDecision:
     """Choose DGA only for a successful, exact DGA-only classification."""
     del target  # Reserved for future target-specific routing policy.
+
+    if authoritative_context:
+        return RouteDecision(
+            Route.STANDARD,
+            reason="authoritative context keyword evidence",
+        )
 
     if authoritative_clue:
         return RouteDecision(

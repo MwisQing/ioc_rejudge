@@ -62,6 +62,18 @@ def test_authoritative_clue_forces_standard_over_exact_dga():
     assert decision.reason == "authoritative clue-group evidence"
 
 
+def test_authoritative_context_forces_standard_over_exact_dga():
+    decision = select_route(
+        TARGET,
+        [_classification(["dga"])],
+        dga_provider_configured=True,
+        dga_provider_status=ProviderStatus.SUCCESS,
+        authoritative_context=True,
+    )
+    assert decision.route == Route.STANDARD
+    assert decision.reason == "authoritative context keyword evidence"
+
+
 @pytest.mark.parametrize(
     "tags",
     [[], ["dga", "phishing"], ["phishing"], "dga", None],
