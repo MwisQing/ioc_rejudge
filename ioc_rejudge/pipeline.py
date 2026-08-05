@@ -40,7 +40,7 @@ from ioc_rejudge.result_cache import AdjudicationResultCache
 
 
 DGA_PROVIDER_NAME = "k01_compromise"
-ADJUDICATION_CACHE_CONTRACT = 3
+ADJUDICATION_CACHE_CONTRACT = 4
 REQUIRED_SAMPLE_PROVIDERS = ("ioc_info", "fdark")
 _COMPLETE_STATUSES = {ProviderStatus.SUCCESS, ProviderStatus.NO_DATA}
 _DISCOVERY_PROVIDER_NAMES = {DGA_PROVIDER_NAME, *REQUIRED_SAMPLE_PROVIDERS}
@@ -855,8 +855,9 @@ def _lifecycle_request_keys(
             )
         except Exception:
             continue
-        if dossier.retained_urls and _has_historical_or_phishing_url_evidence(
-            dossier
+        if authoritative_context or (
+            dossier.retained_urls
+            and _has_historical_or_phishing_url_evidence(dossier)
         ):
             plan["whois"].add(key)
     return plan

@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from ioc_rejudge.config import Config
 from ioc_rejudge.inputs import is_valid_host, is_valid_port
 from ioc_rejudge.models import Evidence, EvidenceLevel, EvidenceStrength, IocDossier
-from ioc_rejudge.normalize import coerce_level, normalize_ioc
+from ioc_rejudge.normalize import coerce_level, latest_record, normalize_ioc
 from ioc_rejudge.parser import parse_time
 from ioc_rejudge.profile import extract_profile
 
@@ -169,13 +169,10 @@ def _record_context(record: dict) -> str:
 
 
 def has_authoritative_clue(records: list[dict], config: Config) -> bool:
-    return any(
-        any(
-            _indicator_match(indicator, _record_context(record).lower())
-            for indicator in config.rules.authoritative_clue_indicators
-        )
-        for record in records
-        if isinstance(record, dict)
+    record = latest_record(records)
+    return bool(record) and any(
+        _indicator_match(indicator, _record_context(record).lower())
+        for indicator in config.rules.authoritative_clue_indicators
     )
 
 
@@ -183,22 +180,20 @@ def authoritative_context_matches(
     records: list[dict], config: Config
 ) -> list[str]:
     """Return configured context/comment keywords that force a black verdict."""
-    matches: list[str] = []
-    for record in records:
-        if not isinstance(record, dict):
-            continue
-        text = _record_context(record).lower()
-        for indicator in config.rules.authoritative_context_indicators:
-            if indicator not in matches and _indicator_match(indicator, text):
-                matches.append(indicator)
-    return matches
+    record = latest_record(records)
+    if not record:
+        return []
+    text = _record_context(record).lower()
+    return [
+        indicator
+        for indicator in config.rules.authoritative_context_indicators
+        if _indicator_match(indicator, text)
+    ]
 
 
 def _extract_operator_evidence(dossier: IocDossier, config: Config) -> None:
-    records = [
-        snapshot.raw for snapshot in dossier.record_snapshots
-        if isinstance(snapshot.raw, dict)
-    ]
+    latest = dossier.record_snapshots[-1].raw if dossier.record_snapshots else {}
+    records = [latest] if isinstance(latest, dict) and latest else []
     keyword_matches = authoritative_context_matches(records, config)
     if keyword_matches:
         dossier.evidence_a.append(Evidence(
@@ -384,13 +379,13 @@ def _extract_a(dossier: IocDossier, config: Config):
     ioc = dossier.ioc
     combined_text = f"{dossier.context}\n{dossier.comment}"
     ioc_matched = _ioc_aware_match(ioc, combined_text)
-    eligible_records = [
-        snapshot.raw
-        for snapshot in dossier.record_snapshots
-        if isinstance(snapshot.raw, dict)
-        and coerce_level(snapshot.raw.get("level"))
+    latest = dossier.record_snapshots[-1].raw if dossier.record_snapshots else {}
+    eligible_records = [latest] if (
+        isinstance(latest, dict)
+        and latest
+        and coerce_level(latest.get("level"))
         >= config.historical_malicious_level
-    ]
+    ) else []
     eligible_ioc_records = [
         record
         for record in eligible_records
@@ -534,14 +529,14 @@ def _extract_c(dossier: IocDossier, config: Config):
         return
 
     ioc = dossier.ioc
-    eligible_ioc_records = [
-        snapshot.raw
-        for snapshot in dossier.record_snapshots
-        if isinstance(snapshot.raw, dict)
-        and coerce_level(snapshot.raw.get("level"))
+    latest = dossier.record_snapshots[-1].raw if dossier.record_snapshots else {}
+    eligible_ioc_records = [latest] if (
+        isinstance(latest, dict)
+        and latest
+        and coerce_level(latest.get("level"))
         >= config.historical_malicious_level
-        and _ioc_aware_match(ioc, _record_context(snapshot.raw))
-    ]
+        and _ioc_aware_match(ioc, _record_context(latest))
+    ) else []
     combined_text = "\n".join(
         _record_context(record) for record in eligible_ioc_records
     )
@@ -824,6 +819,9 @@ def _extract_structured_public_apt(dossier: IocDossier, config: Config):
     field.  A bare top-level ``url`` field is not sufficient.
     Malformed numeric fields do not crash — they exclude the record instead.
     """
+    latest_snapshot = (
+        dossier.record_snapshots[-1] if dossier.record_snapshots else None
+    )
     for snap in dossier.record_snapshots:
         raw = snap.raw
         mt = raw.get("malicious_type")
@@ -858,10 +856,13 @@ def _extract_structured_public_apt(dossier: IocDossier, config: Config):
         if level < 70:
             continue
 
+        reference_fields = ["reference"]
+        if snap is latest_snapshot:
+            reference_fields.extend(["context", "comment"])
         reference_text = "\n".join(
-            str(raw.get(f, ""))
-            for f in ("context", "comment", "reference")
-            if raw.get(f)
+            str(raw.get(field, ""))
+            for field in reference_fields
+            if raw.get(field)
         )
         urls = re.findall(r'https?://[^\s"\'<>]+', reference_text)
         if not urls:

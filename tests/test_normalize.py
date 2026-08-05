@@ -154,6 +154,69 @@ def test_same_time_records_stable_by_index():
     assert dossier.whois == {"expiresDate": "second"}
 
 
+def test_comment_and_context_come_from_latest_record_only():
+    records = [
+        build_record(
+            "remarks.invalid",
+            updatetime="2024-01-01 00:00:00",
+            comment="old comment",
+            context="old context",
+        ),
+        build_record(
+            "remarks.invalid",
+            updatetime="2026-01-01 00:00:00",
+            comment="latest comment",
+            context="latest context",
+        ),
+    ]
+
+    dossier = merge_records(records)
+
+    assert dossier.comment == "latest comment"
+    assert dossier.context == "latest context"
+
+
+def test_empty_latest_comment_and_context_do_not_backfill_history():
+    records = [
+        build_record(
+            "cleared-remarks.invalid",
+            updatetime="2024-01-01 00:00:00",
+            comment="old comment",
+            context="old context",
+        ),
+        build_record(
+            "cleared-remarks.invalid",
+            updatetime="2026-01-01 00:00:00",
+            comment="",
+            context="",
+        ),
+    ]
+
+    dossier = merge_records(records)
+
+    assert dossier.comment == ""
+    assert dossier.context == ""
+
+
+def test_same_time_latest_comment_uses_later_input_record():
+    records = [
+        build_record(
+            "same-time-remarks.invalid",
+            updatetime="2026-01-01 00:00:00",
+            comment="first comment",
+        ),
+        build_record(
+            "same-time-remarks.invalid",
+            updatetime="2026-01-01 00:00:00",
+            comment="second comment",
+        ),
+    ]
+
+    dossier = merge_records(records)
+
+    assert dossier.comment == "second comment"
+
+
 def test_record_snapshots_preserve_raw_and_sources():
     """Every record produces a RecordSnapshot with index, time, sources, raw."""
     records = [

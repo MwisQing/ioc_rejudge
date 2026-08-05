@@ -497,6 +497,38 @@ def test_live_request_planner_adds_whois_and_pdns_only_after_dga_classification(
     assert by_name["icp"].requested == ["dga-route.invalid"]
 
 
+def test_live_request_planner_adds_whois_for_authoritative_context(tmp_path):
+    snapshot = tmp_path / "keyword-whois.jsonl"
+    snapshot.write_text(json.dumps({
+        "ioc": "keyword-whois.invalid",
+        "data": [{
+            "key": "keyword-whois.invalid",
+            "host": "keyword-whois.invalid",
+            "updatetime": "2020-01-01 00:00:00",
+            "comment": "历史黑产记录",
+        }],
+    }, ensure_ascii=False) + "\n", encoding="utf-8")
+    providers = [
+        _planning_provider("k01_compromise"),
+        _planning_provider("ioc_info"),
+        _planning_provider("fdark"),
+        _planning_provider("whois"),
+        _planning_provider("pdns"),
+        _planning_provider("icp"),
+    ]
+
+    run_unified_pipeline(
+        read_input_bundle(str(snapshot)),
+        providers,
+        Config(),
+        ProviderContext(),
+    )
+    by_name = {provider.name: provider for provider in providers}
+
+    assert by_name["whois"].requested == ["keyword-whois.invalid"]
+    assert by_name["pdns"].requested == []
+
+
 def _dga_gate_providers(sample_freshness):
     def classification(targets):
         target = targets[0]
@@ -730,6 +762,41 @@ def test_snapshot_context_keyword_forces_black_before_exact_dga(tmp_path):
     assert row["disposition"] == "block"
     assert "黑产" in row["reason"]
     assert "扩线" in row["reason"]
+
+
+def test_snapshot_uses_only_latest_comment_for_context_keyword(tmp_path):
+    snapshot = tmp_path / "latest-keyword.jsonl"
+    snapshot.write_text(json.dumps({
+        "ioc": "latest-keyword.invalid",
+        "data": [
+            {
+                "key": "latest-keyword.invalid",
+                "host": "latest-keyword.invalid",
+                "updatetime": "2024-01-01 00:00:00",
+                "comment": "旧记录包含黑产扩线",
+            },
+            {
+                "key": "latest-keyword.invalid",
+                "host": "latest-keyword.invalid",
+                "updatetime": "2026-01-01 00:00:00",
+                "comment": "最新记录已清除该备注",
+            },
+        ],
+    }, ensure_ascii=False) + "\n", encoding="utf-8")
+    providers = [_StaticProvider(
+        "k01_compromise",
+        _dga_classification_provider(),
+    )]
+
+    result = run_unified_pipeline(
+        read_input_bundle(str(snapshot)), providers, Config(), ProviderContext()
+    )
+
+    row = result.verdicts[0]
+    assert result.diagnostics.routes["latest-keyword.invalid"] == "dga"
+    # DGA verdicts do not construct a standard dossier for export.
+    assert row["comment"] == ""
+    assert "authoritative_context_keyword" not in row["reason"]
 
 
 def test_successful_ioc_info_clue_forces_standard_before_exact_dga():

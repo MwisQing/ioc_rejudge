@@ -323,6 +323,21 @@ def _has_evidence_field(dossier: IocDossier, field: str) -> bool:
     return any(evidence.field == field for evidence in dossier.evidence_a)
 
 
+def _authoritative_context_is_expired_false_positive(
+    dossier: IocDossier, config: Config
+) -> bool:
+    """Allow keyword evidence to expire only under a strict normal closure."""
+    if dossier.evidence_b:
+        return False
+    if not _has_expired_whois(dossier):
+        return False
+    return (
+        _has_normal_business_closure(dossier)
+        and _has_asset_change_candidate(dossier)
+        and not _has_threat_residue(dossier, config)
+    )
+
+
 def _authoritative_black_verdict(
     dossier: IocDossier, reason: str, malicious_nature: str = "运营人员确定恶意"
 ) -> Verdict:
@@ -360,6 +375,20 @@ def adjudicate(dossier: IocDossier, config: Config | None = None) -> Verdict:
             item for item in dossier.evidence_a
             if item.field == "authoritative_context_keyword"
         )
+        if _authoritative_context_is_expired_false_positive(dossier, config):
+            return _make_verdict(
+                dossier,
+                Conclusion.FALSE_POSITIVE,
+                "情报过期",
+                "无实质活动",
+                "中",
+                "抽检",
+                reason=(
+                    f"判定为误报：最新备注关键词证据（{evidence.detail}），"
+                    "但 WHOIS 已过期，当前正常业务闭环与明确资产变化证据同时成立，"
+                    "且无近期活动和未解决威胁残留。"
+                ),
+            )
         return _authoritative_black_verdict(
             dossier,
             f"判定为黑：{evidence.detail}，按高优先级规则直接拦截。",

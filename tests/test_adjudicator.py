@@ -172,6 +172,154 @@ def test_authoritative_context_keyword_directly_blocks(field, keyword):
     )
 
 
+def test_generic_malicious_remark_uses_operator_evidence_not_hard_keyword():
+    dossier = extract_evidence(merge_records([build_record(
+        "generic-malicious.invalid",
+        level=70,
+        source=["manual"],
+        comment="运营确认恶意",
+    )]), Config())
+
+    assert not any(
+        evidence.field == "authoritative_context_keyword"
+        for evidence in dossier.evidence_a
+    )
+    assert any(
+        evidence.field == "operator_confirmed_malicious_context"
+        for evidence in dossier.evidence_a
+    )
+
+
+def _expired_keyword_dossier(**overrides):
+    record = {
+        "updatetime": "2020-01-01 00:00:00",
+        "level": 70,
+        "source": ["manual"],
+        "comment": "历史黑产扩线记录",
+        "icp_website": "CURRENT-ICP",
+        "official_website": "https://expired-keyword.invalid",
+        "whois": {"expiresDate": "2020-01-01"},
+        "ownership_change": {
+            "previous": "abusive operator",
+            "current": "verified business owner",
+        },
+    }
+    record.update(overrides)
+    config = Config()
+    dossier = extract_evidence(merge_records([build_record(
+        "expired-keyword.invalid", **record
+    )]), config)
+    return dossier, config
+
+
+def test_expired_keyword_can_be_false_positive_with_strict_normal_closure():
+    dossier, config = _expired_keyword_dossier()
+
+    verdict = adjudicate(dossier, config)
+
+    assert verdict.conclusion == Conclusion.FALSE_POSITIVE
+    assert verdict.disposition == "false_positive"
+    assert verdict.review_suggestion == "抽检"
+    assert "备注关键词" in verdict.reason
+    assert "资产变化" in verdict.reason
+
+
+def test_recent_keyword_activity_stays_black_despite_normal_closure():
+    dossier, config = _expired_keyword_dossier(
+        flint={"last_seen": _days_ago(2)},
+    )
+
+    verdict = adjudicate(dossier, config)
+
+    assert verdict.conclusion == Conclusion.ALIVE_VALID
+    assert verdict.disposition == "block"
+
+
+def test_expired_keyword_without_asset_change_stays_black():
+    dossier, config = _expired_keyword_dossier(ownership_change={})
+
+    verdict = adjudicate(dossier, config)
+
+    assert verdict.conclusion == Conclusion.INACTIVE_VALID
+    assert verdict.disposition == "block"
+
+
+def test_old_keyword_without_expired_whois_stays_black():
+    dossier, config = _expired_keyword_dossier(whois={})
+
+    verdict = adjudicate(dossier, config)
+
+    assert verdict.conclusion == Conclusion.INACTIVE_VALID
+    assert verdict.disposition == "block"
+
+
+def test_expired_keyword_with_threat_residue_stays_black():
+    dossier, config = _expired_keyword_dossier(
+        malicious_type=["TROJAN"],
+    )
+
+    verdict = adjudicate(dossier, config)
+
+    assert verdict.conclusion == Conclusion.INACTIVE_VALID
+    assert verdict.disposition == "block"
+
+
+def test_expired_whois_alone_does_not_clear_keyword():
+    dossier, config = _expired_keyword_dossier(
+        icp_website="",
+        official_website="",
+        ownership_change={},
+    )
+
+    verdict = adjudicate(dossier, config)
+
+    assert verdict.conclusion == Conclusion.INACTIVE_VALID
+    assert verdict.disposition == "block"
+
+
+def test_historical_context_keyword_does_not_override_latest_clean_remark():
+    dossier = extract_evidence(merge_records([
+        build_record(
+            "latest-remark.invalid",
+            updatetime="2024-01-01 00:00:00",
+            comment="历史恶意记录",
+        ),
+        build_record(
+            "latest-remark.invalid",
+            updatetime="2026-01-01 00:00:00",
+            comment="最新复核未保留该备注",
+        ),
+    ]), Config())
+
+    verdict = adjudicate(dossier, Config())
+
+    assert not any(
+        evidence.field == "authoritative_context_keyword"
+        for evidence in dossier.evidence_a
+    )
+    assert verdict.disposition != "block"
+
+
+def test_latest_context_keyword_overrides_older_clean_remark():
+    dossier = extract_evidence(merge_records([
+        build_record(
+            "latest-keyword.invalid",
+            updatetime="2024-01-01 00:00:00",
+            comment="旧记录无关键词",
+        ),
+        build_record(
+            "latest-keyword.invalid",
+            updatetime="2026-01-01 00:00:00",
+            context="最新记录确认黑产流程",
+        ),
+    ]), Config())
+
+    verdict = adjudicate(dossier, Config())
+
+    assert verdict.disposition == "block"
+    assert "黑产" in verdict.reason
+
+
 def test_operator_context_waits_when_historical_icp_is_unresolved():
     dossier = extract_evidence(merge_records([build_record(
         "operator-history.invalid",

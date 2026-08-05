@@ -1,6 +1,6 @@
 # 开发与验证
 
-本文是 IOC Rejudge CLI `2.2.4` 的开发准入说明。发布脚本只可在用户明确授权后初始化、提交、打 tag 或推送。
+本文是 IOC Rejudge CLI `2.2.5` 的开发准入说明。发布脚本只可在用户明确授权后初始化、提交、打 tag 或推送。
 
 ## 1. 开发前阅读
 
@@ -14,7 +14,7 @@
 
 ## 2. 环境
 
-- 当前版本：`2.2.4`
+- 当前版本：`2.2.5`
 - 已验证 Python：3.12
 - 运行依赖：`openpyxl`、`requests`
 - 开发依赖：pytest
@@ -37,7 +37,7 @@ python -c "import openpyxl, pytest, requests; print('dependencies ok')"
 
 ## 3. 当前基线
 
-截至 2026-08-04：
+截至 2026-08-05：
 
 ```powershell
 python -m pytest tests -q
@@ -46,7 +46,7 @@ python -m pytest tests -q
 结果：
 
 ```text
-656 passed
+670 passed
 ```
 
 其中包括：

@@ -2,7 +2,7 @@
 
 > 操作本项目前先读本文件。完成有意义的变更后，更新底部进度记录。
 >
-> 当前版本为 `2.2.4`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收和项目内独立凭证文件。
+> 当前版本为 `2.2.5`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收和项目内独立凭证文件。
 
 ## 1. 阅读顺序
 
@@ -27,7 +27,7 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.2.4` |
+| 版本 | `2.2.5` |
 | 项目类型 | Python CLI |
 | 当前输入 | iocProducer 风格 JSONL 快照、裸 IOC 文件或重复 `--ioc` |
 | 当前联网 | 裸 IOC 统一模式可按所选 provider 联网；`--offline` 与旧快照兼容模式不联网 |
@@ -259,7 +259,7 @@ ioc_rejudge_cli_1.4.1/
 python -m pytest tests -q
 ```
 
-当前结果：`656 passed`。另含 GitHub Release 下载更新、本地凭证文件来源隔离、控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间、逐接口日期缓存、完整研判结果缓存、生命周期请求规划、comment/context 直接判黑规则与发布 allow-list/忽略规则安全专项。
+当前结果：`670 passed`。另含 GitHub Release 下载更新、本地凭证文件来源隔离、控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间、逐接口日期缓存、完整研判结果缓存、生命周期请求规划、最新 comment/context、过期误报出口与发布 allow-list/忽略规则安全专项。
 
 任务 22 在线端到端验收：`tests/test_live_acceptance.py` 与 live pipeline 联合为 `13 passed`。九个合成场景全程使用注入 transport，并对 `requests.Session.get/post` 设置 fail-fast 网络哨兵；online mock 填充五源 cache/raw 后移除全部凭据，offline replay 的 verdict、原因、来源、顺序及 Observation 稳定字段与 online 完全一致。递归扫描 JSONL、CSV、Excel 及解压后的 XML/rels、diagnostics、cache、raw 和 log，sentinel 凭据零匹配。
 
@@ -321,6 +321,7 @@ python -m pytest tests -q
 
 | 日期 | 范围 | 完成内容与验证摘要 |
 |---|---|---|
+| 2026-08-05 | 最新备注与过期误报（待发布） | `comment/context` 只取同一 IOC 最新 ioc_info 记录，历史记录保留供审计但不参与备注证据；“黑产/扩展/扩线”保留强恶意证据，但在 WHOIS 过期、无近期活动、ICP+官网闭环、显式资产变化、无威胁残留五条件同时成立时允许误报；“恶意”降为普通强恶意上下文；统一 pipeline 对强备注追加 WHOIS 规划，缓存契约升级为 4；全量 `670 passed`，10,856 条脱敏快照相对 v2.2.4 有 505 条黑转待复核、黑白互转 0；尚未创建新版本标签或发布包 |
 | 2026-08-04 | 2.2.4 发布 | 新增 `authoritative_context_indicators` 默认关键词“黑产/扩展/扩线”，命中后强制标准路由并跳过 ICP/DGA 白证据，直接输出 block；源树与独立发布包均为 `656 passed`，10,856 条脱敏快照迁移仅有 253 条待复核转黑、黑白互转 0；发布提交 `19f58ef13a07c38d2f922b86160bf9f6f19229a8` 与附注标签 `v2.2.4` 已推送；发布包 `ioc_rejudge_v2.2.4_20260804-161114.zip` 含 96 个发布文件、禁入项 0、SHA-256 `a4e64b68a727095fa570e0e2692a8d8ece39ff212358f3332fb6208032985791`，GitHub Release 与 ZIP 资产已发布，无 force push |
 | 2026-06 | v1.4.1 | 建立离线快照解析、IOC 归一化、A-F 证据、画像、裁判、导出、诊断和发布脚本；历史详情见 `docs/HISTORY.md` |
 | 2026-07-22 | 人工校准 | 完成首批 7 条和第二批 4 条人工研判，识别 DGA、时序、ICP、URL 作用范围和公开 APT 边界 |

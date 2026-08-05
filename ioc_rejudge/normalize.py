@@ -36,6 +36,12 @@ def _ordered_snapshots(records: list[dict]) -> list[RecordSnapshot]:
     )
 
 
+def latest_record(records: list[dict]) -> dict:
+    """Return the latest record by timestamp, then original input order."""
+    snapshots = _ordered_snapshots(records)
+    return snapshots[-1].raw if snapshots else {}
+
+
 def normalize_ioc(value: str, port: str = "0") -> tuple[str, str, list[str]]:
     value = value.strip()
     if not value:
@@ -281,9 +287,6 @@ def merge_records(records: list[dict]) -> IocDossier:
                 elif isinstance(val, str) and val and not existing:
                     aggregated_runtime[f] = val
 
-    contexts = [rec.get("context", "") for rec in records if rec.get("context")]
-    comments = [rec.get("comment", "") for rec in records if rec.get("comment")]
-
     dossier = IocDossier(
         ioc=normalized,
         ioc_type=ioc_type,
@@ -301,8 +304,8 @@ def merge_records(records: list[dict]) -> IocDossier:
         malicious_type=malicious_type,
         attck=attck,
         record_categories=record_categories,
-        context="\n".join(c for c in contexts if c),
-        comment="\n".join(c for c in comments if c),
+        context=str(latest_rec.get("context", "") or ""),
+        comment=str(latest_rec.get("comment", "") or ""),
         certificates=latest_certificates,
         topdomain=latest_topdomain,
         icp_website=icp_current,

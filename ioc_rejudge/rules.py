@@ -22,7 +22,7 @@ _BUILT_IN_DEFAULTS: dict = {
         "worm", "virus", "exploit", "rootkit", "keylogger", "downloader",
         "dropper", "ransom", "蠕虫", "病毒", "漏洞", "勒索",
     ],
-    "context_comment_malicious_indicators": [],
+    "context_comment_malicious_indicators": ["恶意"],
     "authoritative_context_indicators": ["黑产", "扩展", "扩线"],
     "context_comment_historical_indicators": [
         "historical", "history", "曾", "历史", "曾经",

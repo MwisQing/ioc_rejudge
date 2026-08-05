@@ -59,7 +59,9 @@
     "漏洞",
     "勒索"
   ],
-  "context_comment_malicious_indicators": [],
+  "context_comment_malicious_indicators": [
+    "恶意"
+  ],
   "authoritative_context_indicators": [
     "黑产",
     "扩展",
