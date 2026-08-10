@@ -2,7 +2,7 @@
 
 > 操作本项目前先读本文件。完成有意义的变更后，更新底部进度记录。
 >
-> 当前版本为 `2.2.6`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收和项目内独立凭证文件。
+> 当前版本为 `2.2.7`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收和项目内独立凭证文件。
 
 ## 1. 阅读顺序
 
@@ -27,7 +27,7 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.2.6` |
+| 版本 | `2.2.7` |
 | 项目类型 | Python CLI |
 | 当前输入 | iocProducer 风格 JSONL 快照、裸 IOC 文件或重复 `--ioc` |
 | 当前联网 | 裸 IOC 统一模式可按所选 provider 联网；`--offline` 与旧快照兼容模式不联网 |
@@ -187,6 +187,7 @@ ioc_rejudge/cli.py
 ### 6.1 在线 Provider 配置
 
 - 默认顺序：`k01_compromise,ioc_info,fdark,whois,pdns,icp`；缺少任一来源凭据只禁用该来源。
+- K01 批量接口默认 `batch_size=100`，按批提交并隔离业务/传输错误；可通过非密钥 provider 配置调整，响应业务 `msg` 会进入 secret-safe diagnostics。
 - 请求规划：先用 K01/IOC Info/F-Dark 做分类与样本发现；domain 类验证当前 ICP，DGA 路由追加 WHOIS/pDNS，standard 路由仅在历史 URL/钓鱼灰分支需要时追加 WHOIS，IP 类跳过三类生命周期接口。
 - CLI：`--provider-config` 指向本地非密钥 JSON，`--cache-dir` 保存可复用原始响应缓存（默认 `.\provider-cache`），`--run-dir/raw` 保存本次运行审计副本，`--offline` 只读本地数据/cache，`--refresh` 绕过 cache；`--offline` 与 `--refresh` 互斥。
 - CLI 可见性：统一模式启动打印 provider 清单（disabled 标注并在 stderr 给出原因，sidecar 单独标注）、绝对缓存目录、缓存模式/TTL/分片数和 Go/Python HTTP worker；采集期间逐接口实时进度条 `[provider] done/total 耗时` 输出到 stderr（终端时 ANSI 原地重绘，非终端节流降级），provider 完成打印原 `provider 'x': completed in ...` 永久行；结束打印结果缓存 hit/miss 及 miss 原因、逐 provider 状态计数、被拒绝输入行计数与总耗时；diagnostics `provider_metrics` 含 `duration_seconds`。
@@ -373,3 +374,4 @@ python -m pytest tests -q
 | 2026-07-28 | 2.2.1 发布 | 更新器确认门改动；提交 53ad8b2 已快进推送 master 并推送标签 v2.2.1，无 force push；GitHub Release v2.2.1 已发布并上传同名 ZIP 资产 |
 | 2026-07-29 | 2.2.2 发布 | 普通 operator/context 改为同记录 level 准入，低等级 domain 的具体恶意 URL 输出灰并保留 path，高等级在强业务闭环+显式资产变化+无残留时保留误报出口；完整结果缓存契约升级；源树与独立发布包均为 650 passed；发布提交 `6dfb85431e2ba9ddc38d7371dab54815c0c9a7c8` 已快进推送并创建附注标签 `v2.2.2`；发布包 `ioc_rejudge_v2.2.2_20260729-165700.zip` 含 96 个发布文件、禁入项 0，GitHub Release 与 ZIP 资产已发布，无 force push |
 | 2026-07-30 | 2.2.3 发布 | K01 批量响应在写入 per-IOC cache key 前按目标节点隔离，保留响应包络和无网络离线回放契约；K01 专项 11 passed、provider/pipeline/online-offline 联合专项 161 passed，源树与独立发布包均为 651 passed；发布提交 `bf723ab82e0323ef2ec9488e73635ee95ab18e28` 和附注标签 `v2.2.3` 已快进推送；发布包 `ioc_rejudge_v2.2.3_20260730-001216.zip` 含 96 个发布文件、禁入项 0，GitHub Release 与 ZIP 资产已发布，无 force push |
+| 2026-08-10 | 2.2.7 发布 | 按成熟接口脚本与正式文档将 K01 默认批大小设为 100，Go/Python transport 均按批查询并隔离 `10002` 等业务错误；diagnostics 保留业务 `msg` 且清洗凭据；专项与 live 联合 190 passed、全量 713 passed，1 skipped；发布包保留本地并用于 GitHub Release |

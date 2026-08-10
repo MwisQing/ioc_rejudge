@@ -5,7 +5,8 @@
   },
   "providers": {
     "k01_compromise": {
-      "ttl_days": 7
+      "ttl_days": 7,
+      "batch_size": 100
     },
     "ioc_info": {
       "ttl_days": 7

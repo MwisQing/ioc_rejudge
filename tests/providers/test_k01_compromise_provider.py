@@ -6,7 +6,9 @@ from ioc_rejudge.inputs import read_input_bundle
 from ioc_rejudge.observations import Freshness, ProviderStatus, Route
 from ioc_rejudge.providers.base import ProviderContext
 from ioc_rejudge.providers.cache import JsonlProviderCache
+from ioc_rejudge.providers.go_transport import BatchResult
 from ioc_rejudge.providers.k01_compromise import (
+    DEFAULT_BATCH_SIZE,
     K01CompromiseProvider,
     build_batch_payload,
 )
@@ -36,6 +38,26 @@ class FakeTransport:
         return value
 
 
+class FakeGoTransport:
+    available = True
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.requests = []
+        self.workers = None
+        self.rate_per_second = None
+
+    def iter_batch(self, requests, *, workers, rate_per_second):
+        self.requests = list(requests)
+        self.workers = workers
+        self.rate_per_second = rate_per_second
+        for request, response in zip(self.requests, self.responses):
+            if isinstance(response, Exception):
+                yield BatchResult(request.id, error=response)
+            else:
+                yield BatchResult(request.id, payload=response)
+
+
 def _targets(*values):
     return read_input_bundle(None, list(values)).targets
 
@@ -47,6 +69,8 @@ def _provider(
     ignore_port=False,
     ignore_url=False,
     ignore_top=False,
+    batch_size=DEFAULT_BATCH_SIZE,
+    go_transport=None,
     ttl=timedelta(days=7),
 ):
     settings = ProviderSettings(
@@ -62,9 +86,11 @@ def _provider(
         settings,
         transport=transport,
         cache=cache,
+        go_transport=go_transport,
         ignore_port=ignore_port,
         ignore_url=ignore_url,
         ignore_top=ignore_top,
+        batch_size=batch_size,
         now_fn=lambda: NOW,
     )
     return provider, transport, cache
@@ -219,6 +245,99 @@ def test_transport_and_business_errors_are_error_not_no_data(tmp_path):
     second = business_provider.collect([targets[1]], ProviderContext())
     assert second.statuses[targets[1].normalized] == ProviderStatus.ERROR
     assert "50001" in second.errors[0]
+    assert "denied" in second.errors[0]
+
+
+def test_python_transport_splits_large_input_into_bounded_batches(tmp_path):
+    targets = _targets(*(f"item-{index}.invalid" for index in range(205)))
+    groups = [
+        targets[start : start + DEFAULT_BATCH_SIZE]
+        for start in range(0, len(targets), DEFAULT_BATCH_SIZE)
+    ]
+    responses = [
+        {
+            "status": 10000,
+            "msg": "success",
+            "data": {
+                target.original: {"level": "", "data": []}
+                for target in group
+            },
+        }
+        for group in groups
+    ]
+    provider, transport, _ = _provider(tmp_path, responses)
+
+    result = provider.collect(targets, ProviderContext())
+
+    assert [len(call["body"]["params"]) for call in transport.calls] == [100, 100, 5]
+    assert set(result.statuses.values()) == {ProviderStatus.NO_DATA}
+    assert result.errors == []
+
+
+def test_go_transport_splits_batches_and_uses_provider_limits(tmp_path):
+    targets = _targets(*(f"go-{index}.invalid" for index in range(205)))
+    groups = [
+        targets[start : start + DEFAULT_BATCH_SIZE]
+        for start in range(0, len(targets), DEFAULT_BATCH_SIZE)
+    ]
+    responses = [
+        {
+            "status": 10000,
+            "msg": "success",
+            "data": {
+                target.original: {"level": "", "data": []}
+                for target in group
+            },
+        }
+        for group in groups
+    ]
+    go_transport = FakeGoTransport(responses)
+    provider, transport, _ = _provider(
+        tmp_path,
+        [],
+        go_transport=go_transport,
+    )
+
+    result = provider.collect(targets, ProviderContext())
+
+    assert transport.calls == []
+    assert [len(request.body["params"]) for request in go_transport.requests] == [
+        100,
+        100,
+        5,
+    ]
+    assert go_transport.workers == provider.settings.workers
+    assert go_transport.rate_per_second == provider.settings.rate_per_second
+    assert set(result.statuses.values()) == {ProviderStatus.NO_DATA}
+
+
+def test_business_error_is_isolated_to_its_batch_and_redacts_secrets(tmp_path):
+    targets = _targets("first.invalid", "second.invalid", "third.invalid")
+    responses = [
+        {
+            "status": 10002,
+            "msg": "too many params for test-key",
+            "data": {},
+        },
+        {
+            "status": 10000,
+            "msg": "success",
+            "data": {
+                targets[2].original: {"level": "", "data": []},
+            },
+        },
+    ]
+    provider, transport, _ = _provider(tmp_path, responses, batch_size=2)
+
+    result = provider.collect(targets, ProviderContext())
+
+    assert len(transport.calls) == 2
+    assert result.statuses[targets[0].normalized] == ProviderStatus.ERROR
+    assert result.statuses[targets[1].normalized] == ProviderStatus.ERROR
+    assert result.statuses[targets[2].normalized] == ProviderStatus.NO_DATA
+    assert "10002" in result.errors[0]
+    assert "too many params" in result.errors[0]
+    assert "test-key" not in result.errors[0]
 
 
 def test_cache_key_separates_every_ignore_profile(tmp_path):

@@ -2,6 +2,12 @@
 
 ## 未发布
 
+## 2.2.7 - 2026-08-10
+
+- 修复：K01 compromises 不再把全部 IOC 放进单个批量请求，默认按 100 条分批；某批返回 `10002` 等业务错误时只影响该批，其他批次继续查询并复用已写入的 provider cache。
+- 变更：`provider-config.json` 支持 `providers.k01_compromise.batch_size`；K01 业务错误 diagnostics 现在包含接口 `msg`，并对可能回显的凭据做清洗。
+- 验证：K01/provider/live/offline 联合专项 `190 passed, 1 skipped`，全量 `713 passed, 1 skipped`。
+
 ## 2.2.6 - 2026-08-10
 
 - 新增：在线统一研判时在控制台逐接口显示实时进度条，格式为 `[provider] done/total 耗时`；stderr 为终端时用 ANSI 原地重绘，重定向或管道时降级为节流行输出避免刷屏，重复终态自动去重。

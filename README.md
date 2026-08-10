@@ -168,7 +168,7 @@ Copy-Item .\provider-config.example.json .\provider-config.json
 notepad .\provider-config.json
 ```
 
-K01、IOC Info、F-Dark、WHOIS、pDNS 默认缓存 7 天，ICP 默认缓存 30 天；每个 provider 都可在配置文件中使用 `ttl_days`、`ttl_hours` 或 `ttl_seconds` 单独覆盖，三者只能设置一个。未传 `--cache-dir` 时，统一模式默认使用 `.\provider-cache`。
+K01、IOC Info、F-Dark、WHOIS、pDNS 默认缓存 7 天，ICP 默认缓存 30 天；每个 provider 都可在配置文件中使用 `ttl_days`、`ttl_hours` 或 `ttl_seconds` 单独覆盖，三者只能设置一个。K01 批量接口默认按 100 个 IOC 分批请求，可通过 `providers.k01_compromise.batch_size` 调整；某一批的业务错误只影响该批，成功批次仍会写入逐 IOC provider cache。未传 `--cache-dir` 时，统一模式默认使用 `.\provider-cache`。
 
 每个接口使用独立目录和日期分片：`.cache_<provider>/cache_YYYY-MM-DD.jsonl`。读取时会跨日期分片选择同一 query key 的最新记录，并兼容旧版根目录 `<provider>.jsonl`；因此缓存不会继续无限堆在一个文件里。
 

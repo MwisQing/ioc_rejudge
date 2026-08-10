@@ -216,6 +216,25 @@ def test_local_json_overrides_only_non_secret_options(tmp_path):
     assert pdns.settings.enabled is False
 
 
+def test_k01_batch_size_defaults_to_100_and_can_be_overridden(tmp_path):
+    default = build_providers(
+        ["k01_compromise"], env=_full_env(), adjudication_config=Config()
+    )[0]
+    assert default.batch_size == 100
+
+    path = tmp_path / "providers.json"
+    path.write_text(json.dumps({
+        "providers": {"k01_compromise": {"batch_size": 25}},
+    }), encoding="utf-8")
+    configured = build_providers(
+        ["k01_compromise"],
+        env=_full_env(),
+        config_path=path,
+        adjudication_config=Config(),
+    )[0]
+    assert configured.batch_size == 25
+
+
 def test_result_cache_config_defaults_to_seven_days_and_can_be_overridden(tmp_path):
     defaults = load_result_cache_settings(None)
     assert defaults.enabled is True
@@ -237,6 +256,7 @@ def test_result_cache_config_defaults_to_seven_days_and_can_be_overridden(tmp_pa
         ({"providers": {"fdark": {"fdp_secret": "forbidden"}}}, "secret"),
         ({"providers": {"fdark": {"unknown": 1}}}, "unknown option"),
         ({"providers": {"unknown": {"enabled": True}}}, "unknown provider"),
+        ({"providers": {"k01_compromise": {"batch_size": 0}}}, "must be positive"),
         ({"unexpected": {}}, "top-level"),
         ({"providers": []}, "must be an object"),
     ],

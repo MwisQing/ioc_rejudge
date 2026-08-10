@@ -16,7 +16,10 @@ from ioc_rejudge.providers.go_transport import GoBatchTransport
 from ioc_rejudge.providers.icp import ICPProvider
 from ioc_rejudge.providers.ioc_info import DEFAULT_URL as IOC_INFO_DEFAULT_URL
 from ioc_rejudge.providers.ioc_info import IOCInfoProvider
-from ioc_rejudge.providers.k01_compromise import K01CompromiseProvider
+from ioc_rejudge.providers.k01_compromise import (
+    DEFAULT_BATCH_SIZE,
+    K01CompromiseProvider,
+)
 from ioc_rejudge.providers.pdns import PDNSProvider
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import TransportError
@@ -75,7 +78,7 @@ _COMMON_OPTIONS = {
     "ttl_days",
 }
 _PROVIDER_OPTIONS = {
-    "k01_compromise": {"ignore_port", "ignore_url", "ignore_top"},
+    "k01_compromise": {"ignore_port", "ignore_url", "ignore_top", "batch_size"},
     "ioc_info": {"max_attempts", "retry_delay"},
     "fdark": {"include_slow_variants", "include_url_param", "query_params"},
     "whois": set(),
@@ -249,6 +252,8 @@ def load_local_config(path: str | Path | None) -> dict[str, dict]:
             raise ValueError(f"provider {name} cannot set both url and base_url")
         if "query_params" in options and not isinstance(options["query_params"], dict):
             raise ValueError(f"provider {name} query_params must be an object")
+        if name == "k01_compromise" and "batch_size" in options:
+            _positive_number(name, "batch_size", options["batch_size"], integer=True)
         validated[name] = dict(options)
     return validated
 
@@ -516,6 +521,12 @@ def build_providers(
                 ignore_port=bool(options.get("ignore_port", False)),
                 ignore_url=bool(options.get("ignore_url", False)),
                 ignore_top=bool(options.get("ignore_top", False)),
+                batch_size=_positive_number(
+                    name,
+                    "batch_size",
+                    options.get("batch_size", DEFAULT_BATCH_SIZE),
+                    integer=True,
+                ),
             )
         elif name == "fdark":
             provider = FDarkProvider(

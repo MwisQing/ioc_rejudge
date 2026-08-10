@@ -163,6 +163,7 @@ ICP 默认限制为 2 workers 和 2 requests/second。配置层目前只校验�
 
 - 默认缓存目录为 `.\provider-cache`；每个接口写入 `.cache_<provider>/cache_YYYY-MM-DD.jsonl`，不共用永久单文件。
 - K01、IOC Info、F-Dark、WHOIS、pDNS 默认 TTL 7 天，ICP 默认 30 天；本地配置可逐接口覆盖。
+- K01 批量查询默认按 100 个 IOC 分批，批大小可由非密钥 provider 配置覆盖；批次级 transport/业务错误只标记该批，其他批次继续处理。
 - 读取跨日期分片选择同一 query key 的最新响应，并兼容旧 `<provider>.jsonl`。
 - K01 批量请求在为 per-IOC query key 写入缓存时保留响应包络，但 `data` 只保留当前 IOC 节点；离线回放与在线解析使用同一响应契约。
 - 坏 cache 行不会阻断其他有效行。
