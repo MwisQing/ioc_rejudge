@@ -1,5 +1,6 @@
 import json
 import re
+import sys
 import zipfile
 from pathlib import Path
 
@@ -22,6 +23,7 @@ REQUIRED_MEMBERS = {
     "docs/DEVELOPMENT.md",
     "docs/HISTORY.md",
     "ioc_rejudge/anonymize_ioc.py",
+    "ioc_rejudge/bin/provider_http.exe",
 }
 
 FORBIDDEN_PREFIXES = (
@@ -97,6 +99,21 @@ def test_release_zip_contains_matching_manifest(tmp_path):
 def test_push_initial_commit_allowlist_contains_public_project_files():
     assert REQUIRED_INIT_PATHS <= set(push._INIT_PATHS)
     assert not any(path in push._INIT_PATHS for path in FORBIDDEN_PREFIXES)
+
+
+def test_push_check_is_read_only(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["push.py", "--check"])
+    monkeypatch.setattr(push, "check_environment", lambda root: "master")
+    monkeypatch.setattr(push, "show_changes", lambda: None)
+    monkeypatch.setattr(
+        push,
+        "push_branch_and_tags",
+        lambda branch: (_ for _ in ()).throw(AssertionError("push called")),
+    )
+
+    push.main()
+
+    assert "未执行 push" in capsys.readouterr().out
 
 
 def test_gitignore_protects_local_data_credentials_and_runtime_outputs():

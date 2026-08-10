@@ -1,5 +1,6 @@
 """Push the current git repo and rollback tags to GitHub."""
 
+import argparse
 import os
 import subprocess
 import sys
@@ -123,6 +124,24 @@ def ensure_remote() -> None:
     sys.exit("请确认仓库地址后再运行 push.py，避免推送到错误仓库")
 
 
+def check_environment(root: Path) -> str:
+    """Validate the existing repository without changing local or remote state."""
+    if not (root / ".git").is_dir():
+        sys.exit("错误: 当前目录不是 Git 仓库；--check 不会自动初始化")
+    code, _, stderr = run_git(["git", "rev-parse", "HEAD"])
+    if code != 0:
+        sys.exit(f"错误: 仓库中没有可推送的提交\n{stderr.strip()}")
+    existing = get_remote_url("origin")
+    if existing != _REMOTE_URL:
+        sys.exit(
+            "错误: origin 与目标仓库不一致\n"
+            f"当前: {existing or '(missing)'}\n目标: {_REMOTE_URL}"
+        )
+    branch = resolve_branch()
+    print(f"origin: {existing}")
+    return branch
+
+
 def resolve_branch() -> str:
     code, stdout, _ = run_git(["git", "branch", "--show-current"])
     branch = stdout.strip() if code == 0 else ""
@@ -198,6 +217,13 @@ def _pause() -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="推送 IOC Rejudge 分支和版本标签")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="只检查 Git、origin、分支和本地状态，不推送",
+    )
+    args = parser.parse_args()
     os.chdir(SCRIPT_DIR)
     root = SCRIPT_DIR
 
@@ -205,6 +231,12 @@ def main() -> None:
     print("版本回退依赖 pack.py 创建的 v版本-时间戳 tag")
 
     print("[1/3] 环境检查...")
+    if args.check:
+        branch = check_environment(root)
+        show_changes()
+        print(f"当前分支: {branch}")
+        print("检查完成：未初始化仓库、未创建提交或标签、未执行 push")
+        return
     _ensure_git_repo(root)
     _ensure_at_least_one_commit(root)
     ensure_remote()

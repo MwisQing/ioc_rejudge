@@ -10,6 +10,7 @@ from ioc_rejudge.inputs import read_input_bundle
 from ioc_rejudge.observations import Freshness, ProviderStatus
 from ioc_rejudge.providers.base import ProviderContext
 from ioc_rejudge.providers.cache import JsonlProviderCache
+from ioc_rejudge.providers.go_transport import BatchResult
 from ioc_rejudge.providers.icp import ICPProvider
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import TransportError
@@ -31,6 +32,22 @@ class ScriptedTransport:
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+
+class FakeGoTransport:
+    available = True
+
+    def __init__(self, results):
+        self.results = list(results)
+        self.requests = []
+        self.workers = None
+        self.rate_per_second = None
+
+    def iter_batch(self, requests, *, workers, rate_per_second):
+        self.requests = list(requests)
+        self.workers = workers
+        self.rate_per_second = rate_per_second
+        yield from self.results
 
 
 def _targets(*values):
@@ -72,6 +89,50 @@ def test_empty_response_creates_successful_negative_observation(tmp_path):
     result = provider.collect([target], ProviderContext())
     assert result.statuses[target.normalized] == ProviderStatus.SUCCESS
     assert result.observations[0].payload == {"current": False, "registration": ""}
+
+
+def test_go_batch_path_preserves_input_order_cache_progress_and_limits(tmp_path):
+    settings = ProviderSettings(
+        name="icp",
+        base_url="https://icp.invalid/v2/open-api/icp-info",
+        secrets={"uc": SENTINEL_UC, "key": SENTINEL_KEY},
+        timeout=5,
+        workers=3,
+        rate_per_second=7,
+        ttl=timedelta(days=30),
+    )
+    go_transport = FakeGoTransport([
+        BatchResult("1", payload={"resultObject": {}}),
+        BatchResult("0", payload={"resultObject": {"icp": "ICP-GO"}}),
+    ])
+    cache = JsonlProviderCache(tmp_path / "cache", "icp", timedelta(days=30))
+    provider = ICPProvider(
+        settings, cache=cache, go_transport=go_transport, now_fn=lambda: NOW
+    )
+    targets = _targets("one.invalid", "two.invalid")
+    events = []
+
+    result = provider.collect(
+        targets, ProviderContext(on_progress=events.append)
+    )
+
+    assert [item.ioc for item in result.observations] == [
+        targets[0].normalized, targets[1].normalized
+    ]
+    assert result.observations[0].payload["registration"] == "ICP-GO"
+    assert result.observations[1].payload["current"] is False
+    assert [(event.done, event.total) for event in events] == [
+        (0, 2), (1, 2), (2, 2)
+    ]
+    assert go_transport.workers == 3
+    assert go_transport.rate_per_second == 7
+    assert [request.params["dm"] for request in go_transport.requests] == [
+        "one.invalid", "two.invalid"
+    ]
+    assert all(request.params["uc"] == SENTINEL_UC for request in go_transport.requests)
+    assert all(request.params["key"] == SENTINEL_KEY for request in go_transport.requests)
+    for target in targets:
+        assert cache.get(target.host, provider.cache_params(target.host))
 
 
 @pytest.mark.parametrize("response", [

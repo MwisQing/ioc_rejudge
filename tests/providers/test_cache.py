@@ -186,3 +186,53 @@ def test_cache_miss_returns_none_and_empty_diagnostics(tmp_path):
     cache = JsonlProviderCache(tmp_path, "whois", ttl=timedelta(days=1))
     assert cache.get("missing.invalid") is None
     assert cache.diagnostics == []
+
+
+def test_many_provider_cache_lookups_read_each_shard_once(tmp_path, monkeypatch):
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    writer = JsonlProviderCache(tmp_path, "whois", ttl=timedelta(days=7))
+    for index in range(200):
+        writer.put(f"bulk-{index}.invalid", {"index": index}, fetched_at=now)
+
+    cache = JsonlProviderCache(tmp_path, "whois", ttl=timedelta(days=7))
+    cache_path = next(cache.provider_dir.glob("cache_*.jsonl"))
+    original = type(cache_path).read_text
+    reads = 0
+
+    def counted_read_text(path, *args, **kwargs):
+        nonlocal reads
+        if path == cache_path:
+            reads += 1
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(cache_path), "read_text", counted_read_text)
+    for index in range(200):
+        entry = cache.get(f"bulk-{index}.invalid", now=now + timedelta(days=1))
+        assert entry is not None and entry.raw == {"index": index}
+
+    assert reads == 1
+
+
+def test_interleaved_provider_cache_get_and_put_does_not_rescan_shard(
+    tmp_path, monkeypatch
+):
+    cache = JsonlProviderCache(tmp_path, "whois", ttl=timedelta(days=7))
+    cache.get("initial-miss.invalid")
+    cache_path = cache._path_for(datetime(2026, 7, 28, tzinfo=timezone.utc))
+    original = type(cache_path).read_text
+    reads = 0
+
+    def counted_read_text(path, *args, **kwargs):
+        nonlocal reads
+        if path == cache_path:
+            reads += 1
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(cache_path), "read_text", counted_read_text)
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    for index in range(100):
+        ioc = f"interleaved-{index}.invalid"
+        assert cache.get(ioc, now=now) is None
+        cache.put(ioc, {"index": index}, fetched_at=now)
+
+    assert reads == 0

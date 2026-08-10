@@ -18,8 +18,13 @@ from ioc_rejudge.observations import (
     ProviderStatus,
 )
 from ioc_rejudge.parser import parse_time
-from ioc_rejudge.providers.base import ProviderContext, ProviderResult
+from ioc_rejudge.providers.base import (
+    ProviderContext,
+    ProviderResult,
+    report_progress,
+)
 from ioc_rejudge.providers.cache import CacheEntry, JsonlProviderCache
+from ioc_rejudge.providers.go_transport import BatchRequest, GoBatchTransport
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import RequestsTransport, TransportError
 
@@ -169,6 +174,7 @@ class IOCInfoProvider:
         *,
         transport: RequestsTransport | None = None,
         cache: JsonlProviderCache | None = None,
+        go_transport: GoBatchTransport | None = None,
         max_attempts: int = MAX_EMPTY_DATA_ATTEMPTS,
         retry_delay: float = RETRY_DELAY_SECONDS,
         sleep_fn: Callable[[float], None] = time.sleep,
@@ -181,6 +187,7 @@ class IOCInfoProvider:
         self.settings = settings
         self.transport = transport or RequestsTransport()
         self.cache = cache
+        self.go_transport = go_transport
         self.max_attempts = max_attempts
         self.retry_delay = retry_delay
         self.sleep_fn = sleep_fn
@@ -282,6 +289,7 @@ class IOCInfoProvider:
                 self.name, observations, statuses, errors, cache_hits, freshnesses
             )
 
+        total = len(supported)
         pending: list[IocTarget] = []
         for target in supported:
             entry = None
@@ -303,10 +311,90 @@ class IOCInfoProvider:
             else:
                 pending.append(target)
 
+        report_progress(context, self.name, cache_hits, total)
         if context.offline:
             for target in pending:
                 statuses[target.normalized] = ProviderStatus.ERROR
                 errors.append(f"offline cache miss for {target.normalized}")
+            report_progress(context, self.name, total, total)
+            return ProviderResult(
+                self.name, observations, statuses, errors, cache_hits, freshnesses
+            )
+
+        if self.go_transport is not None and self.go_transport.available and pending:
+            observations_by_ioc: dict[str, list[Observation]] = {
+                target.normalized: [] for target in pending
+            }
+            done = cache_hits
+            retry_groups = [
+                pending[start : start + BATCH_SIZE]
+                for start in range(0, len(pending), BATCH_SIZE)
+            ]
+            attempt = 0
+            while retry_groups and attempt < self.max_attempts:
+                attempt += 1
+                jobs = [
+                    BatchRequest(
+                        id=str(index),
+                        method="POST",
+                        url=self.settings.base_url,
+                        headers=dict(self.settings.secrets),
+                        body=build_payload(group),
+                        timeout=self.settings.timeout,
+                    )
+                    for index, group in enumerate(retry_groups)
+                ]
+                next_groups: list[list[IocTarget]] = []
+                for result in self.go_transport.iter_batch(
+                    jobs,
+                    workers=self.settings.workers,
+                    rate_per_second=self.settings.rate_per_second,
+                ):
+                    group = retry_groups[int(result.id)]
+                    if result.error is not None:
+                        for target in group:
+                            statuses[target.normalized] = ProviderStatus.ERROR
+                            done += 1
+                            report_progress(context, self.name, done, total)
+                        errors.append(str(result.error))
+                        continue
+                    fetched_at = self.now_fn()
+                    requested = [target.original for target in group]
+                    normalized = normalize_payload(requested, result.payload)
+                    empty: list[IocTarget] = []
+                    for target in group:
+                        records = normalized[target.original]
+                        if not records and attempt < self.max_attempts:
+                            empty.append(target)
+                            continue
+                        raw_ref, cache_error = self._store_response(
+                            target, result.payload, fetched_at
+                        )
+                        if cache_error:
+                            statuses[target.normalized] = ProviderStatus.ERROR
+                            errors.append(cache_error)
+                        elif records:
+                            statuses[target.normalized] = ProviderStatus.SUCCESS
+                            observations_by_ioc[target.normalized].extend(
+                                self._observations(
+                                    target, records, fetched_at=fetched_at,
+                                    freshness=Freshness.FRESH, raw_ref=raw_ref,
+                                )
+                            )
+                            freshnesses[target.normalized] = Freshness.FRESH
+                        else:
+                            statuses[target.normalized] = ProviderStatus.NO_DATA
+                            freshnesses[target.normalized] = Freshness.FRESH
+                        done += 1
+                        report_progress(context, self.name, done, total)
+                    if empty:
+                        next_groups.append(empty)
+                retry_groups = next_groups
+                if retry_groups and self.retry_delay:
+                    self.sleep_fn(self.retry_delay)
+
+            for target in pending:
+                observations.extend(observations_by_ioc[target.normalized])
             return ProviderResult(
                 self.name, observations, statuses, errors, cache_hits, freshnesses
             )
@@ -364,6 +452,9 @@ class IOCInfoProvider:
                 retry_targets = empty
                 if retry_targets and self.retry_delay:
                     self.sleep_fn(self.retry_delay)
+
+            covered = min(start + BATCH_SIZE, len(pending))
+            report_progress(context, self.name, cache_hits + covered, total)
 
         return ProviderResult(
             self.name, observations, statuses, errors, cache_hits, freshnesses

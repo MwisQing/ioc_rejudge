@@ -231,3 +231,85 @@ def test_provider_error_result_is_retried_instead_of_cached(tmp_path):
 
     assert provider.calls == [["retry.invalid"], ["retry.invalid"]]
     assert not list(cache.cache_dir.glob("cache_*.jsonl"))
+
+
+def test_many_result_cache_lookups_read_each_shard_once(tmp_path, monkeypatch):
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    writer = AdjudicationResultCache(tmp_path)
+    for index in range(200):
+        ioc = f"bulk-{index}.invalid"
+        writer.put(ioc, f"fingerprint-{index}", {"ioc": ioc}, fetched_at=now)
+
+    cache = AdjudicationResultCache(tmp_path)
+    cache_path = next(cache.cache_dir.glob("cache_*.jsonl"))
+    original = type(cache_path).read_text
+    reads = 0
+
+    def counted_read_text(path, *args, **kwargs):
+        nonlocal reads
+        if path == cache_path:
+            reads += 1
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(cache_path), "read_text", counted_read_text)
+    for index in range(200):
+        entry = cache.get(
+            f"bulk-{index}.invalid",
+            f"fingerprint-{index}",
+            now=now + timedelta(days=1),
+        )
+        assert entry is not None and entry.fresh
+
+    assert reads == 1
+
+
+def test_result_cache_lookup_explains_miss_without_exposing_fingerprint(tmp_path):
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    cache = AdjudicationResultCache(tmp_path, ttl=timedelta(days=1))
+    cache.put(
+        "known.invalid",
+        "original-secret-fingerprint",
+        {"ioc": "known.invalid"},
+        fetched_at=now,
+    )
+
+    missing, missing_reason = cache.lookup("missing.invalid", "any", now=now)
+    changed, changed_reason = cache.lookup(
+        "known.invalid", "changed-secret-fingerprint", now=now
+    )
+    stale, stale_reason = cache.lookup(
+        "known.invalid",
+        "original-secret-fingerprint",
+        now=now + timedelta(days=2),
+    )
+
+    assert missing is None and missing_reason == "missing"
+    assert changed is None and changed_reason == "fingerprint_mismatch"
+    assert stale is not None and stale.fresh is False and stale_reason == "stale"
+    assert "secret-fingerprint" not in " ".join(cache.diagnostics)
+
+
+def test_interleaved_result_cache_lookup_and_put_does_not_rescan_shard(
+    tmp_path, monkeypatch
+):
+    cache = AdjudicationResultCache(tmp_path)
+    cache.get("initial-miss.invalid", "initial")
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    cache_path = cache._path_for(now)
+    original = type(cache_path).read_text
+    reads = 0
+
+    def counted_read_text(path, *args, **kwargs):
+        nonlocal reads
+        if path == cache_path:
+            reads += 1
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(cache_path), "read_text", counted_read_text)
+    for index in range(100):
+        ioc = f"interleaved-{index}.invalid"
+        fingerprint = f"fingerprint-{index}"
+        assert cache.get(ioc, fingerprint, now=now) is None
+        cache.put(ioc, fingerprint, {"ioc": ioc}, fetched_at=now)
+
+    assert reads == 0

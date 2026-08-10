@@ -8,6 +8,15 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+# Support both `python -m ioc_rejudge.cli` and direct script execution from
+# the repository root. The latter otherwise sets sys.path[0] to ioc_rejudge/
+# and makes the package itself unimportable.
+if __package__ in (None, ""):
+    _PROJECT_ROOT = Path(__file__).resolve().parent.parent
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+
 from ioc_rejudge.config import Config, load_config
 from ioc_rejudge.diff import compare_verdicts
 from ioc_rejudge.inputs import InputKind, read_input_bundle
@@ -18,6 +27,7 @@ from ioc_rejudge.evidence import extract_evidence
 from ioc_rejudge.adjudicator import adjudicate, _has_threat_residue
 from ioc_rejudge.export import export_jsonl, export_csv, export_excel
 from ioc_rejudge.pipeline import PipelineDiagnostics, run_unified_pipeline
+from ioc_rejudge.progress import LiveProgress
 from ioc_rejudge.providers.base import ProviderContext
 from ioc_rejudge.providers.factory import (
     DEFAULT_PROVIDERS,
@@ -438,11 +448,16 @@ def _warn_input_errors(diag: Diagnostics | PipelineDiagnostics) -> None:
 def _print_provider_status(diag: Diagnostics | PipelineDiagnostics) -> None:
     result_cache_hit = getattr(diag, "result_cache_hit", 0)
     result_cache_miss = getattr(diag, "result_cache_miss", 0)
-    if result_cache_hit or result_cache_miss:
-        print(
-            f"Adjudication result cache: hit={result_cache_hit} "
-            f"miss={result_cache_miss}"
-        )
+    reasons = getattr(diag, "result_cache_miss_reasons", {})
+    reason_text = ""
+    if isinstance(reasons, dict) and reasons:
+        reason_text = " (" + ", ".join(
+            f"{name}={count}" for name, count in sorted(reasons.items())
+        ) + ")"
+    print(
+        f"Adjudication result cache: hit={result_cache_hit} "
+        f"miss={result_cache_miss}{reason_text}"
+    )
     providers = getattr(diag, "providers", None)
     if not providers:
         return
@@ -453,6 +468,40 @@ def _print_provider_status(diag: Diagnostics | PipelineDiagnostics) -> None:
             f"error={metric.error} disabled={metric.disabled} "
             f"cache_hit={metric.cache_hit} ({metric.duration_seconds:.1f}s)"
         )
+
+
+def _format_ttl(seconds: float) -> str:
+    if seconds % 86400 == 0:
+        return f"{int(seconds // 86400)}d"
+    if seconds % 3600 == 0:
+        return f"{int(seconds // 3600)}h"
+    return f"{seconds:g}s"
+
+
+def _print_cache_startup(
+    cache_path: Path,
+    *,
+    refresh: bool,
+    offline: bool,
+    result_cache_settings,
+    providers: list,
+) -> None:
+    resolved = cache_path.resolve()
+    mode = "refresh (bypass reads)" if refresh else "offline reuse" if offline else "reuse"
+    result_state = (
+        f"enabled, TTL={_format_ttl(result_cache_settings.ttl.total_seconds())}"
+        if result_cache_settings.enabled
+        else "disabled"
+    )
+    shards = len(list(resolved.glob(".cache_*/*.jsonl"))) if resolved.is_dir() else 0
+    print(f"Cache root: {resolved}")
+    print(f"Cache mode: {mode}; adjudication results: {result_state}; shards={shards}")
+    go_enabled = any(
+        not getattr(provider, "disabled_reason", "")
+        and getattr(getattr(provider, "go_transport", None), "available", False)
+        for provider in providers
+    )
+    print("HTTP worker: " + ("Go (bundled)" if go_enabled else "Python fallback"))
 
 
 def _load_diff_baseline(
@@ -683,6 +732,13 @@ def main():
                 parser.error(str(exc))
             providers = [*live_providers, *sidecar_providers]
             _print_provider_startup(providers)
+            _print_cache_startup(
+                cache_path,
+                refresh=args.refresh,
+                offline=args.offline,
+                result_cache_settings=result_cache_settings,
+                providers=providers,
+            )
             result_cache = (
                 AdjudicationResultCache(
                     cache_path, ttl=result_cache_settings.ttl
@@ -690,18 +746,33 @@ def main():
                 if result_cache_settings.enabled
                 else None
             )
-            result = run_unified_pipeline(
-                bundle,
-                providers,
-                config,
-                ProviderContext(
-                    offline=args.offline,
-                    refresh=args.refresh,
-                    run_dir=Path(args.run_dir) if args.run_dir else None,
-                ),
-                progress=lambda message: print(message, file=sys.stderr),
-                result_cache=result_cache,
-            )
+            live = LiveProgress()
+            interrupted = False
+            try:
+                result = run_unified_pipeline(
+                    bundle,
+                    providers,
+                    config,
+                    ProviderContext(
+                        offline=args.offline,
+                        refresh=args.refresh,
+                        run_dir=Path(args.run_dir) if args.run_dir else None,
+                        on_progress=live.event,
+                    ),
+                    progress=live.message,
+                    result_cache=result_cache,
+                )
+            except KeyboardInterrupt:
+                interrupted = True
+            finally:
+                live.close()
+            if interrupted:
+                print(
+                    "Interrupted. Provider responses already written to the cache remain "
+                    "reusable; incomplete adjudication results are not cached.",
+                    file=sys.stderr,
+                )
+                raise SystemExit(130)
     verdicts = result.verdicts
     diag = result.diagnostics
     _warn_input_errors(diag)

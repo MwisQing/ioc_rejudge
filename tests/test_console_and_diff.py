@@ -10,6 +10,7 @@ from ioc_rejudge.inputs import read_input_bundle
 from ioc_rejudge.observations import ProviderStatus
 from ioc_rejudge.pipeline import run_unified_pipeline
 from ioc_rejudge.providers.base import ProviderContext, ProviderResult
+from ioc_rejudge.providers.factory import ResultCacheSettings
 
 
 class _StubProvider:
@@ -185,6 +186,79 @@ def test_cli_prints_progress_and_total_time(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "provider 'side': completed in " in captured.err
     assert "Total time: " in captured.out
+
+
+def test_cli_second_run_reuses_same_result_cache_without_collecting(
+    tmp_path, monkeypatch, capsys
+):
+    output = tmp_path / "result.jsonl"
+    cache_dir = tmp_path / "persistent-cache"
+    provider = _StubProvider("stable", result=_no_data_result("stable"))
+    calls = []
+    original_collect = provider.collect
+
+    def counted_collect(targets, context):
+        calls.append([target.normalized for target in targets])
+        return original_collect(targets, context)
+
+    provider.collect = counted_collect
+    monkeypatch.setattr(
+        "ioc_rejudge.cli.build_providers", lambda *args, **kwargs: [provider]
+    )
+    monkeypatch.setattr(
+        "ioc_rejudge.cli.load_result_cache_settings",
+        lambda path: ResultCacheSettings(),
+    )
+
+    argv = [
+        "ioc_rejudge",
+        "--ioc", "cache-reuse.invalid",
+        "--providers", "whois",
+        "--cache-dir", str(cache_dir),
+        "--jsonl", str(output),
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    main()
+    first_output = capsys.readouterr().out
+
+    monkeypatch.setattr(sys, "argv", argv)
+    main()
+    second_output = capsys.readouterr().out
+
+    assert calls == [["cache-reuse.invalid"]]
+    assert f"Cache root: {cache_dir.resolve()}" in first_output
+    assert "Adjudication result cache: hit=0 miss=1 (missing=1)" in first_output
+    assert "Adjudication result cache: hit=1 miss=0" in second_output
+
+
+def test_cli_interrupt_explains_partial_cache_reuse(tmp_path, monkeypatch, capsys):
+    cache_dir = tmp_path / "persistent-cache"
+    monkeypatch.setattr(
+        "ioc_rejudge.cli.build_providers", lambda *args, **kwargs: []
+    )
+    monkeypatch.setattr(
+        "ioc_rejudge.cli.run_unified_pipeline",
+        lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ioc_rejudge",
+            "--ioc", "interrupt.invalid",
+            "--providers", "whois",
+            "--cache-dir", str(cache_dir),
+            "--jsonl", str(tmp_path / "result.jsonl"),
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == 130
+    captured = capsys.readouterr()
+    assert "Provider responses already written to the cache remain reusable" in captured.err
+    assert "incomplete adjudication results are not cached" in captured.err
 
 
 def test_cli_diff_baseline_writes_report_and_summary(tmp_path, monkeypatch, capsys):

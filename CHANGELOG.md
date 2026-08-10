@@ -1,5 +1,17 @@
 # 更新日志
 
+## 未发布
+
+## 2.2.6 - 2026-08-10
+
+- 新增：在线统一研判时在控制台逐接口显示实时进度条，格式为 `[provider] done/total 耗时`；stderr 为终端时用 ANSI 原地重绘，重定向或管道时降级为节流行输出避免刷屏，重复终态自动去重。
+- 新增：发布运行包内置 Go HTTP 批处理 worker，六个在线 provider 在不改变 Python 解析、缓存、Observation、诊断和裁判语义的前提下复用连接并按各自 `workers`/`rate_per_second` 并发请求；worker 缺失时保留 Python transport 回退。
+- 修复：provider 缓存与完整研判结果缓存由逐 IOC 重复扫描全部 JSONL 分片改为按文件签名惰性建立索引并在写入时增量更新，批量重跑及首次缓存写入不再出现接近二次方的读取退化。
+- 修复：`python ioc_rejudge\cli.py ...` 可从项目根目录直接运行；`python -m ioc_rejudge.cli ...` 保持兼容。
+- 变更：CLI 启动显示绝对缓存目录、reuse/refresh/offline 模式、结果缓存 TTL、已有分片数和 Go/Python HTTP worker；结束始终显示结果缓存 hit/miss 与 missing/stale/fingerprint_mismatch/refresh 原因。Ctrl+C 以 130 退出并说明已落盘 provider 缓存可复用、未完成研判结果不缓存。
+- 修复：`push.py --check` 现在严格只读，只校验 Git 仓库、origin、分支和本地状态，不再执行分支或标签推送。
+- 验证：真实 Windows `provider_http.exe` 通过本地 HTTP 并发、限速、GET/POST、121 请求管道、HTTP/JSON/超时和凭据不泄漏验收；Python 全量 `708 passed, 1 skipped`，Go `go test ./...`、语法编译、`pack.py --check`（102 个发布文件）和 `git diff --check` 通过。
+
 ## 2.2.5 - 2026-08-05
 
 - 修复：同一 IOC 多条 ioc_info 记录的 `comment/context` 只取按 `updatetime`、`inserttime`、`disposaltime` 和原始顺序确定的最新记录；最新备注为空时不回填历史备注。

@@ -12,8 +12,13 @@ from ioc_rejudge.observations import (
     Observation,
     ProviderStatus,
 )
-from ioc_rejudge.providers.base import ProviderContext, ProviderResult
+from ioc_rejudge.providers.base import (
+    ProviderContext,
+    ProviderResult,
+    report_progress,
+)
 from ioc_rejudge.providers.cache import CacheEntry, JsonlProviderCache
+from ioc_rejudge.providers.go_transport import BatchRequest, GoBatchTransport
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import RequestsTransport, TransportError
 
@@ -92,6 +97,7 @@ class K01CompromiseProvider:
         *,
         transport: RequestsTransport | None = None,
         cache: JsonlProviderCache | None = None,
+        go_transport: GoBatchTransport | None = None,
         ignore_port: bool = False,
         ignore_url: bool = False,
         ignore_top: bool = False,
@@ -100,6 +106,7 @@ class K01CompromiseProvider:
         self.settings = settings
         self.transport = transport or RequestsTransport()
         self.cache = cache
+        self.go_transport = go_transport
         self.ignore_port = bool(ignore_port)
         self.ignore_url = bool(ignore_url)
         self.ignore_top = bool(ignore_top)
@@ -241,6 +248,7 @@ class K01CompromiseProvider:
                 statuses[target.normalized] = ProviderStatus.DISABLED
             return ProviderResult(self.name, observations, statuses, errors, cache_hits)
 
+        total = len(supported)
         pending: list[IocTarget] = []
         for target in supported:
             entry = None
@@ -269,29 +277,65 @@ class K01CompromiseProvider:
                 errors.append(f"{target.normalized}: {parse_error}")
             cache_hits += 1
 
+        done = cache_hits
+        report_progress(context, self.name, done, total)
+
         if context.offline:
             for target in pending:
                 statuses[target.normalized] = ProviderStatus.ERROR
                 errors.append(f"offline cache miss for {target.normalized}")
+                done += 1
+                report_progress(context, self.name, done, total)
             return ProviderResult(self.name, observations, statuses, errors, cache_hits)
 
         if pending:
-            try:
-                response = self.transport.post_json(
-                    _endpoint(self.settings.base_url),
-                    headers=dict(self.settings.secrets),
-                    body=build_batch_payload(
-                        pending,
-                        ignore_port=self.ignore_port,
-                        ignore_url=self.ignore_url,
-                        ignore_top=self.ignore_top,
-                    ),
-                    timeout=self.settings.timeout,
+            report_progress(
+                context, self.name, done, total, detail="requesting batch"
+            )
+            response = None
+            request_error: TransportError | None = None
+            if self.go_transport is not None and self.go_transport.available:
+                results = self.go_transport.iter_batch(
+                    [BatchRequest(
+                        id="batch",
+                        method="POST",
+                        url=_endpoint(self.settings.base_url),
+                        headers=dict(self.settings.secrets),
+                        body=build_batch_payload(
+                            pending,
+                            ignore_port=self.ignore_port,
+                            ignore_url=self.ignore_url,
+                            ignore_top=self.ignore_top,
+                        ),
+                        timeout=self.settings.timeout,
+                    )],
+                    workers=1,
+                    rate_per_second=self.settings.rate_per_second,
                 )
-            except TransportError as exc:
+                result = next(results)
+                response = result.payload
+                request_error = result.error
+            else:
+                try:
+                    response = self.transport.post_json(
+                        _endpoint(self.settings.base_url),
+                        headers=dict(self.settings.secrets),
+                        body=build_batch_payload(
+                            pending,
+                            ignore_port=self.ignore_port,
+                            ignore_url=self.ignore_url,
+                            ignore_top=self.ignore_top,
+                        ),
+                        timeout=self.settings.timeout,
+                    )
+                except TransportError as exc:
+                    request_error = exc
+            if request_error is not None:
                 for target in pending:
                     statuses[target.normalized] = ProviderStatus.ERROR
-                errors.append(str(exc))
+                    done += 1
+                    report_progress(context, self.name, done, total)
+                errors.append(str(request_error))
                 return ProviderResult(self.name, observations, statuses, errors, cache_hits)
 
             fetched_at = self.now_fn()
@@ -299,6 +343,8 @@ class K01CompromiseProvider:
             if response_error:
                 for target in pending:
                     statuses[target.normalized] = ProviderStatus.ERROR
+                    done += 1
+                    report_progress(context, self.name, done, total)
                 errors.append(response_error)
                 return ProviderResult(self.name, observations, statuses, errors, cache_hits)
 
@@ -307,6 +353,8 @@ class K01CompromiseProvider:
                 if cache_error:
                     statuses[target.normalized] = ProviderStatus.ERROR
                     errors.append(cache_error)
+                    done += 1
+                    report_progress(context, self.name, done, total)
                     continue
                 status, observation, parse_error = self._parse_target(
                     target,
@@ -320,6 +368,8 @@ class K01CompromiseProvider:
                     observations.append(observation)
                 if parse_error:
                     errors.append(f"{target.normalized}: {parse_error}")
+                done += 1
+                report_progress(context, self.name, done, total)
 
         return ProviderResult(self.name, observations, statuses, errors, cache_hits)
 

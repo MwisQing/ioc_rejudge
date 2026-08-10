@@ -17,8 +17,13 @@ from ioc_rejudge.observations import (
     ProviderStatus,
 )
 from ioc_rejudge.parser import parse_time
-from ioc_rejudge.providers.base import ProviderContext, ProviderResult
+from ioc_rejudge.providers.base import (
+    ProviderContext,
+    ProviderResult,
+    report_progress,
+)
 from ioc_rejudge.providers.cache import CacheEntry, JsonlProviderCache
+from ioc_rejudge.providers.go_transport import BatchRequest, GoBatchTransport
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import RequestsTransport, TransportError
 
@@ -524,6 +529,7 @@ class FDarkProvider:
         include_slow_variants: bool = False,
         include_url_param: bool = False,
         query_params: dict[str, str | int] | None = None,
+        go_transport: GoBatchTransport | None = None,
         now_fn: Callable[[], datetime] | None = None,
     ) -> None:
         self.settings = settings
@@ -533,6 +539,7 @@ class FDarkProvider:
         self.include_slow_variants = bool(include_slow_variants)
         self.include_url_param = bool(include_url_param)
         self.query_params = dict(DEFAULT_QUERY_PARAMS)
+        self.go_transport = go_transport
         if query_params:
             self.query_params.update(
                 {
@@ -655,6 +662,166 @@ class FDarkProvider:
             return "", f"cache write failed for {target.normalized}: {exc}"
         return self._cache_ref(entry), None
 
+    def _complete_target(
+        self,
+        target: IocTarget,
+        target_observations: list[Observation],
+        target_errors: list[str],
+        target_freshnesses: list[Freshness],
+    ) -> tuple[ProviderStatus, list[Observation], list[str], Freshness | None]:
+        if target_errors:
+            return ProviderStatus.ERROR, target_observations, target_errors, None
+        if target_observations:
+            status = ProviderStatus.SUCCESS
+        else:
+            status = ProviderStatus.NO_DATA
+        freshness = None
+        if target_freshnesses:
+            freshness = (
+                Freshness.STALE
+                if Freshness.STALE in target_freshnesses
+                else Freshness.FRESH
+            )
+        return status, target_observations, [], freshness
+
+    def _collect_with_go(
+        self,
+        supported: list[IocTarget],
+        context: ProviderContext,
+        statuses: dict[str, ProviderStatus],
+        observations: list[Observation],
+        errors: list[str],
+        freshnesses: dict[str, Freshness],
+    ) -> ProviderResult:
+        """Batch live variants through one Go worker, preserving Python semantics."""
+        assert self.go_transport is not None
+        total = len(supported)
+        done = 0
+        cache_hits = 0
+        report_progress(context, self.name, done, total)
+        states: dict[str, dict] = {}
+        job_index: dict[str, tuple[str, str, dict[str, str | int]]] = {}
+        jobs: list[BatchRequest] = []
+        outcomes: dict[str, tuple[ProviderStatus, list[Observation], list[str], Freshness | None]] = {}
+
+        def finish(key: str) -> None:
+            nonlocal done
+            state = states[key]
+            if state["remaining"]:
+                return
+            outcomes[key] = self._complete_target(
+                state["target"],
+                state["observations"],
+                state["errors"],
+                state["freshnesses"],
+            )
+            done += 1
+            report_progress(context, self.name, done, total)
+
+        for target in supported:
+            key = target.normalized
+            state = {
+                "target": target,
+                "observations": [],
+                "errors": [],
+                "freshnesses": [],
+                "remaining": 0,
+            }
+            states[key] = state
+            try:
+                variants = self.query_variants(target)
+            except (TypeError, ValueError) as exc:
+                state["errors"].append(f"invalid query: {exc}")
+                finish(key)
+                continue
+
+            for strategy, query in variants:
+                entry = None
+                if self.cache is not None and not context.refresh:
+                    entry = self.cache.get(
+                        target.original,
+                        self.cache_params(target, strategy, query),
+                        now=self.now_fn(),
+                    )
+                    errors.extend(f"cache: {message}" for message in self.cache.diagnostics)
+                if entry is not None and (entry.fresh or context.offline):
+                    response = entry.raw
+                    fetched_at = entry.fetched_at
+                    freshness = Freshness.FRESH if entry.fresh else Freshness.STALE
+                    raw_ref = self._cache_ref(entry)
+                    cache_hits += 1
+                    items, response_error = self._items(response)
+                    if response_error:
+                        state["errors"].append(response_error)
+                    else:
+                        state["freshnesses"].append(freshness)
+                        state["observations"].extend(self._observations(
+                            target, items or [], fetched_at=fetched_at,
+                            freshness=freshness, raw_ref=raw_ref,
+                        ))
+                    continue
+                if context.offline:
+                    state["errors"].append(
+                        f"offline cache miss for {target.normalized} ({strategy})"
+                    )
+                    continue
+                request_id = str(len(jobs))
+                state["remaining"] += 1
+                job_index[request_id] = (key, strategy, query)
+                jobs.append(BatchRequest(
+                    id=request_id,
+                    method="GET",
+                    url=self.settings.base_url,
+                    headers=dict(self.settings.secrets),
+                    params=query,
+                    timeout=self.settings.timeout,
+                ))
+            finish(key)
+
+        for result in self.go_transport.iter_batch(
+            jobs,
+            workers=self.settings.workers,
+            rate_per_second=self.settings.rate_per_second,
+        ):
+            key, strategy, query = job_index[result.id]
+            state = states[key]
+            target = state["target"]
+            state["remaining"] -= 1
+            if result.error is not None:
+                state["errors"].append(str(result.error))
+                finish(key)
+                continue
+            fetched_at = self.now_fn()
+            raw_ref, cache_error = self._store_response(
+                target, strategy, query, result.payload, fetched_at
+            )
+            if cache_error:
+                state["errors"].append(cache_error)
+                finish(key)
+                continue
+            items, response_error = self._items(result.payload)
+            if response_error:
+                state["errors"].append(response_error)
+                finish(key)
+                continue
+            state["freshnesses"].append(Freshness.FRESH)
+            state["observations"].extend(self._observations(
+                target, items or [], fetched_at=fetched_at,
+                freshness=Freshness.FRESH, raw_ref=raw_ref,
+            ))
+            finish(key)
+
+        for target in supported:
+            status, target_observations, target_errors, freshness = outcomes[target.normalized]
+            statuses[target.normalized] = status
+            observations.extend(target_observations)
+            errors.extend(f"{target.normalized}: {message}" for message in target_errors)
+            if freshness is not None:
+                freshnesses[target.normalized] = freshness
+        return ProviderResult(
+            self.name, observations, statuses, errors, cache_hits, freshnesses
+        )
+
     def collect(
         self,
         targets: list[IocTarget],
@@ -676,90 +843,110 @@ class FDarkProvider:
             return ProviderResult(
                 self.name, observations, statuses, errors, cache_hits, freshnesses
             )
+        if (
+            not context.offline
+            and self.go_transport is not None
+            and self.go_transport.available
+        ):
+            return self._collect_with_go(
+                supported, context, statuses, observations, errors, freshnesses
+            )
 
+        total = len(supported)
+        done = 0
+        # done counts only targets whose status is already determined.
+        report_progress(context, self.name, done, total)
         for target in supported:
-            target_observations: list[Observation] = []
-            target_errors: list[str] = []
-            target_freshnesses: list[Freshness] = []
             try:
-                variants = self.query_variants(target)
-            except (TypeError, ValueError) as exc:
-                statuses[target.normalized] = ProviderStatus.ERROR
-                errors.append(f"{target.normalized}: invalid query: {exc}")
-                continue
-
-            for strategy, query in variants:
-                entry = None
-                if self.cache is not None and not context.refresh:
-                    entry = self.cache.get(
-                        target.original,
-                        self.cache_params(target, strategy, query),
-                        now=self.now_fn(),
-                    )
-                    errors.extend(
-                        f"cache: {message}" for message in self.cache.diagnostics
-                    )
-
-                if entry is not None and (entry.fresh or context.offline):
-                    response = entry.raw
-                    fetched_at = entry.fetched_at
-                    freshness = Freshness.FRESH if entry.fresh else Freshness.STALE
-                    raw_ref = self._cache_ref(entry)
-                    cache_hits += 1
-                elif context.offline:
-                    target_errors.append(
-                        f"offline cache miss for {target.normalized} ({strategy})"
-                    )
+                target_observations: list[Observation] = []
+                target_errors: list[str] = []
+                target_freshnesses: list[Freshness] = []
+                try:
+                    variants = self.query_variants(target)
+                except (TypeError, ValueError) as exc:
+                    statuses[target.normalized] = ProviderStatus.ERROR
+                    errors.append(f"{target.normalized}: invalid query: {exc}")
                     continue
-                else:
-                    try:
-                        response = self.transport.get_json(
-                            self.settings.base_url,
-                            headers=dict(self.settings.secrets),
-                            params=query,
-                            timeout=self.settings.timeout,
+
+                for strategy, query in variants:
+                    entry = None
+                    if self.cache is not None and not context.refresh:
+                        entry = self.cache.get(
+                            target.original,
+                            self.cache_params(target, strategy, query),
+                            now=self.now_fn(),
                         )
-                    except TransportError as exc:
-                        target_errors.append(str(exc))
+                        errors.extend(
+                            f"cache: {message}" for message in self.cache.diagnostics
+                        )
+
+                    if entry is not None and (entry.fresh or context.offline):
+                        response = entry.raw
+                        fetched_at = entry.fetched_at
+                        freshness = Freshness.FRESH if entry.fresh else Freshness.STALE
+                        raw_ref = self._cache_ref(entry)
+                        cache_hits += 1
+                    elif context.offline:
+                        target_errors.append(
+                            f"offline cache miss for {target.normalized} ({strategy})"
+                        )
                         continue
-                    fetched_at = self.now_fn()
-                    freshness = Freshness.FRESH
-                    raw_ref, cache_error = self._store_response(
-                        target, strategy, query, response, fetched_at
+                    else:
+                        try:
+                            response = self.transport.get_json(
+                                self.settings.base_url,
+                                headers=dict(self.settings.secrets),
+                                params=query,
+                                timeout=self.settings.timeout,
+                            )
+                        except TransportError as exc:
+                            target_errors.append(str(exc))
+                            continue
+                        fetched_at = self.now_fn()
+                        freshness = Freshness.FRESH
+                        raw_ref, cache_error = self._store_response(
+                            target, strategy, query, response, fetched_at
+                        )
+                        if cache_error:
+                            target_errors.append(cache_error)
+                            continue
+
+                    items, response_error = self._items(response)
+                    if response_error:
+                        target_errors.append(response_error)
+                        continue
+                    target_freshnesses.append(freshness)
+                    target_observations.extend(self._observations(
+                        target,
+                        items or [],
+                        fetched_at=fetched_at,
+                        freshness=freshness,
+                        raw_ref=raw_ref,
+                    ))
+
+                observations.extend(target_observations)
+                if target_errors:
+                    statuses[target.normalized] = ProviderStatus.ERROR
+                    errors.extend(
+                        f"{target.normalized}: {message}" for message in target_errors
                     )
-                    if cache_error:
-                        target_errors.append(cache_error)
-                        continue
-
-                items, response_error = self._items(response)
-                if response_error:
-                    target_errors.append(response_error)
-                    continue
-                target_freshnesses.append(freshness)
-                target_observations.extend(self._observations(
-                    target,
-                    items or [],
-                    fetched_at=fetched_at,
-                    freshness=freshness,
-                    raw_ref=raw_ref,
-                ))
-
-            observations.extend(target_observations)
-            if target_errors:
-                statuses[target.normalized] = ProviderStatus.ERROR
-                errors.extend(
-                    f"{target.normalized}: {message}" for message in target_errors
-                )
-            elif target_observations:
-                statuses[target.normalized] = ProviderStatus.SUCCESS
-            else:
-                statuses[target.normalized] = ProviderStatus.NO_DATA
-            if not target_errors and target_freshnesses:
-                freshnesses[target.normalized] = (
-                    Freshness.STALE
-                    if Freshness.STALE in target_freshnesses
-                    else Freshness.FRESH
-                )
+                elif target_observations:
+                    statuses[target.normalized] = ProviderStatus.SUCCESS
+                else:
+                    statuses[target.normalized] = ProviderStatus.NO_DATA
+                if not target_errors and target_freshnesses:
+                    freshnesses[target.normalized] = (
+                        Freshness.STALE
+                        if Freshness.STALE in target_freshnesses
+                        else Freshness.FRESH
+                    )
+            finally:
+                # Count after status/observations/errors/freshness are settled,
+                # including invalid-query continue. Unexpected exceptions
+                # propagate without claiming that this target completed.
+                if target.normalized in statuses:
+                    done += 1
+                    report_progress(context, self.name, done, total)
 
         return ProviderResult(
             self.name, observations, statuses, errors, cache_hits, freshnesses

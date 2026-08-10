@@ -11,8 +11,13 @@ import time
 from typing import Callable
 
 from ioc_rejudge.observations import Freshness, IocTarget, Observation, ProviderStatus
-from ioc_rejudge.providers.base import ProviderContext, ProviderResult
+from ioc_rejudge.providers.base import (
+    ProviderContext,
+    ProviderResult,
+    report_progress,
+)
 from ioc_rejudge.providers.cache import CacheEntry, JsonlProviderCache
+from ioc_rejudge.providers.go_transport import BatchRequest, GoBatchTransport
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import RequestsTransport, TransportError
 
@@ -110,6 +115,7 @@ class ICPProvider:
         *,
         transport: RequestsTransport | None = None,
         cache: JsonlProviderCache | None = None,
+        go_transport: GoBatchTransport | None = None,
         now_fn: Callable[[], datetime] | None = None,
         clock: Callable[[], float] | None = None,
         sleep: Callable[[float], None] | None = None,
@@ -117,6 +123,7 @@ class ICPProvider:
         self.settings = settings
         self.transport = transport or RequestsTransport()
         self.cache = cache
+        self.go_transport = go_transport
         self.now_fn = now_fn or (lambda: datetime.now(timezone.utc))
         self.clock = clock or time.monotonic
         self.sleep = sleep or time.sleep
@@ -245,6 +252,9 @@ class ICPProvider:
             groups.setdefault(target.host, []).append(target)
         limiter = _RateLimiter(self.settings.rate_per_second, self.clock, self.sleep)
         live_hosts: list[tuple[str, list[IocTarget], CacheEntry | None]] = []
+        total = len(groups)
+        done = 0
+        report_progress(context, self.name, done, total)
 
         for host, host_targets in groups.items():
             entry = None
@@ -266,11 +276,15 @@ class ICPProvider:
                 cache_hits += len(host_targets)
                 if error:
                     errors.append(f"{host}: {self._safe_error(error)}")
+                done += 1
+                report_progress(context, self.name, done, total)
                 continue
             if context.offline:
                 for target in host_targets:
                     statuses[target.normalized] = ProviderStatus.ERROR
                 errors.append(f"offline cache miss for {host}")
+                done += 1
+                report_progress(context, self.name, done, total)
                 continue
             live_hosts.append((host, host_targets, entry if entry is not None and entry.stale else None))
 
@@ -297,7 +311,69 @@ class ICPProvider:
             except Exception as exc:
                 return host, host_targets, ProviderStatus.ERROR, None, self._safe_error(exc), stale_entry
 
-        if live_hosts:
+        if (
+            live_hosts
+            and self.go_transport is not None
+            and self.go_transport.available
+        ):
+            jobs = [
+                BatchRequest(
+                    id=str(index),
+                    method="GET",
+                    url=self.settings.base_url,
+                    params=self.request_params(host),
+                    timeout=self.settings.timeout,
+                )
+                for index, (host, _, _) in enumerate(live_hosts)
+            ]
+            for result in self.go_transport.iter_batch(
+                jobs,
+                workers=self.settings.workers,
+                rate_per_second=self.settings.rate_per_second,
+            ):
+                host, host_targets, stale_entry = live_hosts[int(result.id)]
+                if result.error is not None:
+                    status = ProviderStatus.ERROR
+                    observation = None
+                    error = self._safe_error(result.error)
+                else:
+                    fetched_at = self.now_fn()
+                    raw_ref, cache_error = self._store(host, result.payload, fetched_at)
+                    if cache_error:
+                        status = ProviderStatus.ERROR
+                        observation = None
+                        error = cache_error
+                    else:
+                        status, observation, error = self._consume(
+                            host_targets[0], result.payload, fetched_at=fetched_at,
+                            freshness=Freshness.FRESH, raw_ref=raw_ref,
+                        )
+                for target in host_targets:
+                    statuses[target.normalized] = status
+                    if observation is not None:
+                        observations_by_ioc[target.normalized] = replace(
+                            observation, ioc=target.normalized, scope=target.ioc_type
+                        )
+                if error:
+                    errors.append(f"{host}: {self._safe_error(error)}")
+                if status == ProviderStatus.ERROR and stale_entry is not None:
+                    stale_observation, stale_error = self._stale_observation(
+                        host_targets[0], stale_entry
+                    )
+                    if stale_observation is not None:
+                        for target in host_targets:
+                            observations_by_ioc[target.normalized] = replace(
+                                stale_observation,
+                                ioc=target.normalized,
+                                scope=target.ioc_type,
+                            )
+                    if stale_error:
+                        errors.append(
+                            f"{host}: stale cache: {self._safe_error(stale_error)}"
+                        )
+                done += 1
+                report_progress(context, self.name, done, total)
+        elif live_hosts:
             with ThreadPoolExecutor(max_workers=min(self.settings.workers, len(live_hosts))) as executor:
                 futures = [executor.submit(fetch, item) for item in live_hosts]
                 for future in as_completed(futures):
@@ -315,6 +391,8 @@ class ICPProvider:
                                 observations_by_ioc[target.normalized] = replace(stale_observation, ioc=target.normalized, scope=target.ioc_type)
                         if stale_error:
                             errors.append(f"{host}: stale cache: {self._safe_error(stale_error)}")
+                    done += 1
+                    report_progress(context, self.name, done, total)
 
         observations = [observations_by_ioc[target.normalized] for target in targets if target.normalized in observations_by_ioc]
         return ProviderResult(self.name, observations, statuses, errors, cache_hits)

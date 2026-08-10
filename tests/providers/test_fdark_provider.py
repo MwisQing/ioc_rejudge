@@ -21,6 +21,7 @@ from ioc_rejudge.providers.fdark import (
     build_query_params,
     build_request_params,
 )
+from ioc_rejudge.providers.go_transport import BatchResult
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import TransportError
 
@@ -44,6 +45,22 @@ class FakeTransport:
         if isinstance(value, Exception):
             raise value
         return value
+
+
+class FakeGoTransport:
+    available = True
+
+    def __init__(self, results):
+        self.results = list(results)
+        self.requests = []
+        self.workers = None
+        self.rate_per_second = None
+
+    def iter_batch(self, requests, *, workers, rate_per_second):
+        self.requests = list(requests)
+        self.workers = workers
+        self.rate_per_second = rate_per_second
+        yield from self.results
 
 
 def _targets(*values):
@@ -248,6 +265,61 @@ def test_successful_empty_data_is_no_data(tmp_path):
     assert result.statuses[target.normalized] == ProviderStatus.NO_DATA
     assert result.observations == []
     assert result.errors == []
+
+
+def test_go_batch_path_preserves_status_cache_and_progress(tmp_path):
+    settings = ProviderSettings(
+        name="fdark",
+        base_url="https://fdark.invalid/api/v1/fdark/abstract",
+        secrets={"fdp-access": "test-access", "fdp-secret": "test-secret"},
+        timeout=9,
+        workers=7,
+        rate_per_second=33,
+        ttl=timedelta(days=1),
+    )
+    go_transport = FakeGoTransport([
+        BatchResult("1", payload=_ok()),
+        BatchResult("0", payload=_ok({"md5": "go-live", "level": 80})),
+    ])
+    cache = JsonlProviderCache(tmp_path, "fdark", timedelta(days=1))
+    provider = FDarkProvider(
+        settings,
+        Config(),
+        transport=FakeTransport([]),
+        cache=cache,
+        go_transport=go_transport,
+        now_fn=lambda: NOW,
+    )
+    targets = _targets("one.invalid", "two.invalid")
+    events = []
+
+    result = provider.collect(
+        targets, ProviderContext(on_progress=events.append)
+    )
+
+    assert result.statuses == {
+        targets[0].normalized: ProviderStatus.SUCCESS,
+        targets[1].normalized: ProviderStatus.NO_DATA,
+    }
+    assert result.observations[0].payload["hash"] == "go-live"
+    assert result.freshnesses == {
+        targets[0].normalized: Freshness.FRESH,
+        targets[1].normalized: Freshness.FRESH,
+    }
+    assert [(event.done, event.total) for event in events] == [
+        (0, 2),
+        (1, 2),
+        (2, 2),
+    ]
+    assert go_transport.workers == 7
+    assert go_transport.rate_per_second == 33
+    assert [request.params["domain"] for request in go_transport.requests] == [
+        "one.invalid",
+        "two.invalid",
+    ]
+    for target in targets:
+        strategy, query = provider.query_variants(target)[0]
+        assert cache.get(target.original, provider.cache_params(target, strategy, query))
 
 
 def test_transport_business_and_bad_data_are_errors(tmp_path):

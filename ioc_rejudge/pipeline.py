@@ -72,6 +72,7 @@ class PipelineDiagnostics:
     processing_errors: dict[str, str] = field(default_factory=dict)
     result_cache_hit: int = 0
     result_cache_miss: int = 0
+    result_cache_miss_reasons: dict[str, int] = field(default_factory=dict)
     result_cache_errors: list[str] = field(default_factory=list)
     processed_count: int = 0
 
@@ -1150,12 +1151,14 @@ def run_unified_pipeline(
     }
     cached_rows: dict[str, dict] = {}
     pending_targets: list[IocTarget] = []
+    miss_reasons: dict[str, int] = {}
     cache_errors: list[str] = []
     current = now or datetime.now(timezone.utc)
     for target in bundle.targets:
         entry = None
+        reason = "refresh" if context.refresh else "missing"
         if not context.refresh:
-            entry = result_cache.get(
+            entry, reason = result_cache.lookup(
                 target.normalized, fingerprints[target.normalized], now=current
             )
             cache_errors.extend(result_cache.diagnostics)
@@ -1165,6 +1168,7 @@ def run_unified_pipeline(
             cached_rows[target.normalized] = cached_row
         else:
             pending_targets.append(target)
+            miss_reasons[reason] = miss_reasons.get(reason, 0) + 1
 
     if pending_targets:
         pending_bundle = InputBundle(
@@ -1211,6 +1215,7 @@ def run_unified_pipeline(
     ]
     result.diagnostics.result_cache_hit = len(cached_rows)
     result.diagnostics.result_cache_miss = len(pending_targets)
+    result.diagnostics.result_cache_miss_reasons = miss_reasons
     result.diagnostics.result_cache_errors.extend(dict.fromkeys(cache_errors))
     for target in bundle.targets:
         row = cached_rows.get(target.normalized)

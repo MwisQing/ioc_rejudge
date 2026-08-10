@@ -10,6 +10,7 @@ from ioc_rejudge.observations import Freshness, ProviderStatus
 from ioc_rejudge.pipeline import _build_dga_facts
 from ioc_rejudge.providers.base import ProviderContext
 from ioc_rejudge.providers.cache import JsonlProviderCache
+from ioc_rejudge.providers.go_transport import BatchResult
 from ioc_rejudge.providers.pdns import PDNSProvider
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import TransportError
@@ -34,6 +35,22 @@ class FakeTransport:
         if isinstance(value, Exception):
             raise value
         return value
+
+
+class FakeGoTransport:
+    available = True
+
+    def __init__(self, results):
+        self.results = list(results)
+        self.requests = []
+        self.workers = None
+        self.rate_per_second = None
+
+    def iter_batch(self, requests, *, workers, rate_per_second):
+        self.requests = list(requests)
+        self.workers = workers
+        self.rate_per_second = rate_per_second
+        yield from self.results
 
 
 def _targets(*values):
@@ -115,6 +132,46 @@ def test_plain_ip_ip_port_and_ip_url_are_disabled_without_requests(tmp_path):
     result = provider.collect(targets, ProviderContext())
     assert set(result.statuses.values()) == {ProviderStatus.DISABLED}
     assert transport.calls == []
+
+
+def test_go_batch_path_preserves_input_order_cache_and_progress(tmp_path):
+    settings = ProviderSettings(
+        name="pdns",
+        base_url="https://pdns.invalid/api/v1/passivedns/flint/rrset",
+        secrets={"fdp-access": "test-access", "fdp-secret": "test-secret"},
+        timeout=6,
+        workers=9,
+        rate_per_second=45,
+        ttl=timedelta(days=1),
+    )
+    go_transport = FakeGoTransport([
+        BatchResult("1", payload=_response(_record(rdata="192.0.2.2;"))),
+        BatchResult("0", payload=_response(_record(rdata="192.0.2.1;"))),
+    ])
+    cache = JsonlProviderCache(tmp_path, "pdns", timedelta(days=1))
+    provider = PDNSProvider(
+        settings, cache=cache, go_transport=go_transport, now_fn=lambda: NOW
+    )
+    targets = _targets("one.invalid", "two.invalid")
+    events = []
+
+    result = provider.collect(
+        targets, ProviderContext(on_progress=events.append)
+    )
+
+    assert [item.ioc for item in result.observations] == [
+        targets[0].normalized, targets[1].normalized
+    ]
+    assert [item.payload["rdata"] for item in result.observations] == [
+        "192.0.2.1;", "192.0.2.2;"
+    ]
+    assert [(event.done, event.total) for event in events] == [
+        (0, 2), (1, 2), (2, 2)
+    ]
+    assert go_transport.workers == 9
+    assert go_transport.rate_per_second == 45
+    for target in targets:
+        assert cache.get(target.host, provider.cache_params(target))
 
 
 def test_every_response_record_becomes_a_complete_activity_observation(tmp_path):

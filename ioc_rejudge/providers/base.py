@@ -2,9 +2,24 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
 from ioc_rejudge.observations import Freshness, IocTarget, Observation, ProviderStatus
+
+
+@dataclass(frozen=True)
+class ProgressEvent:
+    """One per-provider progress update during batch collection.
+
+    done counts targets whose status is already determined; total is the
+    number of targets this provider was asked to process. detail is optional
+    short human-readable context (for example a cache hit notice).
+    """
+
+    provider: str
+    done: int
+    total: int
+    detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -14,11 +29,36 @@ class ProviderContext:
     offline: when True, providers must not make network requests.
     refresh: when True, providers should bypass local caches.
     run_dir: writable directory for transient artifacts (cache, logs).
+    on_progress: optional sink that receives per-provider ProgressEvent
+        updates as targets are processed; progress reporting must never
+        affect collection results.
     """
 
     offline: bool = False
     refresh: bool = False
     run_dir: Path | None = None
+    on_progress: Callable[[ProgressEvent], None] | None = None
+
+
+def report_progress(
+    context: ProviderContext,
+    provider: str,
+    done: int,
+    total: int,
+    detail: str = "",
+) -> None:
+    """Emit one progress event when a handler is configured.
+
+    Handler exceptions are swallowed so a broken progress sink can never
+    change collection outcomes.
+    """
+    handler = getattr(context, "on_progress", None)
+    if handler is None:
+        return
+    try:
+        handler(ProgressEvent(provider, done, total, detail))
+    except Exception:
+        pass
 
 
 @dataclass

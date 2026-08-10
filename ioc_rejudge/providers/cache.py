@@ -70,6 +70,10 @@ class JsonlProviderCache:
         self.legacy_path = self.root / f"{provider_name}.jsonl"
         self.path = self._path_for(datetime.now(timezone.utc))
         self.diagnostics: list[str] = []
+        self._index_lock = Lock()
+        self._index_signature: tuple[tuple[str, int, int], ...] | None = None
+        self._index: dict[str, tuple[dict, datetime]] = {}
+        self._index_diagnostics: list[str] = []
 
     @property
     def errors(self) -> list[str]:
@@ -90,6 +94,18 @@ class JsonlProviderCache:
         if self.legacy_path.is_file():
             paths.insert(0, self.legacy_path)
         return paths
+
+    @staticmethod
+    def _paths_signature(paths: list[Path]) -> tuple[tuple[str, int, int], ...]:
+        signature = []
+        for path in paths:
+            try:
+                stat = path.stat()
+            except OSError:
+                signature.append((str(path), -1, -1))
+            else:
+                signature.append((str(path), stat.st_mtime_ns, stat.st_size))
+        return tuple(signature)
 
     @staticmethod
     def _stable_json(value: Any) -> str:
@@ -171,6 +187,14 @@ class JsonlProviderCache:
             with path.open("a", encoding="utf-8", newline="") as handle:
                 handle.write(line)
                 handle.flush()
+        with self._index_lock:
+            if self._index_signature is not None:
+                latest = self._index.get(cache_key)
+                if latest is None or self._utc_naive(fetched) >= self._utc_naive(
+                    latest[1]
+                ):
+                    self._index[cache_key] = (row, fetched)
+                self._index_signature = self._paths_signature(self._read_paths())
         self.path = path
         return CacheEntry(
             key=cache_key,
@@ -200,6 +224,60 @@ class JsonlProviderCache:
         age = self._utc_naive(now) - self._utc_naive(fetched_at)
         return age <= self.ttl
 
+    def _ensure_index(self) -> None:
+        paths = self._read_paths()
+        signature = self._paths_signature(paths)
+        if self._index_signature == signature:
+            self.diagnostics = list(self._index_diagnostics)
+            return
+        with self._index_lock:
+            paths = self._read_paths()
+            signature = self._paths_signature(paths)
+            if self._index_signature == signature:
+                self.diagnostics = list(self._index_diagnostics)
+                return
+            index: dict[str, tuple[dict, datetime]] = {}
+            diagnostics: list[str] = []
+            required = {"key", "ioc", "params", "fetched_at", "raw"}
+            for path in paths:
+                try:
+                    with self._lock_for(path):
+                        lines = path.read_text(encoding="utf-8").splitlines()
+                except (OSError, UnicodeDecodeError) as exc:
+                    diagnostics.append(f"{path.name}: cache read failed: {exc}")
+                    continue
+                for line_no, line in enumerate(lines, 1):
+                    if not line.strip():
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        diagnostics.append(
+                            f"{path.name}: line {line_no}: bad JSON: {exc.msg}"
+                        )
+                        continue
+                    if not isinstance(row, dict) or not required.issubset(row):
+                        diagnostics.append(
+                            f"{path.name}: line {line_no}: missing required fields"
+                        )
+                        continue
+                    fetched = self._parse_datetime(row.get("fetched_at"))
+                    if fetched is None:
+                        diagnostics.append(
+                            f"{path.name}: line {line_no}: invalid fetched_at"
+                        )
+                        continue
+                    key = str(row.get("key", ""))
+                    latest = index.get(key)
+                    if latest is None or self._utc_naive(fetched) >= self._utc_naive(
+                        latest[1]
+                    ):
+                        index[key] = (row, fetched)
+            self._index = index
+            self._index_diagnostics = diagnostics
+            self._index_signature = signature
+            self.diagnostics = list(diagnostics)
+
     def get(
         self,
         ioc: str,
@@ -207,53 +285,11 @@ class JsonlProviderCache:
         *,
         now: datetime | None = None,
     ) -> CacheEntry | None:
-        self.diagnostics = []
         query_params = dict(params or {})
         normalized = self._normalize_ioc(ioc)
         expected_key = self.key(normalized, query_params)
-        paths = self._read_paths()
-        if not paths:
-            return None
-
-        lines: list[tuple[Path, int, str]] = []
-        for path in paths:
-            try:
-                with self._lock_for(path):
-                    path_lines = path.read_text(encoding="utf-8").splitlines()
-            except (OSError, UnicodeDecodeError) as exc:
-                self.diagnostics.append(f"{path.name}: cache read failed: {exc}")
-                continue
-            lines.extend((path, line_no, line) for line_no, line in enumerate(path_lines, 1))
-
-        latest: tuple[dict, datetime] | None = None
-        required = {"key", "ioc", "params", "fetched_at", "raw"}
-        for path, line_no, line in lines:
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError as exc:
-                self.diagnostics.append(
-                    f"{path.name}: line {line_no}: bad JSON: {exc.msg}"
-                )
-                continue
-            if not isinstance(row, dict) or not required.issubset(row):
-                self.diagnostics.append(
-                    f"{path.name}: line {line_no}: missing required fields"
-                )
-                continue
-            fetched = self._parse_datetime(row.get("fetched_at"))
-            if fetched is None:
-                self.diagnostics.append(
-                    f"{path.name}: line {line_no}: invalid fetched_at"
-                )
-                continue
-            if row.get("key") == expected_key and (
-                latest is None
-                or self._utc_naive(fetched) >= self._utc_naive(latest[1])
-            ):
-                latest = (row, fetched)
-
+        self._ensure_index()
+        latest = self._index.get(expected_key)
         if latest is None:
             return None
         row, fetched = latest

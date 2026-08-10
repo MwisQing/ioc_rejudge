@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from ioc_rejudge.config import Config
 from ioc_rejudge.providers.cache import CacheEntry, JsonlProviderCache
 from ioc_rejudge.providers.fdark import FDarkProvider
+from ioc_rejudge.providers.go_transport import GoBatchTransport
 from ioc_rejudge.providers.icp import ICPProvider
 from ioc_rejudge.providers.ioc_info import DEFAULT_URL as IOC_INFO_DEFAULT_URL
 from ioc_rejudge.providers.ioc_info import IOCInfoProvider
@@ -460,6 +461,7 @@ def build_providers(
     cache_root = Path(cache_dir) if cache_dir is not None else None
     run_root = Path(run_dir) if run_dir is not None else None
     providers = []
+    go_transport = GoBatchTransport() if transport_factory is None and not offline else None
 
     for name in selected:
         options = local.get(name, {})
@@ -501,6 +503,7 @@ def build_providers(
                 settings,
                 transport=transport,
                 cache=cache,
+                go_transport=go_transport,
                 max_attempts=int(options.get("max_attempts", 10)),
                 retry_delay=float(options.get("retry_delay", 0)),
             )
@@ -509,6 +512,7 @@ def build_providers(
                 settings,
                 transport=transport,
                 cache=cache,
+                go_transport=go_transport,
                 ignore_port=bool(options.get("ignore_port", False)),
                 ignore_url=bool(options.get("ignore_url", False)),
                 ignore_top=bool(options.get("ignore_top", False)),
@@ -519,6 +523,7 @@ def build_providers(
                 core_config,
                 transport=transport,
                 cache=cache,
+                go_transport=go_transport,
                 include_slow_variants=bool(
                     options.get("include_slow_variants", False)
                 ),
@@ -526,11 +531,17 @@ def build_providers(
                 query_params=options.get("query_params"),
             )
         elif name == "whois":
-            provider = WhoisProvider(settings, transport=transport, cache=cache)
+            provider = WhoisProvider(
+                settings, transport=transport, cache=cache, go_transport=go_transport
+            )
         elif name == "icp":
-            provider = ICPProvider(settings, transport=transport, cache=cache)
+            provider = ICPProvider(
+                settings, transport=transport, cache=cache, go_transport=go_transport
+            )
         else:
-            provider = PDNSProvider(settings, transport=transport, cache=cache)
+            provider = PDNSProvider(
+                settings, transport=transport, cache=cache, go_transport=go_transport
+            )
 
         provider.is_live_provider = True
         if not configured_enabled:
