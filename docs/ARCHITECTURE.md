@@ -143,7 +143,7 @@ ICP 响应按 `resultObject.website_icp_num`、`resultObject.icp`、`rows[0].web
 
 非密钥 provider 配置拒绝 secret/token/password/authorization 类字段。独立凭证文件只接受固定认证字段，指定后不回退环境变量；ProviderSettings 的表示形式和异常信息不会暴露认证值。
 
-ICP 默认限制为 2 workers 和 2 requests/second。配置层目前只校验二者为正数，尚未定义产品级硬上限；生产配置必须遵守接口所有者批准的上限。
+ICP 默认限制为 8 workers 和 8 requests/second。配置层目前只校验二者为正数，尚未定义产品级硬上限；接口出现限流、超时或业务错误时可通过本地配置降为 4/4，生产配置必须遵守接口所有者批准的上限。
 
 ### 4.2 HTTP 传输
 
@@ -186,7 +186,7 @@ Sidecar 和自定义非 live provider 继续按原 provider 协议执行，不�
 
 `AdjudicationResultCache` 位于 provider 缓存根目录的 `.cache_adjudication_results/cache_YYYY-MM-DD.jsonl`，默认 TTL 7 天。每行保存规范化 IOC、配置指纹、研判时间和完整 verdict 输出。
 
-配置指纹覆盖 IOC 规范化形态、输入快照记录、规则/阈值、provider 顺序、公开 settings、查询选项、sidecar 内容摘要和凭据身份摘要；凭据原文不序列化、不落盘。只有新鲜且指纹完全相同的结果才会命中，命中目标在 provider 收集前被移出 pending 集合。部分命中时只为 miss 目标执行 provider pipeline，最终按输入顺序归并。provider `error` 或必要来源缺失的结果不落盘。`--refresh` 强制全部 miss；坏行只进入 `result_cache_errors`，不阻断其他有效结果。
+配置指纹覆盖 IOC 规范化形态、输入快照记录、规则/阈值、provider 顺序、公开 settings、查询选项、sidecar 内容摘要、凭据身份摘要和 provider 原始缓存分片存在状态；凭据原文不序列化、不落盘。只有新鲜且指纹完全相同的结果才会命中，命中目标在 provider 收集前被移出 pending 集合。删除或清空 provider 原始缓存分片会造成 `fingerprint_mismatch`，使完整结果重新采集；采集完成后使用最新缓存状态写入结果指纹。部分命中时只为 miss 目标执行 provider pipeline，最终按输入顺序归并。provider `error` 或必要来源缺失的结果不落盘。`--refresh` 强制全部 miss；坏行只进入 `result_cache_errors`，不阻断其他有效结果。
 
 ## 5. 并发与确定性
 

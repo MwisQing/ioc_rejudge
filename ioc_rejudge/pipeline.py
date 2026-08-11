@@ -40,7 +40,7 @@ from ioc_rejudge.result_cache import AdjudicationResultCache
 
 
 DGA_PROVIDER_NAME = "k01_compromise"
-ADJUDICATION_CACHE_CONTRACT = 4
+ADJUDICATION_CACHE_CONTRACT = 5
 REQUIRED_SAMPLE_PROVIDERS = ("ioc_info", "fdark")
 _COMPLETE_STATUSES = {ProviderStatus.SUCCESS, ProviderStatus.NO_DATA}
 _DISCOVERY_PROVIDER_NAMES = {DGA_PROVIDER_NAME, *REQUIRED_SAMPLE_PROVIDERS}
@@ -1045,10 +1045,27 @@ def _run_unified_pipeline_uncached(
     return UnifiedPipelineResult(verdicts, diagnostics, all_observations)
 
 
+def _provider_cache_state(provider: Provider) -> str:
+    cache = getattr(provider, "cache", None)
+    if cache is None:
+        return "none"
+    provider_dir = getattr(cache, "provider_dir", None)
+    legacy_path = getattr(cache, "legacy_path", None)
+    try:
+        if provider_dir is not None and any(provider_dir.glob("cache_*.jsonl")):
+            return "present"
+        if legacy_path is not None and legacy_path.is_file():
+            return "present"
+    except OSError:
+        return "unavailable"
+    return "missing"
+
+
 def _provider_result_cache_shape(provider: Provider) -> dict:
     shape: dict[str, object] = {
         "name": str(provider.name),
         "class": f"{type(provider).__module__}.{type(provider).__qualname__}",
+        "cache_state": _provider_cache_state(provider),
     }
     settings = getattr(provider, "settings", None)
     public_dict = getattr(settings, "public_dict", None)
@@ -1196,9 +1213,15 @@ def run_unified_pipeline(
         if row is None or not _is_cacheable_verdict_row(row):
             continue
         try:
+            final_fingerprint = result_cache_fingerprint(
+                target,
+                snapshots.get(target.normalized, []),
+                provider_list,
+                config,
+            )
             result_cache.put(
                 target.normalized,
-                fingerprints[target.normalized],
+                final_fingerprint,
                 row,
                 fetched_at=current,
             )

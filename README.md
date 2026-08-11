@@ -6,7 +6,7 @@ IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.2.5` 同时支
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.2.5` |
+| 版本 | `2.2.8` |
 | Python | 已用 Python 3.12 验证 |
 | 输入 | 旧 JSONL 快照、裸 IOC 文件、重复 `--ioc` |
 | IOC 类型 | domain、URL、domain:port、IP、IP:port |
@@ -172,7 +172,7 @@ K01、IOC Info、F-Dark、WHOIS、pDNS 默认缓存 7 天，ICP 默认缓存 30 
 
 每个接口使用独立目录和日期分片：`.cache_<provider>/cache_YYYY-MM-DD.jsonl`。读取时会跨日期分片选择同一 query key 的最新记录，并兼容旧版根目录 `<provider>.jsonl`；因此缓存不会继续无限堆在一个文件里。
 
-完整研判结果也默认缓存 7 天，写入 `.cache_adjudication_results/cache_YYYY-MM-DD.jsonl`。缓存行同时保存规范化 IOC、输入/规则/provider 配置指纹、研判时间和完整输出对象；重复研判同一规范化 IOC 时，只有快照内容、规则阈值、provider 选择及影响查询的公开配置均一致才会复用，命中后直接跳过 provider 请求。可在 `provider-config.json` 顶层配置：
+完整研判结果也默认缓存 7 天，写入 `.cache_adjudication_results/cache_YYYY-MM-DD.jsonl`。缓存行同时保存规范化 IOC、输入/规则/provider 配置指纹、provider 原始缓存状态、研判时间和完整输出对象；重复研判同一规范化 IOC 时，只有快照内容、规则阈值、provider 选择、影响查询的公开配置及原始缓存状态均一致才会复用，命中后直接跳过 provider 请求。删除或清空某个 provider 原始缓存后，相关完整结果会因 `fingerprint_mismatch` 重新采集。可在 `provider-config.json` 顶层配置：
 
 ```json
 "result_cache": {
@@ -187,7 +187,7 @@ K01、IOC Info、F-Dark、WHOIS、pDNS 默认缓存 7 天，ICP 默认缓存 30 
 
 ICP 查询按 host 去重，凭据来自显式凭证文件或兼容环境变量，不读取 `token_icp.txt`。缺凭据在线运行和无缓存 offline miss 都产生零 live ICP 请求。响应写入 cache 或 `run_dir/raw` 前会按当前 ICP 凭据值再次脱敏，避免服务端回显认证值。
 
-ICP 默认使用 2 workers 和 2 requests/second。本地 provider 配置可以调整这两个正数，但当前尚未定义或强制产品级硬上限；生产使用时应保持在接口所有者批准的范围内。
+ICP 默认使用 8 workers 和 8 requests/second。本地 provider 配置可以调整这两个正数；如果接口返回限流、超时或业务错误，可降为 4/4。当前尚未定义或强制产品级硬上限，生产使用时仍应保持在接口所有者批准的范围内。
 
 `--refresh` 绕过已有 provider cache 和研判结果 cache；它与 `--offline` 互斥。
 

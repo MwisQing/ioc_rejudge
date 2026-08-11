@@ -22,8 +22,8 @@
     },
     "icp": {
       "ttl_days": 30,
-      "workers": 2,
-      "rate_per_second": 2
+      "workers": 8,
+      "rate_per_second": 8
     }
   }
 }

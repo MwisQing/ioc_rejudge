@@ -289,8 +289,8 @@ def test_all_providers_default_to_seven_days_except_icp_thirty_days():
     icp = next(provider for provider in defaults if provider.name == "icp")
     assert icp.settings.enabled is True
     assert icp.settings.ttl == timedelta(days=30)
-    assert icp.settings.workers == 2
-    assert icp.settings.rate_per_second == 2
+    assert icp.settings.workers == 8
+    assert icp.settings.rate_per_second == 8
     assert icp.settings.secrets == {"uc": f"icp-uc-{SENTINEL}", "key": f"icp-key-{SENTINEL}"}
 
 

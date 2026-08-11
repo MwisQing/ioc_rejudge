@@ -61,8 +61,8 @@ _DEFAULTS = {
     "icp": {
         "url": "https://icp.xuanji.qianxin.com/v2/open-api/icp-info",
         "ttl": timedelta(days=30),
-        "workers": 2,
-        "rate_per_second": 2,
+        "workers": 8,
+        "rate_per_second": 8,
     },
 }
 

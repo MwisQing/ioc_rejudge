@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 import json
+import shutil
 
 from ioc_rejudge.config import Config
 from ioc_rejudge.inputs import read_input_bundle
@@ -9,6 +10,7 @@ from ioc_rejudge.observations import ProviderStatus
 from ioc_rejudge import pipeline
 from ioc_rejudge.pipeline import result_cache_fingerprint, run_unified_pipeline
 from ioc_rejudge.providers.base import ProviderContext, ProviderResult
+from ioc_rejudge.providers.cache import JsonlProviderCache
 from ioc_rejudge.result_cache import AdjudicationResultCache
 
 
@@ -34,6 +36,17 @@ class CountingProvider:
 class SelectiveProvider(CountingProvider):
     def supports(self, target):
         return target.normalized != "cached.invalid"
+
+
+class CacheWritingProvider(CountingProvider):
+    def __init__(self, cache):
+        super().__init__()
+        self.cache = cache
+
+    def collect(self, targets, context):
+        for target in targets:
+            self.cache.put(target.normalized, {"data": []}, {})
+        return super().collect(targets, context)
 
 
 def test_adjudication_contract_version_changes_fingerprint(monkeypatch):
@@ -82,6 +95,40 @@ def test_second_identical_run_reuses_complete_rows_without_provider_calls(tmp_pa
     assert {row["result"]["ioc"] for row in decoded} == {
         "one.invalid", "two.invalid"
     }
+
+
+def test_deleting_provider_cache_invalidates_complete_result_cache(tmp_path):
+    cache = JsonlProviderCache(tmp_path, "ioc_info", timedelta(days=7))
+    provider = CacheWritingProvider(cache)
+    bundle = read_input_bundle(None, ["cache-state.invalid"])
+    now = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
+
+    first = run_unified_pipeline(
+        bundle, [provider], Config(), ProviderContext(), now=now,
+        result_cache=AdjudicationResultCache(tmp_path),
+    )
+    assert first.diagnostics.result_cache_miss == 1
+
+    result_cache = AdjudicationResultCache(tmp_path)
+    provider.calls.clear()
+    second = run_unified_pipeline(
+        bundle, [provider], Config(), ProviderContext(), now=now + timedelta(days=1),
+        result_cache=result_cache,
+    )
+    assert second.diagnostics.result_cache_hit == 1
+    assert provider.calls == []
+
+    shutil.rmtree(cache.provider_dir)
+    replacement_cache = JsonlProviderCache(tmp_path, "ioc_info", timedelta(days=7))
+    replacement = CacheWritingProvider(replacement_cache)
+    third = run_unified_pipeline(
+        bundle, [replacement], Config(), ProviderContext(), now=now + timedelta(days=1),
+        result_cache=result_cache,
+    )
+    assert third.diagnostics.result_cache_hit == 0
+    assert third.diagnostics.result_cache_miss == 1
+    assert third.diagnostics.result_cache_miss_reasons == {"fingerprint_mismatch": 1}
+    assert replacement.calls == [["cache-state.invalid"]]
 
 
 def test_expired_refresh_and_config_change_each_recompute(tmp_path):

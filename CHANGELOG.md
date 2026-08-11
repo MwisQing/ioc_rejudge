@@ -2,6 +2,13 @@
 
 ## 未发布
 
+## 2.2.8 - 2026-08-11
+
+- 修复：完整研判结果缓存现在感知 provider 原始缓存分片状态；删除或清空某个接口缓存后不再错误复用旧 verdict，而是以 `fingerprint_mismatch` 重新采集。
+- 修复：provider 采集完成后使用最新原始缓存状态写入完整结果指纹，避免首次写入后下一次运行产生不必要的缓存 miss。
+- 变更：ICP 默认并发和限速由 `2 workers / 2 requests per second` 提升为 `8/8`；仍可通过 `providers.icp.workers` 和 `providers.icp.rate_per_second` 覆盖，接口出现限流时建议降为 `4/4`。
+- 验证：结果缓存、ICP 和 provider 工厂专项 `60 passed`；全量测试、发布包独立测试及发布审计见本版本发布记录。
+
 ## 2.2.7 - 2026-08-10
 
 - 修复：K01 compromises 不再把全部 IOC 放进单个批量请求，默认按 100 条分批；某批返回 `10002` 等业务错误时只影响该批，其他批次继续查询并复用已写入的 provider cache。
