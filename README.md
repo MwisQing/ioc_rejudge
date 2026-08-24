@@ -1,21 +1,58 @@
 # IOC Rejudge CLI
 
-IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.2.5` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。
+IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.3.0` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。
 
 ## 当前状态
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.2.8` |
+| 版本 | `2.3.0` |
 | Python | 已用 Python 3.12 验证 |
 | 输入 | 旧 JSONL 快照、裸 IOC 文件、重复 `--ioc` |
 | IOC 类型 | domain、URL、domain:port、IP、IP:port |
 | 结论 | `存活有效`、`失活有效`、`灰`、`误报`、`待复核` |
 | live provider | K01、IOC Info、F-Dark、WHOIS、pDNS、ICP；按 IOC 类型和研判需要分流 |
 | 本地 provider | 任意 JSONL sidecar；可用于 ICP Observation 回放 |
-| 当前测试 | `670 passed` |
+| 当前测试 | `727 passed, 1 skipped` |
 
 ICP provider 已按固定响应契约实现并通过 mock/cache 验收；真实 endpoint、认证和生产响应仍需在具备授权凭据的环境中单独确认。
+
+## 本地安全分享
+
+当需要让云端 AI 查看本地研判证据时，使用独立的 `share` 子命令创建安全上下文包。它不会把密钥上传，也不会修改本地裁判输入：IOC、URL、IPv4/IPv6、hash、人员、路径和准标识符会被替换为同一 key 下可关联的 AES-SIV token；凭据字段、URL userinfo、敏感 query 值和内嵌凭据会永久变成 `[REDACTED]`。口令默认交互式输入，也可以通过 `IOC_SHARE_PASSPHRASE` 提供给自动化进程。
+
+创建 bundle（首次运行生成本地 key 文件）：
+
+```powershell
+python -m ioc_rejudge share create `
+  -i .\snapshot.jsonl `
+  -o .\share.jsonl `
+  --key-file .\share-key.json `
+  --generate-key `
+  --names-file .\names.txt
+```
+
+创建完成会同时生成 `share.jsonl.manifest.json`。只上传 `share.jsonl`；key 和原始 manifest 都留在本机。把 manifest 中的 `bundle_id` 告知云端 AI，并要求它在返回 JSONL 的每个对象顶层原样加入该字段。常见结构化人员字段会自动 token 化；自由文本中的姓名应逐行写入 `names.txt` 并通过 `--names-file` 提供。严格模式默认开启，如果脱敏后仍发现 URL、域名、IP、hash、UUID、路径、人员字段或 credential-like 值，命令会失败并删除不合格输出。
+
+发送前可单独扫描：
+
+```powershell
+python -m ioc_rejudge share scan -i .\share.jsonl
+```
+
+云端返回保留 token 和顶层 `bundle_id` 的 JSONL 后，在本地使用原始 manifest 验证并还原：
+
+```powershell
+python -m ioc_rejudge share restore `
+  -i .\cloud-review.jsonl `
+  -o .\cloud-review-restored.jsonl `
+  --key-file .\share-key.json `
+  --manifest .\share.jsonl.manifest.json
+```
+
+还原前会用本地 key 验证 manifest 认证码、输出 hash、`bundle_id` 和 key_id；未知或被篡改的 token、被替换的 manifest、还原后重复 key 默认 fail-closed。凭据类字段不设计为可恢复值。还原后的结果才可以与本地原始 IOC 或人工审阅库合并，不能把 token bundle 直接当作生产研判输入。
+
+确定性 token 会有意保留值类型、相等关系和 JSON 结构，同一 key 在不同 bundle 中也可被云端关联；普通文本和时间只有命中规则后才会替换。若不同案件不应被交叉关联，应为每个案件或信任边界生成独立 key。残留扫描是发送前的强制防线，但不能证明任意自然语言都不含身份线索；上传前仍需维护人员字段和 `names.txt`。
 
 ## 安装
 

@@ -52,8 +52,8 @@ _URL_PATH_RE = re.compile(r"(https?://[^/\s]+)(/[^\s]*)")
 # ---------------------------------------------------------------------------
 
 
-def _random_hex(length: int = 32) -> str:
-    return "".join(random.choice("0123456789abcdef") for _ in range(length))
+def _random_hex(rng: random.Random, length: int = 32) -> str:
+    return "".join(rng.choice("0123456789abcdef") for _ in range(length))
 
 
 def _random_private_ip(rng: random.Random) -> str:
@@ -66,13 +66,13 @@ def _random_private_ip(rng: random.Random) -> str:
         ),
         ("192.168.", lambda r: f"192.168.{r.randint(0,255)}.{r.randint(1,254)}"),
     ]
-    prefix, factory = random.choice(blocks)  # noqa: S311 – not security-sensitive
+    prefix, factory = rng.choice(blocks)  # noqa: S311 – not security-sensitive
     return factory(rng)
 
 
 def _random_domain(rng: random.Random) -> str:
     label = "".join(
-        random.choice(string.ascii_lowercase + string.digits)  # noqa: S311
+        rng.choice(string.ascii_lowercase + string.digits)  # noqa: S311
         for _ in range(rng.randint(6, 14))
     )
     return f"{label}.invalid"
@@ -179,7 +179,7 @@ class _Anonymizer:
     def _map_email(self, email: str) -> str:
         if email not in self._email_map:
             local = "".join(
-                random.choice(string.ascii_lowercase)  # noqa: S311
+                self._rng.choice(string.ascii_lowercase)  # noqa: S311
                 for _ in range(8)
             )
             self._email_map[email] = f"{local}@example.invalid"
@@ -187,7 +187,7 @@ class _Anonymizer:
 
     def _map_hash(self, h: str) -> str:
         if h not in self._hash_map:
-            self._hash_map[h] = _random_hex(len(h))
+            self._hash_map[h] = _random_hex(self._rng, len(h))
         return self._hash_map[h]
 
     def _map_person_name(self, name: str) -> str:

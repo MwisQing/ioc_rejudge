@@ -2,7 +2,7 @@
 
 > 操作本项目前先读本文件。完成有意义的变更后，更新底部进度记录。
 >
-> 当前版本为 `2.2.8`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收和项目内独立凭证文件。
+> 当前版本为 `2.3.0`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收、项目内独立凭证文件和本地安全分享 bundle。
 
 ## 1. 阅读顺序
 
@@ -27,7 +27,7 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.2.8` |
+| 版本 | `2.3.0` |
 | 项目类型 | Python CLI |
 | 当前输入 | iocProducer 风格 JSONL 快照、裸 IOC 文件或重复 `--ioc` |
 | 当前联网 | 裸 IOC 统一模式可按所选 provider 联网；`--offline` 与旧快照兼容模式不联网 |
@@ -263,7 +263,7 @@ ioc_rejudge_cli_1.4.1/
 python -m pytest tests -q
 ```
 
-当前结果：`714 passed, 1 skipped`。skip 为 Windows 不适用的 POSIX 脚本执行探针；真实 Windows `provider_http.exe` 已由本地 HTTP 端到端验收覆盖。另含 GitHub Release 下载更新、本地凭证文件来源隔离、控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间、逐接口日期缓存、完整研判结果缓存、provider 缓存删除联动、缓存索引性能、生命周期请求规划、最新 comment/context、过期误报出口与发布 allow-list/忽略规则安全专项。
+当前结果：`727 passed, 1 skipped`。skip 为 Windows 不适用的 POSIX 脚本执行探针；真实 Windows `provider_http.exe` 已由本地 HTTP 端到端验收覆盖。另含 GitHub Release 下载更新、本地凭证文件来源隔离、控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间、逐接口日期缓存、完整研判结果缓存、评估时间 fingerprint、provider 缓存删除联动、缓存索引性能、生命周期请求规划、最新 comment/context、过期误报出口、share bundle 和发布 allow-list/忽略规则安全专项。
 
 任务 22 在线端到端验收：`tests/test_live_acceptance.py` 与 live pipeline 联合为 `13 passed`。九个合成场景全程使用注入 transport，并对 `requests.Session.get/post` 设置 fail-fast 网络哨兵；online mock 填充五源 cache/raw 后移除全部凭据，offline replay 的 verdict、原因、来源、顺序及 Observation 稳定字段与 online 完全一致。递归扫描 JSONL、CSV、Excel 及解压后的 XML/rels、diagnostics、cache、raw 和 log，sentinel 凭据零匹配。
 
@@ -377,3 +377,4 @@ python -m pytest tests -q
 | 2026-08-10 | 2.2.7 发布 | 按成熟接口脚本与正式文档将 K01 默认批大小设为 100，Go/Python transport 均按批查询并隔离 `10002` 等业务错误；diagnostics 保留业务 `msg` 且清洗凭据；专项与 live 联合 190 passed、全量 713 passed，1 skipped；发布包保留本地并用于 GitHub Release |
 | 2026-08-10 | 完整结果缓存一致性 | provider 原始缓存状态纳入完整研判结果指纹，删除或清空接口缓存后不再错误命中旧 verdict；采集完成后以最新状态写回结果缓存；结果缓存专项 11 passed |
 | 2026-08-11 | 2.2.8 发布 | 完整结果缓存与 provider 原始缓存删除联动，避免旧 verdict 错误命中；ICP 默认并发/限速由 2/2 提升至 8/8，保留本地配置降级入口；专项 60 passed，全量 714 passed，1 skipped |
+| 2026-08-24 | 2.3.0 | 新增本地口令保护的 AES-SIV share bundle、流式 JSONL 严格残留扫描、带 key 认证的 manifest、云端结果 bundle 归属校验和 restore 入口；修复 legacy anonymizer seed 确定性；结果缓存 fingerprint 纳入 UTC 评估日期；函数与真实 CLI create/scan/restore 均覆盖，全量 727 passed，1 skipped |

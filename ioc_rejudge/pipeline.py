@@ -40,7 +40,7 @@ from ioc_rejudge.result_cache import AdjudicationResultCache
 
 
 DGA_PROVIDER_NAME = "k01_compromise"
-ADJUDICATION_CACHE_CONTRACT = 5
+ADJUDICATION_CACHE_CONTRACT = 6
 REQUIRED_SAMPLE_PROVIDERS = ("ioc_info", "fdark")
 _COMPLETE_STATUSES = {ProviderStatus.SUCCESS, ProviderStatus.NO_DATA}
 _DISCOVERY_PROVIDER_NAMES = {DGA_PROVIDER_NAME, *REQUIRED_SAMPLE_PROVIDERS}
@@ -1106,10 +1106,17 @@ def result_cache_fingerprint(
     snapshot_records: list[dict],
     providers: Iterable[Provider],
     config: Config,
+    evaluation_time: datetime | None = None,
 ) -> str:
     """Hash every local input that can change a completed verdict row."""
+    evaluation_day = ""
+    if isinstance(evaluation_time, datetime):
+        if evaluation_time.tzinfo is not None:
+            evaluation_time = evaluation_time.astimezone(timezone.utc)
+        evaluation_day = evaluation_time.date().isoformat()
     shape = {
         "contract": ADJUDICATION_CACHE_CONTRACT,
+        "evaluation_day": evaluation_day,
         "target": {
             "normalized": target.normalized,
             "ioc_type": target.ioc_type,
@@ -1159,10 +1166,15 @@ def run_unified_pipeline(
             bundle, provider_list, config, context, now=now, progress=progress
         )
 
+    effective_now = now or datetime.now(timezone.utc)
     snapshots = _snapshot_records(bundle)
     fingerprints = {
         target.normalized: result_cache_fingerprint(
-            target, snapshots.get(target.normalized, []), provider_list, config
+            target,
+            snapshots.get(target.normalized, []),
+            provider_list,
+            config,
+            evaluation_time=effective_now,
         )
         for target in bundle.targets
     }
@@ -1170,7 +1182,7 @@ def run_unified_pipeline(
     pending_targets: list[IocTarget] = []
     miss_reasons: dict[str, int] = {}
     cache_errors: list[str] = []
-    current = now or datetime.now(timezone.utc)
+    current = effective_now
     for target in bundle.targets:
         entry = None
         reason = "refresh" if context.refresh else "missing"
@@ -1199,7 +1211,7 @@ def run_unified_pipeline(
             provider_list,
             config,
             context,
-            now=now,
+            now=effective_now,
             progress=progress,
         )
     else:
@@ -1218,6 +1230,7 @@ def run_unified_pipeline(
                 snapshots.get(target.normalized, []),
                 provider_list,
                 config,
+                evaluation_time=effective_now,
             )
             result_cache.put(
                 target.normalized,

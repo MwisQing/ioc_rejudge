@@ -1,6 +1,11 @@
 # 更新日志
 
-## 未发布
+## 2.3.0 - 2026-08-24
+
+- 新增：`python -m ioc_rejudge share create|restore|scan`，支持本地口令保护的 AES-SIV 可关联 token、流式 JSONL、带 key 认证的 manifest 和严格残留扫描。
+- 安全：credential-like 字段、URL 凭据和内嵌凭据在 share bundle 中永久 `[REDACTED]`，key 与原始 manifest 不进入云端；错误 key、篡改/非规范 token、manifest 认证失败或 bundle 归属不匹配时 fail-closed。
+- 修复：研判结果缓存 fingerprint 纳入 UTC 评估日期，避免跨活动窗口或日期边界复用旧结论；旧缓存契约自动失效。
+- 修复：`--seed` 现在能让 legacy anonymizer 的 domain、IP、hash 和 email 替身真正稳定复现。
 
 ## 2.2.8 - 2026-08-11
 

@@ -17,6 +17,7 @@ token_icp.txt
 /credentials.local.json
 /ioc_info/
 /outputs/
+/output/
 /其他接口/
 /回扫报告/
 /docs/agent-prompts/
@@ -29,6 +30,8 @@ token_icp.txt
 /provider-cache/
 /provider_cache/
 /raw/
+*.share-key.json
+share-key.json
 
 # Orchestrator runtime artifacts
 /.orchestrator/

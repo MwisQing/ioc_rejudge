@@ -1,6 +1,6 @@
 # 架构说明
 
-本文描述 IOC Rejudge CLI `2.2.5` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
+本文描述 IOC Rejudge CLI `2.3.0` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
 
 ## 1. 总体数据流
 
@@ -102,6 +102,7 @@ strength, payload, raw_ref
 | `diff.py` | Verdict 转移和成员变化报告 |
 | `config.py` / `rules.py` | 阈值和规则配置 |
 | `cli.py` | 参数解析、两条入口编排、输出和 diagnostics |
+| `share.py` | 本地口令保护的 AES-SIV token bundle、流式严格扫描和 token restore |
 
 ## 4. Provider 架构
 
@@ -255,6 +256,10 @@ diagnostics 记录解析失败、无效 IOC、provider 状态/异常、必要来
 - 原始响应为了审计可以落在用户指定的 cache/run 目录，但不是发布源文件。
 - 测试使用注入 transport 和网络哨兵验证零真实请求。
 - 不读取 `token_icp.txt`；ICP 生产 endpoint 尚未用用户凭据验收，当前证据来自 synthetic/mock 和本地 cache replay。
+- `python -m ioc_rejudge share` 是独立的云端协作边界：key 文件使用 scrypt 派生密钥包裹，key 原文不进入 bundle、manifest、日志或 HTTP 请求；IOC/人员/路径等使用确定性 AES-SIV token，credential-like 字段只输出 `[REDACTED]`。
+- share bundle 采用 JSONL 流式读写和原子替换；manifest 保存输出 hash、bundle_id、key_id、行数和扫描统计，并使用本地 key 对全部字段做完整性认证，不保存原文 hash、原文或口令。
+- share bundle 不是生产 pipeline 输入；原始 manifest 留在本地，云端改写结果的每行必须回传顶层 `bundle_id`。restore 使用相同 key 验证 manifest、bundle 归属和 token；未知/非规范 token、错误 key、manifest 被替换或还原后 key 冲突均 fail-closed。
+- share 的隐私边界不是全字段加密：确定性 token 有意暴露类型、相等关系、JSON 结构及大致长度，未命中规则的普通文本和时间保持可读。不同案件需要隔离关联时必须使用不同 key；自由文本身份线索需通过 names file 和发送前人工审阅补充，残留扫描不能证明任意自然语言均已匿名化。
 
 ## 10. 兼容性与限制
 

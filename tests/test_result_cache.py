@@ -79,7 +79,7 @@ def test_second_identical_run_reuses_complete_rows_without_provider_calls(tmp_pa
         [provider],
         Config(),
         ProviderContext(),
-        now=now + timedelta(days=1),
+        now=now + timedelta(seconds=30),
         result_cache=cache,
     )
 
@@ -97,6 +97,31 @@ def test_second_identical_run_reuses_complete_rows_without_provider_calls(tmp_pa
     }
 
 
+def test_evaluation_time_change_invalidates_complete_result_cache(tmp_path):
+    cache = AdjudicationResultCache(tmp_path)
+    bundle = read_input_bundle(None, ["time-sensitive.invalid"])
+    provider = CountingProvider()
+    now = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
+
+    first = run_unified_pipeline(
+        bundle, [provider], Config(), ProviderContext(), now=now, result_cache=cache
+    )
+    provider.calls.clear()
+    second = run_unified_pipeline(
+        bundle,
+        [provider],
+        Config(),
+        ProviderContext(),
+        now=now + timedelta(days=1),
+        result_cache=cache,
+    )
+
+    assert first.diagnostics.result_cache_miss == 1
+    assert second.diagnostics.result_cache_hit == 0
+    assert second.diagnostics.result_cache_miss == 1
+    assert provider.calls == [["time-sensitive.invalid"]]
+
+
 def test_deleting_provider_cache_invalidates_complete_result_cache(tmp_path):
     cache = JsonlProviderCache(tmp_path, "ioc_info", timedelta(days=7))
     provider = CacheWritingProvider(cache)
@@ -112,7 +137,7 @@ def test_deleting_provider_cache_invalidates_complete_result_cache(tmp_path):
     result_cache = AdjudicationResultCache(tmp_path)
     provider.calls.clear()
     second = run_unified_pipeline(
-        bundle, [provider], Config(), ProviderContext(), now=now + timedelta(days=1),
+        bundle, [provider], Config(), ProviderContext(), now=now + timedelta(seconds=30),
         result_cache=result_cache,
     )
     assert second.diagnostics.result_cache_hit == 1
@@ -122,7 +147,7 @@ def test_deleting_provider_cache_invalidates_complete_result_cache(tmp_path):
     replacement_cache = JsonlProviderCache(tmp_path, "ioc_info", timedelta(days=7))
     replacement = CacheWritingProvider(replacement_cache)
     third = run_unified_pipeline(
-        bundle, [replacement], Config(), ProviderContext(), now=now + timedelta(days=1),
+        bundle, [replacement], Config(), ProviderContext(), now=now + timedelta(seconds=30),
         result_cache=result_cache,
     )
     assert third.diagnostics.result_cache_hit == 0

@@ -1,6 +1,6 @@
 # 开发与验证
 
-本文是 IOC Rejudge CLI `2.2.5` 的开发准入说明。发布脚本只可在用户明确授权后初始化、提交、打 tag 或推送。
+本文是 IOC Rejudge CLI `2.3.0` 的开发准入说明。发布脚本只可在用户明确授权后初始化、提交、打 tag 或推送。
 
 ## 1. 开发前阅读
 
@@ -14,9 +14,9 @@
 
 ## 2. 环境
 
-- 当前版本：`2.2.8`
+- 当前版本：`2.3.0`
 - 已验证 Python：3.12
-- 运行依赖：`openpyxl`、`requests`
+- 运行依赖：`openpyxl`、`requests`、`cryptography`
 - 开发依赖：pytest
 
 安装：
@@ -37,7 +37,7 @@ python -c "import openpyxl, pytest, requests; print('dependencies ok')"
 
 ## 3. 当前基线
 
-截至 2026-08-05：
+截至 2026-08-24：
 
 ```powershell
 python -m pytest tests -q
@@ -46,7 +46,7 @@ python -m pytest tests -q
 结果：
 
 ```text
-670 passed
+727 passed, 1 skipped
 ```
 
 其中包括：
@@ -61,6 +61,7 @@ python -m pytest tests -q
 - 非 Git 发布 allow-list、`RELEASE.json` 和排除规则。
 - 控制台 provider 启停/进度/状态可见性、逐 provider 耗时诊断和 `--diff-baseline` 迁移对比。
 - Excel 评审 sheet 判定原因/评审建议/缺失必要来源列。
+- 本地 share bundle 的 AES-SIV token、口令包裹 key、manifest 认证、bundle 归属、严格残留扫描和错误 key fail-closed。
 
 ## 4. 变更流程
 
@@ -123,6 +124,7 @@ python pack.py --check
 | `export.py` | 人工工作表兼容和敏感字段泄漏 | JSONL/CSV/Excel、打开读取、XML 扫描 |
 | provider | 外部 schema、认证、缓存和离线边界 | 契约测试、错误矩阵、cache、泄漏扫描 |
 | `pack.py` | 用户数据、缓存或内部材料进入发布包 | release tests、manifest audit、解压全测 |
+| `share.py` | token 可还原边界、key/manifest 完整性和隐私残留 | share round-trip、wrong-key、tamper、scan、全量 |
 
 ## 7. Provider 开发
 
@@ -219,6 +221,7 @@ JSONL 应保留对象/列表类型；CSV 和 Excel 使用稳定 JSON 字符串�
 - 控制字符不会破坏 Excel XML。
 - 用 openpyxl 重新打开生成文件。
 - 对 zip 内 XML/rels 以及 JSONL、CSV、diagnostics 做凭据扫描。
+- 修改 `share.py` 后必须检查 JSONL 流式处理、同 key 一致性、错误 key/篡改及非规范 token、manifest 认证、bundle 归属、credential-like 永久脱敏和输出残留扫描。
 
 ## 11. 文档维护
 
