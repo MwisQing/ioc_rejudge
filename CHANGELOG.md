@@ -6,6 +6,7 @@
 - 新增：share bundle 本地存储管理——`~/.ioc-share/bundles` 按 `bundle_id` 保存最近 20 个 bundle，restore 自动按行内 `bundle_id` 直定位、sha256 兜底匹配本地 manifest，不再需要手工指定 manifest 路径。
 - 安全：UI 服务只监听 `127.0.0.1` 且拒绝地址复用（防 Windows 双进程共享端口）；页面与全部 `/api/*` 端点要求进程级会话令牌并通过 Host/Origin（含端口）校验；key 口令仅驻留服务进程内存，页面 `no-store`，可一键清除。
 - 安全：`share.ensure_key` 公开函数补齐 key 生成/解锁/覆盖校验入口；share 既有脱敏、manifest 认证和严格残留扫描语义不变，UI 不提供关闭严格模式的入口。
+- 修复：未授权或未找到的请求在返回 403/404 前排空请求体，避免 Windows 在未读缓冲上关闭套接字时发送 RST，导致客户端读不到拒绝响应。
 - 兼容：`ui.py`/`ui.html` 使用标准库 `http.server` 与零外部资源单文件页面，无新增运行依赖；页面剪贴板不可用时自动回退全选 + Ctrl+C。
 - 验证：UI 专项 `15 passed`（真实回环服务覆盖安全门、key 生命周期、create/restore/scan 回环、manifest 双路匹配、严格失败清理、保留上限和端口回退），全量 `742 passed, 1 skipped`，`pack.py --check` 106 个发布文件。
 
