@@ -1,6 +1,6 @@
 # 开发与验证
 
-本文是 IOC Rejudge CLI `2.3.0` 的开发准入说明。发布脚本只可在用户明确授权后初始化、提交、打 tag 或推送。
+本文是 IOC Rejudge CLI `2.4.0` 的开发准入说明。发布脚本只可在用户明确授权后初始化、提交、打 tag 或推送。
 
 ## 1. 开发前阅读
 
@@ -14,7 +14,7 @@
 
 ## 2. 环境
 
-- 当前版本：`2.3.0`
+- 当前版本：`2.4.0`
 - 已验证 Python：3.12
 - 运行依赖：`openpyxl`、`requests`、`cryptography`
 - 开发依赖：pytest
@@ -37,7 +37,7 @@ python -c "import openpyxl, pytest, requests; print('dependencies ok')"
 
 ## 3. 当前基线
 
-截至 2026-08-24：
+截至 2026-08-31：
 
 ```powershell
 python -m pytest tests -q
@@ -46,7 +46,7 @@ python -m pytest tests -q
 结果：
 
 ```text
-727 passed, 1 skipped
+742 passed, 1 skipped
 ```
 
 其中包括：
@@ -62,6 +62,7 @@ python -m pytest tests -q
 - 控制台 provider 启停/进度/状态可见性、逐 provider 耗时诊断和 `--diff-baseline` 迁移对比。
 - Excel 评审 sheet 判定原因/评审建议/缺失必要来源列。
 - 本地 share bundle 的 AES-SIV token、口令包裹 key、manifest 认证、bundle 归属、严格残留扫描和错误 key fail-closed。
+- 本地 share 助手 UI 的会话令牌/Host/Origin 安全门、key 解锁与锁定、create/restore/scan 端到端回环、manifest 双路匹配、严格失败清理、bundle 保留上限和占用端口回退。
 
 ## 4. 变更流程
 
@@ -110,6 +111,14 @@ python -m pytest tests/test_export.py tests/test_release_tools.py -q
 python pack.py --check
 ```
 
+### 本地 share 助手 UI
+
+```powershell
+python -m pytest tests/test_ui_server.py -q
+```
+
+专项使用真实回环 HTTP 服务与 urllib/http.client 客户端，覆盖安全门、key 生命周期、create/restore/scan 回环与 bundle 存储策略；页面断言零外部资源引用。
+
 修改共享模型或跨模块契约时，专项测试不能替代全量测试。
 
 ## 6. 高风险模块
@@ -125,6 +134,7 @@ python pack.py --check
 | provider | 外部 schema、认证、缓存和离线边界 | 契约测试、错误矩阵、cache、泄漏扫描 |
 | `pack.py` | 用户数据、缓存或内部材料进入发布包 | release tests、manifest audit、解压全测 |
 | `share.py` | token 可还原边界、key/manifest 完整性和隐私残留 | share round-trip、wrong-key、tamper、scan、全量 |
+| `ui.py` / `ui.html` | 本地服务暴露面、口令驻留和 bundle 存储策略 | UI 专项（安全门、回环、保留上限）、手工浏览器冒烟 |
 
 ## 7. Provider 开发
 

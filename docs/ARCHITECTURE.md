@@ -1,6 +1,6 @@
 # 架构说明
 
-本文描述 IOC Rejudge CLI `2.3.0` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
+本文描述 IOC Rejudge CLI `2.4.0` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
 
 ## 1. 总体数据流
 
@@ -103,6 +103,7 @@ strength, payload, raw_ref
 | `config.py` / `rules.py` | 阈值和规则配置 |
 | `cli.py` | 参数解析、两条入口编排、输出和 diagnostics |
 | `share.py` | 本地口令保护的 AES-SIV token bundle、流式严格扫描和 token restore |
+| `ui.py` + `ui.html` | 本地 share 助手：回环 HTTP 服务与单文件页面，包装 share create/restore/scan |
 
 ## 4. Provider 架构
 
@@ -260,6 +261,8 @@ diagnostics 记录解析失败、无效 IOC、provider 状态/异常、必要来
 - share bundle 采用 JSONL 流式读写和原子替换；manifest 保存输出 hash、bundle_id、key_id、行数和扫描统计，并使用本地 key 对全部字段做完整性认证，不保存原文 hash、原文或口令。
 - share bundle 不是生产 pipeline 输入；原始 manifest 留在本地，云端改写结果的每行必须回传顶层 `bundle_id`。restore 使用相同 key 验证 manifest、bundle 归属和 token；未知/非规范 token、错误 key、manifest 被替换或还原后 key 冲突均 fail-closed。
 - share 的隐私边界不是全字段加密：确定性 token 有意暴露类型、相等关系、JSON 结构及大致长度，未命中规则的普通文本和时间保持可读。不同案件需要隔离关联时必须使用不同 key；自由文本身份线索需通过 names file 和发送前人工审阅补充，残留扫描不能证明任意自然语言均已匿名化。
+- `python -m ioc_rejudge ui` 只监听 `127.0.0.1` 且不可配置为其他地址；页面与 API 请求均需携带进程级会话令牌并通过 Host/Origin 校验（防 DNS rebinding 与跨站请求），非 200 响应关闭连接避免 keep-alive 错位。服务拒绝地址复用，端口被占用时回退随机端口，杜绝两个 UI 进程共享同一端口。
+- UI 的 key 口令只驻留服务进程内存，页面响应 `Cache-Control: no-store`，清除口令立即失效；bundle 目录按 `bundle_id` 存储并保留最近 20 个，restore 按 bundle_id 直定位、sha256 兜底匹配本地 manifest。UI 不执行研判 pipeline、不发起网络请求、不提供关闭严格模式的入口。
 
 ## 10. 兼容性与限制
 

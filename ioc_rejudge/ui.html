@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IOC share 助手</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --ink: #1f2430;
+    --muted: #6b7280;
+    --line: #d9dde3;
+    --accent: #2563eb;
+    --accent-ink: #ffffff;
+    --danger-bg: #fde8e8;
+    --danger-ink: #9f1d1d;
+    --ok: #0f7b4f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px 16px 64px;
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  main { max-width: 980px; margin: 0 auto; }
+  header { max-width: 980px; margin: 0 auto 16px; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  .statusbar {
+    display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 14px; font-size: 13px; color: var(--muted);
+  }
+  .statusbar b { color: var(--ink); font-weight: 600; }
+  .badge {
+    display: inline-block; padding: 1px 10px; border-radius: 999px;
+    font-size: 12px; border: 1px solid var(--line); color: var(--muted);
+  }
+  body.is-unlocked .badge { color: var(--ok); border-color: var(--ok); }
+  .panel {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 16px; margin-top: 16px;
+  }
+  .panel h2 { font-size: 16px; margin: 0 0 4px; }
+  .panel .hint { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+  label { display: block; margin: 8px 0 4px; font-size: 13px; }
+  textarea, input[type="text"], input[type="password"] {
+    width: 100%; border: 1px solid var(--line); border-radius: 6px;
+    padding: 8px 10px; font: 13px/1.5 ui-monospace, Consolas, monospace;
+    background: #fbfcfd; color: var(--ink);
+  }
+  textarea { min-height: 120px; resize: vertical; }
+  textarea[readonly] { background: #f2f4f7; }
+  .row { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+  .row label { display: inline-flex; gap: 6px; align-items: center; margin: 0; }
+  button {
+    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
+    border-radius: 6px; padding: 7px 18px; font-size: 14px; cursor: pointer;
+  }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .error {
+    background: var(--danger-bg); color: var(--danger-ink);
+    border: 1px solid #f1b8b8; border-radius: 8px; padding: 10px 14px;
+    margin-top: 16px; white-space: pre-wrap;
+  }
+  .result { margin-top: 12px; }
+  .result[hidden], .error[hidden], .flash[hidden] { display: none; }
+  .flash { color: var(--ok); font-size: 13px; margin-left: 12px; }
+  .bundle-id {
+    font: 600 15px/1.4 ui-monospace, Consolas, monospace;
+    background: #eef2ff; border: 1px dashed #b6c4f5; border-radius: 6px;
+    padding: 6px 10px; display: inline-block; margin: 4px 0;
+    user-select: all;
+  }
+  .stats { color: var(--muted); font-size: 13px; margin: 6px 0; }
+  .note {
+    background: #fffbeb; border: 1px solid #f2e2ab; color: #7a5b0a;
+    border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-top: 10px;
+  }
+  .actions { margin-top: 10px; display: flex; align-items: center; }
+  #key-panel .note { background: #eff6ff; border-color: #bfd4fb; color: #1e4f9c; }
+  body:not(.is-unlocked) .needs-key { display: none; }
+  ul.bundles { list-style: none; margin: 0; padding: 0; font-size: 13px; color: var(--muted); }
+  ul.bundles li { font-family: ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<header>
+  <h1>IOC share 助手</h1>
+  <div class="statusbar">
+    <span id="status-key">正在加载…</span>
+    <span class="badge" id="status-unlocked">未解锁</span>
+    <span style="margin-left: auto;"></span>
+    <ul class="bundles" id="status-bundles"></ul>
+    <button class="secondary" type="button" id="lock-btn">清除口令</button>
+  </div>
+</header>
+<main>
+  <div class="error" id="error-bar" hidden></div>
+
+  <section class="panel" id="key-panel">
+    <h2>解锁 share key</h2>
+    <p class="hint">口令只保存在本机服务进程内存中，清除口令或关闭进程后即失效。</p>
+    <label for="key-passphrase">key 口令（新 key 至少 12 个字符）</label>
+    <input type="password" id="key-passphrase" autocomplete="off">
+    <div class="row" style="margin-top: 8px;">
+      <label><input type="checkbox" id="key-generate"> 生成新 key</label>
+      <label><input type="checkbox" id="key-force"> 覆盖已存在的 key 文件</label>
+    </div>
+    <div class="note" id="key-hint" hidden></div>
+    <div class="actions">
+      <button type="button" id="key-btn">解锁 / 创建</button>
+    </div>
+  </section>
+
+  <section class="panel needs-key" id="create-panel">
+    <h2>生成脱敏包</h2>
+    <p class="hint">粘贴研判结果 JSONL（或填写本机文件路径），生成可发给云端 AI 的脱敏内容并复制到剪贴板。</p>
+    <div class="row">
+      <label><input type="radio" name="create-src" value="paste" checked> 粘贴文本</label>
+      <label><input type="radio" name="create-src" value="path"> 本机文件路径</label>
+    </div>
+    <div id="create-paste">
+      <label for="create-content">JSONL 内容</label>
+      <textarea id="create-content" placeholder='{"ioc": "...", "conclusion": "..."}'></textarea>
+    </div>
+    <div id="create-file" hidden>
+      <label for="create-path">文件路径</label>
+      <input type="text" id="create-path" placeholder="D:\outputs\result.jsonl">
+    </div>
+    <label for="create-names">人员姓名文件路径（可选，自由文本中的姓名需逐行列出）</label>
+    <input type="text" id="create-names" placeholder="D:\names.txt">
+    <div class="actions">
+      <button type="button" id="create-btn">生成脱敏包</button>
+      <span class="flash" id="create-flash" hidden></span>
+    </div>
+    <div class="result" id="create-result" hidden>
+      <div class="stats" id="create-stats"></div>
+      <div>bundle_id（连同脱敏内容一并提供给云端 AI）：</div>
+      <div class="bundle-id" id="create-bundle-id"></div>
+      <textarea id="create-output" readonly></textarea>
+      <div class="actions">
+        <button class="secondary" type="button" id="create-copy">复制脱敏内容</button>
+      </div>
+      <div class="note">发给云端 AI 时请附带要求：返回的每行 JSON 顶层需原样加入上面的 bundle_id；ss1: 开头的 token 保持原样，不要改写、截断或翻译。</div>
+    </div>
+  </section>
+
+  <section class="panel needs-key" id="restore-panel">
+    <h2>还原 AI 返回</h2>
+    <p class="hint">粘贴云端 AI 返回的 JSONL（每行需带 bundle_id），自动匹配本地 bundle 并还原真实值；原样粘回脱敏包内容也可以验证还原。</p>
+    <div class="row">
+      <label><input type="radio" name="restore-src" value="paste" checked> 粘贴文本</label>
+      <label><input type="radio" name="restore-src" value="path"> 本机文件路径</label>
+    </div>
+    <div id="restore-paste">
+      <label for="restore-content">AI 返回的 JSONL</label>
+      <textarea id="restore-content" placeholder='{"bundle_id": "...", "ioc": "ss1:...", "proposed_label": "..."}'></textarea>
+    </div>
+    <div id="restore-file" hidden>
+      <label for="restore-path">文件路径</label>
+      <input type="text" id="restore-path" placeholder="D:\cloud-review.jsonl">
+    </div>
+    <div class="actions">
+      <button type="button" id="restore-btn">还原</button>
+      <span class="flash" id="restore-flash" hidden></span>
+    </div>
+    <div class="result" id="restore-result" hidden>
+      <div class="stats" id="restore-stats"></div>
+      <textarea id="restore-output" readonly></textarea>
+      <div class="actions">
+        <button class="secondary" type="button" id="restore-copy">复制还原结果</button>
+      </div>
+      <div class="note">还原结果包含真实 IOC 与真实身份值，只能在本机使用；不要把还原后的内容再发回云端。</div>
+    </div>
+  </section>
+
+  <section class="panel" id="scan-panel">
+    <h2>残留扫描</h2>
+    <p class="hint">对任意 JSONL 做脱敏残留检查；finding_count 应为 0 才可以外发。</p>
+    <div class="row">
+      <label><input type="radio" name="scan-src" value="paste" checked> 粘贴文本</label>
+      <label><input type="radio" name="scan-src" value="path"> 本机文件路径</label>
+    </div>
+    <div id="scan-paste">
+      <label for="scan-content">JSONL 内容</label>
+      <textarea id="scan-content"></textarea>
+    </div>
+    <div id="scan-file" hidden>
+      <label for="scan-path">文件路径</label>
+      <input type="text" id="scan-path">
+    </div>
+    <div class="actions">
+      <button type="button" id="scan-btn">扫描</button>
+    </div>
+    <div class="result" id="scan-result" hidden>
+      <div class="stats" id="scan-stats"></div>
+    </div>
+  </section>
+</main>
+<script>
+'use strict';
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+const $ = (id) => document.getElementById(id);
+
+async function api(path, payload) {
+  const response = await fetch(path + '?token=' + encodeURIComponent(TOKEN), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload || {}),
+  });
+  let data = null;
+  try { data = await response.json(); } catch (err) { data = null; }
+  if (!response.ok) {
+    if (response.status === 403) {
+      throw new Error('会话令牌无效或请求被拒绝：请从启动命令打印的 URL 重新打开本页面。');
+    }
+    throw new Error(data && data.error ? data.error : ('HTTP ' + response.status));
+  }
+  return data;
+}
+
+function showError(message) { const bar = $('error-bar'); bar.textContent = message; bar.hidden = false; }
+function clearError() { $('error-bar').hidden = true; }
+function flash(id, message) {
+  const el = $(id); el.textContent = message; el.hidden = false;
+  setTimeout(() => { el.hidden = true; }, 5000);
+}
+
+async function copyText(text, textarea, flashId) {
+  try {
+    await navigator.clipboard.writeText(text);
+    flash(flashId, '已复制到剪贴板');
+  } catch (err) {
+    textarea.focus();
+    textarea.select();
+    flash(flashId, '剪贴板不可用：已全选输出，请按 Ctrl+C 复制');
+  }
+}
+
+function collectInput(prefix) {
+  const mode = document.querySelector('input[name="' + prefix + '-src"]:checked').value;
+  if (mode === 'path') {
+    const value = $(prefix + '-path').value.trim();
+    if (!value) throw new Error('请填写文件路径');
+    return {input_path: value};
+  }
+  const value = $(prefix + '-content').value;
+  if (!value.trim()) throw new Error('请先粘贴 JSONL 内容');
+  return {content: value};
+}
+
+function bindSourceToggle(prefix) {
+  document.querySelectorAll('input[name="' + prefix + '-src"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      const mode = document.querySelector('input[name="' + prefix + '-src"]:checked').value;
+      $(prefix + '-paste').hidden = mode !== 'paste';
+      $(prefix + '-file').hidden = mode !== 'path';
+    });
+  });
+}
+
+async function refreshStatus() {
+  let status;
+  try { status = await api('/api/status', {}); }
+  catch (err) { showError(err.message); return; }
+  const unlocked = !!status.unlocked;
+  document.body.classList.toggle('is-unlocked', unlocked);
+  $('status-unlocked').textContent = unlocked ? '已解锁' : '未解锁';
+  $('status-key').textContent =
+    'key: ' + status.key_file +
+    (status.key_id ? ' · key_id ' + status.key_id : '') +
+    (status.key_exists ? '' : ' · 文件不存在');
+  const hint = $('key-hint');
+  if (!status.key_exists) {
+    hint.textContent = 'key 文件不存在：输入口令并勾选“生成新 key”以创建；创建后同一台机器请一直复用这个 key。';
+    hint.hidden = false;
+  } else if (!unlocked) {
+    hint.textContent = '输入既有 key 的口令即可解锁。';
+    hint.hidden = false;
+  } else {
+    hint.hidden = true;
+  }
+  const list = $('status-bundles');
+  list.textContent = '';
+  const bundles = (status.bundles || []).slice(0, 5);
+  if (bundles.length) {
+    for (const bundle of bundles) {
+      const li = document.createElement('li');
+      li.textContent = (bundle.bundle_id || '?') + ' · ' + (bundle.rows == null ? '?' : bundle.rows) + ' 行';
+      list.appendChild(li);
+    }
+  }
+}
+
+async function doKey() {
+  clearError();
+  try {
+    const passphrase = $('key-passphrase').value;
+    if (!passphrase) throw new Error('请输入口令');
+    await api('/api/key', {
+      passphrase: passphrase,
+      generate: $('key-generate').checked,
+      force: $('key-force').checked,
+    });
+    $('key-passphrase').value = '';
+    await refreshStatus();
+  } catch (err) { showError(err.message); }
+}
+
+async function doLock() {
+  clearError();
+  try { await api('/api/lock', {}); } catch (err) { showError(err.message); }
+  await refreshStatus();
+}
+
+async function doCreate() {
+  clearError();
+  try {
+    const payload = collectInput('create');
+    const namesPath = $('create-names').value.trim();
+    if (namesPath) payload.names_path = namesPath;
+    const result = await api('/api/create', payload);
+    $('create-bundle-id').textContent = result.bundle_id;
+    $('create-stats').textContent =
+      '行数 ' + result.rows +
+      ' · token ' + result.token_occurrences +
+      ' · 永久脱敏字段 ' + result.redacted_occurrences +
+      ' · 输入中的敏感项 ' + result.source_findings;
+    $('create-output').value = result.text;
+    $('create-result').hidden = false;
+    await copyText(result.text, $('create-output'), 'create-flash');
+    await refreshStatus();
+  } catch (err) { showError(err.message); }
+}
+
+async function doRestore() {
+  clearError();
+  try {
+    const payload = collectInput('restore');
+    const result = await api('/api/restore', payload);
+    $('restore-stats').textContent =
+      '匹配 bundle ' + result.matched_bundle_id + ' · 还原 ' + result.rows + ' 行';
+    $('restore-output').value = result.text;
+    $('restore-result').hidden = false;
+    await copyText(result.text, $('restore-output'), 'restore-flash');
+  } catch (err) { showError(err.message); }
+}
+
+async function doScan() {
+  clearError();
+  try {
+    const payload = collectInput('scan');
+    const result = await api('/api/scan', payload);
+    const counts = Object.keys(result.finding_counts || {});
+    const detail = counts.length
+      ? '（' + counts.map((code) => code + ' x' + result.finding_counts[code]).join('、') + '）'
+      : '';
+    $('scan-stats').textContent =
+      '行数 ' + result.rows + ' · 残留敏感项 ' + result.finding_count + detail +
+      (result.finding_count === 0 ? ' — 可以外发' : ' — 存在残留，禁止外发');
+    $('scan-result').hidden = false;
+  } catch (err) { showError(err.message); }
+}
+
+$('key-btn').addEventListener('click', doKey);
+$('lock-btn').addEventListener('click', doLock);
+$('create-btn').addEventListener('click', doCreate);
+$('create-copy').addEventListener('click', () => copyText($('create-output').value, $('create-output'), 'create-flash'));
+$('restore-btn').addEventListener('click', doRestore);
+$('restore-copy').addEventListener('click', () => copyText($('restore-output').value, $('restore-output'), 'restore-flash'));
+$('scan-btn').addEventListener('click', doScan);
+bindSourceToggle('create');
+bindSourceToggle('restore');
+bindSourceToggle('scan');
+refreshStatus();
+</script>
+</body>
+</html>

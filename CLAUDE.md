@@ -2,7 +2,7 @@
 
 > 操作本项目前先读本文件。完成有意义的变更后，更新底部进度记录。
 >
-> 当前版本为 `2.3.0`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收、项目内独立凭证文件和本地安全分享 bundle。
+> 当前版本为 `2.4.0`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收、项目内独立凭证文件、本地安全分享 bundle 和本地 share 助手 UI。
 
 ## 1. 阅读顺序
 
@@ -27,7 +27,7 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.3.0` |
+| 版本 | `2.4.0` |
 | 项目类型 | Python CLI |
 | 当前输入 | iocProducer 风格 JSONL 快照、裸 IOC 文件或重复 `--ioc` |
 | 当前联网 | 裸 IOC 统一模式可按所选 provider 联网；`--offline` 与旧快照兼容模式不联网 |
@@ -176,6 +176,7 @@ ioc_rejudge/cli.py
 | `config.py` | 阈值配置 |
 | `export.py` | JSONL、CSV、Excel |
 | `cli.py` | 编排、诊断、CLI |
+| `ui.py` + `ui.html` | 本地 share 助手：回环 HTTP 服务、单文件页面、会话令牌/Host/Origin 安全门和 bundle 存储（包装 share create/restore/scan） |
 
 当前公开兼容 API：
 
@@ -263,7 +264,7 @@ ioc_rejudge_cli_1.4.1/
 python -m pytest tests -q
 ```
 
-当前结果：`727 passed, 1 skipped`。skip 为 Windows 不适用的 POSIX 脚本执行探针；真实 Windows `provider_http.exe` 已由本地 HTTP 端到端验收覆盖。另含 GitHub Release 下载更新、本地凭证文件来源隔离、控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间、逐接口日期缓存、完整研判结果缓存、评估时间 fingerprint、provider 缓存删除联动、缓存索引性能、生命周期请求规划、最新 comment/context、过期误报出口、share bundle 和发布 allow-list/忽略规则安全专项。
+当前结果：`742 passed, 1 skipped`。skip 为 Windows 不适用的 POSIX 脚本执行探针；真实 Windows `provider_http.exe` 已由本地 HTTP 端到端验收覆盖。另含 GitHub Release 下载更新、本地凭证文件来源隔离、控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间、逐接口日期缓存、完整研判结果缓存、评估时间 fingerprint、provider 缓存删除联动、缓存索引性能、生命周期请求规划、最新 comment/context、过期误报出口、share bundle、share 助手 UI（安全门/回环/保留上限/端口回退）和发布 allow-list/忽略规则安全专项。
 
 任务 22 在线端到端验收：`tests/test_live_acceptance.py` 与 live pipeline 联合为 `13 passed`。九个合成场景全程使用注入 transport，并对 `requests.Session.get/post` 设置 fail-fast 网络哨兵；online mock 填充五源 cache/raw 后移除全部凭据，offline replay 的 verdict、原因、来源、顺序及 Observation 稳定字段与 online 完全一致。递归扫描 JSONL、CSV、Excel 及解压后的 XML/rels、diagnostics、cache、raw 和 log，sentinel 凭据零匹配。
 
@@ -318,8 +319,16 @@ python -m pytest tests -q
 
 1. `docs/superpowers/plans/2026-07-23-multi-source-core.md`
 2. `docs/superpowers/plans/2026-07-23-live-providers.md`
+3. `docs/superpowers/plans/2026-08-31-share-assist-ui.md`（进行中，规格见 `docs/superpowers/specs/2026-08-31-share-assist-ui-design.md`）
 
-两份计划均已实施完成，仅用于追溯决策。新的在线 HTTP 工作必须先取得正式外部契约并另立规格；ICP 当前契约已冻结但真实 endpoint 仍待授权验收。
+前两份计划均已实施完成，仅用于追溯决策。新的在线 HTTP 工作必须先取得正式外部契约并另立规格；ICP 当前契约已冻结但真实 endpoint 仍待授权验收。
+
+### 6.2 本地 share 助手 UI
+
+- 入口 `python -m ioc_rejudge ui [--port N] [--key-file PATH] [--bundle-dir PATH] [--no-browser]`；默认端口 8731，占用时回退随机端口，服务只绑定 `127.0.0.1` 且拒绝地址复用。
+- 页面与全部 `/api/*` 端点要求进程级会话令牌（URL query 或 Bearer 头）并通过 Host/Origin 校验；默认 key 路径 `~/.ioc-share/key.json`，bundle 目录 `~/.ioc-share/bundles`（按 bundle_id 存储最多 20 个）。
+- 口令仅驻留服务进程内存，页面 `no-store`，`/api/lock` 清除；API 单锁串行化，`content`/`input_path` 二选一，restore 按 bundle_id 直定位、sha256 兜底匹配本地 manifest。
+- UI 只包装 `share.create_bundle/restore_bundle/scan_bundle` 与 `share.ensure_key`，不执行研判、不发起网络请求、不提供关闭严格模式的入口；`ui.html` 为零外部资源单文件页面。
 
 ## 16. 进度记录
 
@@ -378,3 +387,5 @@ python -m pytest tests -q
 | 2026-08-10 | 完整结果缓存一致性 | provider 原始缓存状态纳入完整研判结果指纹，删除或清空接口缓存后不再错误命中旧 verdict；采集完成后以最新状态写回结果缓存；结果缓存专项 11 passed |
 | 2026-08-11 | 2.2.8 发布 | 完整结果缓存与 provider 原始缓存删除联动，避免旧 verdict 错误命中；ICP 默认并发/限速由 2/2 提升至 8/8，保留本地配置降级入口；专项 60 passed，全量 714 passed，1 skipped |
 | 2026-08-24 | 2.3.0 | 新增本地口令保护的 AES-SIV share bundle、流式 JSONL 严格残留扫描、带 key 认证的 manifest、云端结果 bundle 归属校验和 restore 入口；修复 legacy anonymizer seed 确定性；结果缓存 fingerprint 纳入 UTC 评估日期；函数与真实 CLI create/scan/restore 均覆盖，全量 727 passed，1 skipped |
+| 2026-08-31 | share 助手 UI 立项 | 批准并落盘规格 `docs/superpowers/specs/2026-08-31-share-assist-ui-design.md` 与实施计划 `docs/superpowers/plans/2026-08-31-share-assist-ui.md`：`python -m ioc_rejudge ui` 本地单页工具包装 share create/restore/scan，回环监听 + 会话令牌 + Host/Origin 校验，口令仅驻留内存，bundle 持久化并按 bundle_id/sha256 自动匹配 manifest，保留最近 20 个；stdlib http.server + 包内 ui.html，零新增依赖且 pack 递归自动收录；拆为 4 份串行任务待实施；业务代码未修改 |
+| 2026-08-31 | share 助手 UI 实施 | 按规格完成 4 份计划任务：新增 `ioc_rejudge/ui.py`（回环 ThreadingHTTPServer、会话令牌 + Host/Origin 含端口校验、单锁串行 API、bundle staging/rename、保留上限清理、占用端口回退且拒绝地址复用防 Windows 双服务共享端口）、`ioc_rejudge/ui.html`（零外部资源单文件中文页面，剪贴板 + 全选回退）、`__main__.py` ui 分发、`share.ensure_key` 公开函数与 `tests/test_ui_server.py`；专项 15 passed，全量 `742 passed, 1 skipped`，compileall 与 pack check（106 文件，含 ui.py/ui.html）通过，真实进程页面/key/create/restore/scan/lock 冒烟通过；README、ARCHITECTURE、DEVELOPMENT 与本文件同步 |

@@ -8,4 +8,9 @@ if len(sys.argv) > 1 and sys.argv[1] == "share":
 
     raise SystemExit(share_main(sys.argv[2:]))
 
+if len(sys.argv) > 1 and sys.argv[1] == "ui":
+    from ioc_rejudge.ui import main as ui_main
+
+    raise SystemExit(ui_main(sys.argv[2:]))
+
 main()

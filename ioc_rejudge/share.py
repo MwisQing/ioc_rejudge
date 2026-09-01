@@ -931,6 +931,26 @@ def scan_bundle(input_path: str | Path) -> dict:
     return {"schema": SCHEMA, "rows": rows, "finding_count": len(findings), "finding_counts": counts}
 
 
+def ensure_key(
+    path: str | Path,
+    passphrase: str,
+    *,
+    generate: bool = False,
+    force: bool = False,
+) -> str:
+    """Load the share key at ``path`` and return its key id.
+
+    With ``generate`` the key file is created first; an existing key file is
+    only replaced when ``force`` is set.  The passphrase is always validated
+    by the final load, so a returned key id is proof of a successful unlock.
+    """
+    if generate:
+        _create_key(Path(path), passphrase, force=force)
+    _, key_id = _load_key(path, passphrase)
+    return key_id
+
+
+
 def _load_names(path: str | None) -> list[str]:
     if not path:
         return []

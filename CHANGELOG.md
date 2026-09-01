@@ -1,5 +1,14 @@
 # 更新日志
 
+## 2.4.0 - 2026-09-01
+
+- 新增：`python -m ioc_rejudge ui` 本地 share 助手单页工具，把“研判产物脱敏 -> 复制给云端 AI -> 粘贴 AI 返回 -> 还原”压缩为页面上的两次点击；默认端口 8731，占用时自动回退随机端口，支持 `--port`/`--key-file`/`--bundle-dir`/`--no-browser`。
+- 新增：share bundle 本地存储管理——`~/.ioc-share/bundles` 按 `bundle_id` 保存最近 20 个 bundle，restore 自动按行内 `bundle_id` 直定位、sha256 兜底匹配本地 manifest，不再需要手工指定 manifest 路径。
+- 安全：UI 服务只监听 `127.0.0.1` 且拒绝地址复用（防 Windows 双进程共享端口）；页面与全部 `/api/*` 端点要求进程级会话令牌并通过 Host/Origin（含端口）校验；key 口令仅驻留服务进程内存，页面 `no-store`，可一键清除。
+- 安全：`share.ensure_key` 公开函数补齐 key 生成/解锁/覆盖校验入口；share 既有脱敏、manifest 认证和严格残留扫描语义不变，UI 不提供关闭严格模式的入口。
+- 兼容：`ui.py`/`ui.html` 使用标准库 `http.server` 与零外部资源单文件页面，无新增运行依赖；页面剪贴板不可用时自动回退全选 + Ctrl+C。
+- 验证：UI 专项 `15 passed`（真实回环服务覆盖安全门、key 生命周期、create/restore/scan 回环、manifest 双路匹配、严格失败清理、保留上限和端口回退），全量 `742 passed, 1 skipped`，`pack.py --check` 106 个发布文件。
+
 ## 2.3.0 - 2026-08-24
 
 - 新增：`python -m ioc_rejudge share create|restore|scan`，支持本地口令保护的 AES-SIV 可关联 token、流式 JSONL、带 key 认证的 manifest 和严格残留扫描。
