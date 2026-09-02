@@ -532,6 +532,82 @@ def test_create_rejects_preexisting_share_tokens(tmp_path):
         )
 
 
+def test_share_v07_leak_heuristics_token_redact_and_round_trip(tmp_path):
+    import base64
+
+    from ioc_rejudge.share import create_bundle, restore_bundle, scan_bundle
+
+    source = tmp_path / "source.jsonl"
+    shared = tmp_path / "shared.jsonl"
+    restored = tmp_path / "restored.jsonl"
+    key = tmp_path / "share-key.json"
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123signature"
+    sample_hash = "a" * 64
+    nested = {"ioc": "nested.example.invalid"}
+    nested_b64 = base64.b64encode(
+        json.dumps(nested, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+    original = {
+        "ioc": "cover.example.invalid",
+        "producer": "producer.example.invalid",
+        "comment": (
+            f"jwt {jwt} "
+            "Update By huangjiahong "
+            "请联系 alice.example "
+            "defang aaa.bbb[.]invalid "
+            f"sample {sample_hash}exe "
+            "host EC2AMAZ-ABCDEFG "
+            "hxxp://phish.example.invalid/a"
+        ),
+        "payload": nested_b64,
+    }
+    source.write_text(json.dumps(original, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    result = create_bundle(
+        source,
+        shared,
+        key,
+        generate_key=True,
+        passphrase="test-passphrase",
+    )
+    assert result["output_findings"] == 0
+    assert result["redacted_occurrences"] >= 1
+    assert scan_bundle(shared)["finding_count"] == 0
+
+    shared_row = json.loads(shared.read_text(encoding="utf-8"))
+    shared_text = shared.read_text(encoding="utf-8")
+    assert jwt not in shared_text
+    assert "[REDACTED]" in shared_row["comment"]
+    assert "eyJhbGciOiJIUzI1NiJ9" not in shared_row["comment"]
+    assert "huangjiahong" not in shared_text
+    assert "alice.example" not in shared_text
+    assert "aaa.bbb" not in shared_text
+    assert "aaa.bbb[.]invalid" not in shared_text
+    assert sample_hash not in shared_text
+    assert "EC2AMAZ-ABCDEFG" not in shared_text
+    assert "phish.example.invalid" not in shared_text
+    assert "nested.example.invalid" not in shared_text
+    assert "producer.example.invalid" not in shared_text
+    assert "hxxp://" not in shared_text
+
+    restore_bundle(shared, restored, key, passphrase="test-passphrase")
+    restored_row = json.loads(restored.read_text(encoding="utf-8"))
+    assert restored_row["ioc"] == original["ioc"]
+    assert restored_row["producer"] == original["producer"]
+    assert "[REDACTED]" in restored_row["comment"]
+    assert jwt not in restored_row["comment"]
+    assert "huangjiahong" in restored_row["comment"]
+    assert "alice.example" in restored_row["comment"]
+    assert "aaa.bbb.invalid" in restored_row["comment"]
+    assert sample_hash in restored_row["comment"]
+    assert "EC2AMAZ-ABCDEFG" in restored_row["comment"]
+    assert "http://phish.example.invalid/a" in restored_row["comment"]
+    restored_nested = json.loads(
+        base64.b64decode(restored_row["payload"]).decode("utf-8")
+    )
+    assert restored_nested == nested
+
+
 def test_share_commands_are_available_from_package_entrypoint():
     import subprocess
     import sys

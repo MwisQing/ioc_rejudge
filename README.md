@@ -1,12 +1,12 @@
 # IOC Rejudge CLI
 
-IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.4.0` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。
+IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.5.0` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。
 
 ## 当前状态
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.4.0` |
+| 版本 | `2.5.0` |
 | Python | 已用 Python 3.12 验证 |
 | 输入 | 旧 JSONL 快照、裸 IOC 文件、重复 `--ioc` |
 | IOC 类型 | domain、URL、domain:port、IP、IP:port |
@@ -60,14 +60,15 @@ python -m ioc_rejudge share restore `
 python -m ioc_rejudge ui
 ```
 
-浏览器会自动打开带会话令牌的本地页面（默认端口 8731，被占用时自动换随机端口；可用 `--port`、`--key-file`、`--bundle-dir`、`--no-browser` 调整）。页面操作对应完整流程：
+浏览器会自动打开带会话令牌的本地页面（默认端口 8731，被占用时自动换随机端口）。可用 `--port`、`--key-file`、`--bundle-dir`、`--cache-dir`、`--credentials-file`、`--no-browser` 调整。默认缓存目录与研判 CLI 相同（`.\provider-cache`），便于命中本机已有的 7 天 IOC Info 缓存。页面操作对应完整流程：
 
-1. 首次使用输入口令并勾选“生成新 key”（默认 `~\.ioc-share\key.json`），之后每次只需口令解锁。
-2. “生成脱敏包”：粘贴研判结果 JSONL 或填本地文件路径，一键生成脱敏内容并复制到剪贴板，同时显示 `bundle_id`。
-3. 把剪贴板内容连同 `bundle_id` 的要求发给云端 AI。
-4. “还原 AI 返回”：粘贴 AI 返回的 JSONL，自动匹配本地 bundle 并还原真实值后复制。
+1. 首次使用输入非空口令并勾选“生成新 key”（默认 `~\.ioc-share\key.json`）。成功后口令保存在 key 同目录的 `passphrase` 文件，下次启动自动解锁；点“清除口令”会同时清内存和该文件。
+2. “查询 IOC Info”：粘贴每行一个 IOC，或填本机文件路径。默认走 7 天缓存，没有缓存再请求接口；无凭据时只读缓存。查询结果是明文，页面可展开/合拢查看，不要直接发给云端。
+3. 点“脱敏并复制”：生成一行一个脱敏 JSON 并写入剪贴板（本机仍保存 bundle，便于以后还原）。“复制明文（未脱敏，勿发给云端）”只留给本机核对。
+4. 把剪贴板里的脱敏 JSON 发给云端 AI；如需对方改完再还原，让返回行带上页面上的 `bundle_id`，且不要改 `ss1:` token。
+5. “还原 AI 返回”：粘贴云端返回的 JSONL，自动匹配本地 bundle 并还原。已有研判 JSONL 时仍可用“生成脱敏包”面板。
 
-另有“残留扫描”面板可对任意 JSONL 做外发前检查。安全边界：服务只监听 `127.0.0.1`，所有请求需会话令牌并通过 Host/Origin 校验；口令只保存在服务进程内存，点“清除口令”或关闭进程即失效；bundle 保存在 `~\.ioc-share\bundles`（按 `bundle_id` 命名，最多保留 20 个），manifest 自动匹配无需手工管理。UI 只包装 create/restore/scan，不执行研判，也不发起任何网络请求。
+另有“残留扫描”面板可对任意 JSONL 做外发前检查。安全边界：服务只监听 `127.0.0.1`，所有请求需会话令牌并通过 Host/Origin 校验；记住的口令只在本机 key 目录，页面 `no-store`，不把口令或凭据回显到页面；bundle 保存在 `~\.ioc-share\bundles`（按 `bundle_id` 命名，最多保留 20 个），manifest 自动匹配无需手工管理。UI 不执行研判、不提供关闭严格模式的入口；除“查询 IOC Info”只访问 IOC Info 外，create/restore/scan 不发起网络请求。
 
 确定性 token 会有意保留值类型、相等关系和 JSON 结构，同一 key 在不同 bundle 中也可被云端关联；普通文本和时间只有命中规则后才会替换。若不同案件不应被交叉关联，应为每个案件或信任边界生成独立 key。残留扫描是发送前的强制防线，但不能证明任意自然语言都不含身份线索；上传前仍需维护人员字段和 `names.txt`。
 

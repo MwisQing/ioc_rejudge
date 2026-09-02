@@ -6,6 +6,7 @@ to it with urllib/http.client, exactly like the browser page does.
 
 import http.client
 import json
+import os
 import re
 import threading
 import urllib.error
@@ -18,6 +19,44 @@ from ioc_rejudge import share as share_module
 from ioc_rejudge.ui import build_server
 
 PASSPHRASE = "test-passphrase"
+SHORT_PASSPHRASE = "short"
+LOOKUP_IOC = "lookup.example.invalid"
+LOOKUP_RESPONSE = {
+    "data": {
+        LOOKUP_IOC: [
+            {
+                "comment": "sandbox",
+                "url": "https://lookup.example.invalid/a",
+            }
+        ]
+    }
+}
+
+
+class CountingFakeTransport:
+    """Injected IOC Info transport that records post_json calls."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+        self._index = 0
+
+    def post_json(self, url, *, headers=None, body=None, timeout=30):
+        self.calls.append(
+            {
+                "url": url,
+                "headers": headers,
+                "body": body,
+                "timeout": timeout,
+            }
+        )
+        if self._index >= len(self.responses):
+            raise AssertionError("FakeTransport has no remaining responses")
+        value = self.responses[self._index]
+        self._index += 1
+        if isinstance(value, Exception):
+            raise value
+        return value
 
 
 def sample_row():
@@ -44,10 +83,27 @@ def sample_content():
 def make_server(tmp_path):
     servers = []
 
-    def _make(max_bundles=20, port=0):
+    def _make(
+        max_bundles=20,
+        port=0,
+        cache_dir=None,
+        provider_env=None,
+        transport_factory=None,
+        credentials_path=None,
+    ):
         key_path = tmp_path / "keys" / "key.json"
         bundles_dir = tmp_path / "bundles"
-        server, url = build_server(key_path, bundles_dir, port=port, max_bundles=max_bundles)
+        resolved_cache = cache_dir if cache_dir is not None else (tmp_path / "provider-cache")
+        server, url = build_server(
+            key_path,
+            bundles_dir,
+            port=port,
+            max_bundles=max_bundles,
+            cache_dir=resolved_cache,
+            provider_env=provider_env,
+            transport_factory=transport_factory,
+            credentials_path=credentials_path,
+        )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         servers.append(server)
@@ -63,6 +119,20 @@ def make_server(tmp_path):
 @pytest.fixture()
 def ui(make_server):
     return make_server()
+
+
+def _lookup_server(make_server, tmp_path, transport, *, provider_env=None):
+    cache_dir = tmp_path / "lookup-cache"
+    env = (
+        {"IOC_INFO_API_KEY": "test-ioc-info-key"}
+        if provider_env is None
+        else provider_env
+    )
+    return make_server(
+        cache_dir=cache_dir,
+        provider_env=env,
+        transport_factory=lambda _name: transport,
+    )
 
 
 def api_post(url, token, path, payload, headers=None):
@@ -181,7 +251,17 @@ def test_get_serves_single_file_page(ui):
     assert headers.get("Cache-Control") == "no-store"
     text = body.decode("utf-8")
     assert text.lstrip().lower().startswith("<!doctype html>")
+    assert "至少 12 个字符" not in text
+    assert "本机 key 同目录" in text
+    assert "脱敏并复制" in text
+    assert "全部展开" in text
+    assert "全部合拢" in text
+    assert "明文" in text
+    assert "勿发给云端" in text
+    assert "function renderJsonlViewer" in text or "function renderTree" in text
     # The page must be fully self-contained: no external references at all.
+    assert 'src="http' not in text
+    assert "https://cdn" not in text.lower()
     for attribute in re.findall(r'(?:src|href)\s*=\s*"([^"]*)"', text):
         assert attribute == "" or attribute.startswith("#")
 
@@ -192,6 +272,7 @@ def test_key_lifecycle_generate_unlock_lock(ui):
     assert status == 200
     assert body["key_exists"] is False
     assert body["unlocked"] is False
+    assert body["passphrase_saved"] is False
     assert body["bundles"] == []
 
     first_key_id = unlock(url, token)
@@ -199,6 +280,8 @@ def test_key_lifecycle_generate_unlock_lock(ui):
     assert body["unlocked"] is True
     assert body["key_id"] == first_key_id
     assert body["key_exists"] is True
+    assert body["passphrase_saved"] is True
+    assert (key_path.parent / "passphrase").is_file()
 
     status, body = api_post(url, token, "/api/key", {"passphrase": PASSPHRASE, "generate": True})
     assert status == 400
@@ -219,6 +302,8 @@ def test_key_lifecycle_generate_unlock_lock(ui):
     status, body = api_post(url, token, "/api/status", {})
     assert body["unlocked"] is False
     assert body["key_id"] is None
+    assert body["passphrase_saved"] is False
+    assert not (key_path.parent / "passphrase").exists()
 
     status, body = api_post(url, token, "/api/create", {"content": sample_content()})
     assert status == 400
@@ -227,6 +312,61 @@ def test_key_lifecycle_generate_unlock_lock(ui):
     status, body = api_post(url, token, "/api/key", {"passphrase": "wrong-passphrase"})
     assert status == 400
     assert "incorrect" in body["error"]
+
+
+def test_empty_passphrase_rejected(ui):
+    url, token, _key, _bundles = ui
+    status, body = api_post(url, token, "/api/key", {"passphrase": "", "generate": True})
+    assert status == 400
+    assert "passphrase is required" in body["error"]
+    status, body = api_post(url, token, "/api/key", {"generate": True})
+    assert status == 400
+    assert "passphrase is required" in body["error"]
+
+
+def test_short_passphrase_persists_and_auto_unlocks(make_server):
+    url, token, key_path, bundles_dir = make_server()
+    status, body = api_post(
+        url,
+        token,
+        "/api/key",
+        {"passphrase": SHORT_PASSPHRASE, "generate": True},
+    )
+    assert status == 200, body
+    first_key_id = body["key_id"]
+    passphrase_file = key_path.parent / "passphrase"
+    assert passphrase_file.is_file()
+    assert passphrase_file.read_text(encoding="utf-8") == SHORT_PASSPHRASE
+    # POSIX mode bits are meaningful; Windows chmod is best-effort only.
+    if os.name != "nt":
+        assert passphrase_file.stat().st_mode & 0o077 == 0
+
+    status, body = api_post(url, token, "/api/status", {})
+    assert body["unlocked"] is True
+    assert body["passphrase_saved"] is True
+    assert body["key_id"] == first_key_id
+
+    url2, token2, key_path2, bundles_dir2 = make_server()
+    assert key_path2 == key_path
+    assert bundles_dir2 == bundles_dir
+    status, body = api_post(url2, token2, "/api/status", {})
+    assert status == 200
+    assert body["unlocked"] is True
+    assert body["key_id"] == first_key_id
+    assert body["passphrase_saved"] is True
+
+    status, body = api_post(url2, token2, "/api/lock", {})
+    assert status == 200
+    assert body["unlocked"] is False
+    assert not passphrase_file.exists()
+
+    url3, token3, _key3, _bundles3 = make_server()
+    status, body = api_post(url3, token3, "/api/status", {})
+    assert status == 200
+    assert body["unlocked"] is False
+    assert body["passphrase_saved"] is False
+    assert body["key_id"] is None
+    assert not passphrase_file.exists()
 
 
 def test_create_scan_restore_cloud_response_roundtrip(ui):
@@ -364,3 +504,166 @@ def test_occupied_port_falls_back_to_ephemeral(make_server):
     fallback_port = urllib.parse.urlsplit(fallback_url).port
     # Address reuse is refused so two UI servers can never share one port.
     assert fallback_port != taken_port
+
+
+def test_lookup_cache_miss_then_hit(make_server, tmp_path):
+    transport = CountingFakeTransport([LOOKUP_RESPONSE])
+    url, token, _key, _bundles = _lookup_server(make_server, tmp_path, transport)
+
+    status, body = api_post(
+        url,
+        token,
+        "/api/lookup",
+        {"content": LOOKUP_IOC + "\n"},
+    )
+    assert status == 200, body
+    assert body["live_fetches"] == 1
+    assert body["cache_hits"] == 0
+    assert body["rows"] == 1
+    assert len(transport.calls) == 1
+    first_row = json.loads(body["text"].splitlines()[0])
+    assert first_row["ioc"] == LOOKUP_IOC
+    assert first_row["source"] == "live"
+    assert first_row["status"] == "success"
+    assert first_row["data"]
+    assert first_row["data"][0]["comment"] == "sandbox"
+
+    status, body = api_post(
+        url,
+        token,
+        "/api/lookup",
+        {"content": LOOKUP_IOC + "\n"},
+    )
+    assert status == 200, body
+    assert body["cache_hits"] == 1
+    assert body["live_fetches"] == 0
+    assert len(transport.calls) == 1
+    second_row = json.loads(body["text"].splitlines()[0])
+    assert second_row["source"] == "cache"
+    assert second_row["status"] == "success"
+
+
+def test_lookup_does_not_require_unlock(make_server, tmp_path):
+    transport = CountingFakeTransport([LOOKUP_RESPONSE])
+    url, token, _key, _bundles = _lookup_server(make_server, tmp_path, transport)
+
+    status, body = api_post(url, token, "/api/status", {})
+    assert status == 200
+    assert body["unlocked"] is False
+
+    status, body = api_post(
+        url,
+        token,
+        "/api/lookup",
+        {"content": LOOKUP_IOC + "\n"},
+    )
+    assert status == 200, body
+    assert body["live_fetches"] == 1
+    assert body["rows"] == 1
+
+
+def test_lookup_disabled_without_credentials(make_server, tmp_path):
+    transport = CountingFakeTransport([LOOKUP_RESPONSE])
+    url, token, _key, _bundles = _lookup_server(
+        make_server,
+        tmp_path,
+        transport,
+        provider_env={},
+    )
+
+    status, body = api_post(
+        url,
+        token,
+        "/api/lookup",
+        {"content": LOOKUP_IOC + "\n"},
+    )
+    assert status == 400, body
+    assert "disabled" in body["error"].lower() or "credential" in body["error"].lower()
+    assert len(transport.calls) == 0
+
+
+def test_lookup_cache_hit_without_credentials(make_server, tmp_path):
+    warm = CountingFakeTransport([LOOKUP_RESPONSE])
+    url, token, _key, _bundles = _lookup_server(make_server, tmp_path, warm)
+    status, body = api_post(
+        url,
+        token,
+        "/api/lookup",
+        {"content": LOOKUP_IOC + "\n"},
+    )
+    assert status == 200, body
+    assert body["live_fetches"] == 1
+    assert len(warm.calls) == 1
+
+    cold = CountingFakeTransport([LOOKUP_RESPONSE])
+    url2, token2, _key2, _bundles2 = _lookup_server(
+        make_server,
+        tmp_path,
+        cold,
+        provider_env={},
+    )
+    status, body = api_post(
+        url2,
+        token2,
+        "/api/lookup",
+        {"content": LOOKUP_IOC + "\n"},
+    )
+    assert status == 200, body
+    assert body["cache_hits"] == 1
+    assert body["live_fetches"] == 0
+    assert len(cold.calls) == 0
+    row = json.loads(body["text"].splitlines()[0])
+    assert row["source"] == "cache"
+    assert row["status"] == "success"
+
+
+def test_lookup_rejected_invalid_line(make_server, tmp_path):
+    transport = CountingFakeTransport([LOOKUP_RESPONSE])
+    url, token, _key, _bundles = _lookup_server(make_server, tmp_path, transport)
+
+    status, body = api_post(
+        url,
+        token,
+        "/api/lookup",
+        {"content": LOOKUP_IOC + "\nnot a valid!!!\n"},
+    )
+    assert status == 200, body
+    assert body["rejected"] >= 1
+    assert body["live_fetches"] == 1
+    assert len(transport.calls) == 1
+    rows = [json.loads(line) for line in body["text"].splitlines() if line.strip()]
+    assert any(row.get("status") == "error" and row.get("source") == "none" for row in rows)
+    assert any(row.get("ioc") == LOOKUP_IOC and row.get("status") == "success" for row in rows)
+
+
+def test_lookup_jsonl_can_create(make_server, tmp_path):
+    transport = CountingFakeTransport([LOOKUP_RESPONSE])
+    url, token, _key, _bundles = _lookup_server(make_server, tmp_path, transport)
+
+    unlock(url, token)
+    status, lookup_body = api_post(
+        url,
+        token,
+        "/api/lookup",
+        {"content": LOOKUP_IOC + "\n"},
+    )
+    assert status == 200, lookup_body
+    assert lookup_body["text"].strip()
+
+    status, create_body = api_post(
+        url,
+        token,
+        "/api/create",
+        {"content": lookup_body["text"]},
+    )
+    assert status == 200, create_body
+    assert create_body["rows"] >= 1
+    assert create_body["bundle_id"]
+    assert "ss1:" in create_body["text"]
+
+    # Page copy for the lookup -> sanitize/copy workflow must stay present.
+    page_status, _headers, page_body = api_get(url, token)
+    assert page_status == 200
+    page_text = page_body.decode("utf-8")
+    assert "脱敏并复制" in page_text
+    assert "勿发给云端" in page_text

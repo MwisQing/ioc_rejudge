@@ -29,6 +29,16 @@ import getpass
 
 from cryptography.hazmat.primitives.ciphers.aead import AESSIV
 
+from .share_text import (
+    encode_base64_json,
+    is_attck_id,
+    is_cloud_host,
+    is_underscore_ipv4,
+    residual_finding_codes,
+    transform_free_text,
+    try_parse_base64_json,
+)
+
 
 SCHEMA = "ioc-share/v1"
 KEY_SCHEMA = "ioc-share-key/v1"
@@ -100,6 +110,16 @@ _IDENTITY_KEYS = {
     "subject_common_name",
     "registrantname",
     "registrantemail",
+    "registrantphone",
+    "registrantaddress",
+    "registrantstreet",
+    "adminemail",
+    "techemail",
+    "postaladdress",
+    "telephone",
+    "producer",
+    "sld",
+    "dns_names",
     "submitter",
     "iocprocessor",
     "fail_user",
@@ -330,8 +350,7 @@ def _write_json_atomic(path: Path, value: dict, *, force: bool = False) -> None:
 def _create_key(path: Path, passphrase: str, *, force: bool = False) -> str:
     if path.exists() and not force:
         raise ShareError(f"key file already exists: {path}; use --force to overwrite")
-    if len(passphrase) < 12:
-        raise ShareError("new share key passphrase must contain at least 12 characters")
+    # Empty passphrases are rejected by _derive_wrap_key; length is otherwise free.
     key = secrets.token_bytes(KEY_BYTES)
     key_id = _key_id(key)
     salt = secrets.token_bytes(16)
@@ -422,31 +441,56 @@ def _is_ipv6(value: str) -> bool:
 
 def _infer_kind(value: str, parent_key: str = "") -> str:
     key = _key_name(parent_key)
+    text = value.strip()
     if key in _HASH_KEYS or key.endswith("_hash"):
         return "hash"
-    if _URL_RE.fullmatch(value.strip()):
+    if _URL_RE.fullmatch(text):
         return "url"
-    if _EMAIL_RE.fullmatch(value.strip()):
+    if _EMAIL_RE.fullmatch(text):
         return "email"
-    if _PHONE_RE.fullmatch(value.strip()):
+    if _PHONE_RE.fullmatch(text):
         return "person"
-    if _CN_ID_RE.fullmatch(value.strip()):
+    if _CN_ID_RE.fullmatch(text):
         return "id"
-    if _is_ipv6(value.strip()):
+    if is_underscore_ipv4(text):
         return "ip"
-    if _IP_RE.fullmatch(value.strip()):
+    if _is_ipv6(text):
         return "ip"
-    if _HASH_RE.fullmatch(value.strip()):
+    if _IP_RE.fullmatch(text):
+        return "ip"
+    if _HASH_RE.fullmatch(text):
         return "hash"
-    if _UUID_RE.fullmatch(value.strip()):
+    if _UUID_RE.fullmatch(text):
         return "id"
-    if _DOMAIN_RE.fullmatch(value.strip()):
+    if is_cloud_host(text):
+        return "host"
+    if _DOMAIN_RE.fullmatch(text) and not is_attck_id(text):
         return "domain"
     if key in {"path", "file_path", "filepath", "filename", "processpath", "cmdline", "commandline"}:
         return "path"
-    if key in {"submitter", "iocprocessor", "fail_user", "username", "user_name", "user", "email", "phone", "mobile", "registrantname", "registrantemail", "organization", "organisation", "company"}:
+    if key in {
+        "submitter",
+        "iocprocessor",
+        "fail_user",
+        "username",
+        "user_name",
+        "user",
+        "email",
+        "phone",
+        "mobile",
+        "telephone",
+        "registrantphone",
+        "registrantname",
+        "registrantemail",
+        "adminemail",
+        "techemail",
+        "producer",
+        "organization",
+        "organisation",
+        "company",
+    }:
         return "person"
-    if key in {"host", "hostname"}:
+    if key in {"host", "hostname", "sld", "dns_names"}:
         return "host"
     if key in {"ioc", "original_ioc", "key"}:
         return "ioc"
@@ -483,36 +527,55 @@ def _safe_url(
         return _INLINE_SECRET_RE.sub(replace_inline, sanitized)
 
 
-def _replace_pattern(value: str, pattern: re.Pattern[str], kind: str, codec: _Codec) -> str:
-    return pattern.sub(lambda match: codec.encode(kind, match.group(0)), value)
-
-
-def _replace_ipv6(value: str, codec: _Codec) -> str:
-    def replace(match: re.Match[str]) -> str:
-        candidate = match.group(0)
-        return codec.encode("ip", candidate) if _is_ipv6(candidate) else candidate
-
-    return _IPV6_CANDIDATE_RE.sub(replace, value)
-
-
-def _replace_literal_outside_tokens(
+def _find_tokens(
     value: str,
-    literal: str,
-    replacement: Callable[[], str],
-) -> str:
-    pieces: list[str] = []
-    cursor = 0
+    codec: _Codec | None = None,
+) -> list[tuple[int, int, str, str]]:
+    """Return validated (start, end, kind, payload) spans; payloads do not over-consume.
 
-    def replace_plain(plain: str) -> str:
-        return re.sub(re.escape(literal), lambda _: replacement(), plain)
-
-    for match in _TOKEN_RE.finditer(value):
-        plain = value[cursor:match.start()]
-        pieces.append(replace_plain(plain))
-        pieces.append(match.group(0))
-        cursor = match.end()
-    pieces.append(replace_plain(value[cursor:]))
-    return "".join(pieces)
+    When ``codec`` is provided (restore path), the payload must also decrypt so
+    a longer canonical base64 prefix/extension cannot steal trailing ``exe``.
+    """
+    found: list[tuple[int, int, str, str]] = []
+    pos = 0
+    while pos < len(value):
+        index = value.find("ss1:", pos)
+        if index < 0:
+            break
+        match = _TOKEN_RE.match(value, index)
+        if match is None:
+            pos = index + 4
+            continue
+        kind = match.group(1)
+        payload = match.group(2)
+        resolved: tuple[int, int, str, str] | None = None
+        saw_auth_failure = False
+        while payload:
+            try:
+                raw = _b64decode(payload)
+            except ShareError:
+                payload = payload[:-1]
+                continue
+            if len(raw) < 16:
+                payload = payload[:-1]
+                continue
+            if codec is not None:
+                try:
+                    codec.decode(kind, payload)
+                except ShareError:
+                    saw_auth_failure = True
+                    payload = payload[:-1]
+                    continue
+            resolved = (index, match.start(2) + len(payload), kind, payload)
+            break
+        if resolved is None:
+            if codec is not None and saw_auth_failure:
+                raise ShareError("token authentication or encoding failed")
+            pos = index + 4
+            continue
+        found.append(resolved)
+        pos = resolved[1]
+    return found
 
 
 class _Transformer:
@@ -541,33 +604,13 @@ class _Transformer:
                 )
             return self._codec.encode(kind, source)
 
-        result = _URL_RE.sub(
-            lambda match: self._codec.encode(
-                "url", _safe_url(match.group(0), self._redact_inline)
-            ),
+        return transform_free_text(
             value,
+            encode=self._codec.encode,
+            redact=self._redact_inline,
+            safe_url=lambda item: _safe_url(item, self._redact_inline),
+            names=self._names,
         )
-        result = _INLINE_SECRET_RE.sub(
-            lambda match: self._redact_inline(match.group(0)), result
-        )
-        result = _replace_pattern(result, _WINDOWS_PATH_RE, "path", self._codec)
-        result = _replace_pattern(result, _UNIX_PATH_RE, "path", self._codec)
-        result = _replace_pattern(result, _EMAIL_RE, "email", self._codec)
-        result = _replace_pattern(result, _PHONE_RE, "person", self._codec)
-        result = _replace_pattern(result, _CN_ID_RE, "id", self._codec)
-        result = _replace_ipv6(result, self._codec)
-        result = _replace_pattern(result, _IP_RE, "ip", self._codec)
-        result = _replace_pattern(result, _HASH_RE, "hash", self._codec)
-        result = _replace_pattern(result, _UUID_RE, "id", self._codec)
-        result = _replace_pattern(result, _DOMAIN_RE, "domain", self._codec)
-        for name in self._names:
-            if name and name in result:
-                result = _replace_literal_outside_tokens(
-                    result,
-                    name,
-                    lambda current=name: self._codec.encode("person", current),
-                )
-        return result
 
     def _redact_inline(self, value: str) -> str:
         if self._codec._stats is not None:
@@ -581,13 +624,18 @@ class _Transformer:
                 self._codec._stats.redacted_occurrences += 1
             return REDACTED
         if isinstance(value, str):
+            parsed = try_parse_base64_json(value)
+            if parsed is not None:
+                return encode_base64_json(self.transform_value(parsed, parent_key))
             return self.transform_string(value, parent_key)
         if isinstance(value, list):
             return [self.transform_value(item, parent_key) for item in value]
         if isinstance(value, dict):
             return {
-                self._transform_dynamic_key(key): self.transform_value(item, str(key))
-                for key, item in value.items()
+                self._transform_dynamic_key(child_key): self.transform_value(
+                    item, str(child_key)
+                )
+                for child_key, item in value.items()
             }
         if (
             isinstance(value, (int, float))
@@ -607,15 +655,19 @@ class _Transformer:
 
 
 def _restore_string(value: str, codec: _Codec, *, strict: bool) -> str:
-    def replace(match: re.Match[str]) -> str:
+    pieces: list[str] = []
+    cursor = 0
+    for start, end, kind, payload in _find_tokens(value, codec):
+        pieces.append(value[cursor:start])
         try:
-            return codec.decode(match.group(1), match.group(2))
+            pieces.append(codec.decode(kind, payload))
         except ShareError:
             if strict:
                 raise
-            return match.group(0)
-
-    restored = _TOKEN_RE.sub(replace, value)
+            pieces.append(value[start:end])
+        cursor = end
+    pieces.append(value[cursor:])
+    restored = "".join(pieces)
     if strict and "ss1:" in restored:
         raise ShareError("invalid or malformed share token")
     return restored
@@ -638,6 +690,9 @@ def _restore_value(value: Any, codec: _Codec, *, strict: bool) -> Any:
                     raise ShareError("numeric token contains an invalid value")
                 return value
             return restored_number
+        parsed = try_parse_base64_json(value)
+        if parsed is not None:
+            return encode_base64_json(_restore_value(parsed, codec, strict=strict))
         return _restore_string(value, codec, strict=strict)
     if isinstance(value, list):
         return [_restore_value(item, codec, strict=strict) for item in value]
@@ -681,13 +736,13 @@ def _scan_string(value: str, parent_key: str, findings: list[dict]) -> None:
     key = _key_name(parent_key)
     if _CREDENTIAL_KEY_RE.search(key) and value != REDACTED:
         findings.append({"code": "credential_field", "path": key})
-    for token in _TOKEN_RE.finditer(value):
-        try:
-            if len(_b64decode(token.group(2))) < 16:
-                raise ShareError("token ciphertext is too short")
-        except ShareError:
-            findings.append({"code": "malformed_token", "path": key})
-    scrubbed = _TOKEN_RE.sub("", value)
+    pieces: list[str] = []
+    cursor = 0
+    for start, end, _kind, _payload in _find_tokens(value):
+        pieces.append(value[cursor:start])
+        cursor = end
+    pieces.append(value[cursor:])
+    scrubbed = "".join(pieces)
     if "ss1:" in scrubbed:
         findings.append({"code": "malformed_token", "path": key})
     if _is_identity_key(key) and scrubbed.strip() and value != REDACTED:
@@ -714,6 +769,8 @@ def _scan_string(value: str, parent_key: str, findings: list[dict]) -> None:
         findings.append({"code": "domain", "path": key})
     if _INLINE_SECRET_RE.search(scrubbed):
         findings.append({"code": "inline_secret", "path": key})
+    for code in residual_finding_codes(scrubbed):
+        findings.append({"code": code, "path": key})
 
 
 def scan_value(value: Any) -> list[dict]:
@@ -721,7 +778,13 @@ def scan_value(value: Any) -> list[dict]:
 
     def walk(item: Any, key: str = "") -> None:
         if isinstance(item, str):
-            _scan_string(item, key, findings)
+            parsed = try_parse_base64_json(item)
+            if parsed is not None:
+                # Scan the decoded JSON only; the outer alphabet can look like
+                # hashes or domains and would false-positive strict mode.
+                walk(parsed, key)
+            else:
+                _scan_string(item, key, findings)
         elif isinstance(item, list):
             for child in item:
                 walk(child, key)

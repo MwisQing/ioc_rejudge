@@ -1,5 +1,14 @@
 # 更新日志
 
+## 2.5.0 - 2026-09-02
+
+- 变更：`python -m ioc_rejudge ui` 新 key 口令改为非空即可，不再要求至少 12 个字符；成功解锁后把口令保存在 key 同目录的 `passphrase` 文件，下次启动自动解锁。“清除口令”同时删除该文件。
+- 新增：页面“查询 IOC Info”面板和 `POST /api/lookup`。可粘贴裸 IOC 或填写本机文件；只查询 `ioc_info`，默认 7 天缓存优先，miss 再走接口。新增 `--cache-dir`（默认 `.\provider-cache`）和 `--credentials-file`。查询不要求先解锁；无凭据时只读缓存，全部 miss 则报错且不联网。
+- 新增：查询/脱敏/还原结果支持展开和合拢查看；查询后的主操作是“脱敏并复制”（一行一个 compact JSONL 进剪贴板）。复制明文按钮标明未脱敏、勿发给云端。
+- 安全：share 自由文本补齐 v0.7 漏检形态（defang、JWT、云主机名、hex+exe、`Update By`/`请联系`、bang 路径、粘连域名、截断/下划线 IPv4、Base64 JSON），仍使用 AES-SIV token；JWT 永久 `[REDACTED]`。不引入对照表或假值体系。
+- 安全：记住的口令只在本机 key 目录，不进入页面、日志或 status 明文回显；CLI `share` 路径不读写该文件。lookup 允许本机按既有 provider 栈访问 IOC Info，不把凭据写入查询结果。
+- 验证：share+UI 专项 `39 passed`，全量 `751 passed, 1 skipped`，`pack.py --check` 107 个发布文件。
+
 ## 2.4.0 - 2026-09-01
 
 - 新增：`python -m ioc_rejudge ui` 本地 share 助手单页工具，把“研判产物脱敏 -> 复制给云端 AI -> 粘贴 AI 返回 -> 还原”压缩为页面上的两次点击；默认端口 8731，占用时自动回退随机端口，支持 `--port`/`--key-file`/`--bundle-dir`/`--no-browser`。

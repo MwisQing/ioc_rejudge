@@ -1,6 +1,6 @@
 # 架构说明
 
-本文描述 IOC Rejudge CLI `2.4.0` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
+本文描述 IOC Rejudge CLI `2.5.0` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
 
 ## 1. 总体数据流
 
@@ -102,8 +102,8 @@ strength, payload, raw_ref
 | `diff.py` | Verdict 转移和成员变化报告 |
 | `config.py` / `rules.py` | 阈值和规则配置 |
 | `cli.py` | 参数解析、两条入口编排、输出和 diagnostics |
-| `share.py` | 本地口令保护的 AES-SIV token bundle、流式严格扫描和 token restore |
-| `ui.py` + `ui.html` | 本地 share 助手：回环 HTTP 服务与单文件页面，包装 share create/restore/scan |
+| `share.py` / `share_text.py` | 本地口令保护的 AES-SIV token bundle、v0.7 形态自由文本扫描、流式严格扫描和 token restore |
+| `ui.py` + `ui.html` | 本地 share 助手：回环 HTTP 服务与单文件页面，可折叠 JSON 查看、IOC Info lookup 和「脱敏并复制」 |
 
 ## 4. Provider 架构
 
@@ -257,12 +257,14 @@ diagnostics 记录解析失败、无效 IOC、provider 状态/异常、必要来
 - 原始响应为了审计可以落在用户指定的 cache/run 目录，但不是发布源文件。
 - 测试使用注入 transport 和网络哨兵验证零真实请求。
 - 不读取 `token_icp.txt`；ICP 生产 endpoint 尚未用用户凭据验收，当前证据来自 synthetic/mock 和本地 cache replay。
-- `python -m ioc_rejudge share` 是独立的云端协作边界：key 文件使用 scrypt 派生密钥包裹，key 原文不进入 bundle、manifest、日志或 HTTP 请求；IOC/人员/路径等使用确定性 AES-SIV token，credential-like 字段只输出 `[REDACTED]`。
+- `python -m ioc_rejudge share` 是独立的云端协作边界：key 文件使用 scrypt 派生密钥包裹，key 原文不进入 bundle、manifest、日志或 HTTP 请求；IOC/人员/路径等使用确定性 AES-SIV token，credential-like 字段和 JWT 只输出 `[REDACTED]`。自由文本另覆盖 defang、云主机名、hex+exe、标注人名、`请联系`、bang 路径和 Base64 JSON，不使用明文对照表。
 - share bundle 采用 JSONL 流式读写和原子替换；manifest 保存输出 hash、bundle_id、key_id、行数和扫描统计，并使用本地 key 对全部字段做完整性认证，不保存原文 hash、原文或口令。
 - share bundle 不是生产 pipeline 输入；原始 manifest 留在本地，云端改写结果的每行必须回传顶层 `bundle_id`。restore 使用相同 key 验证 manifest、bundle 归属和 token；未知/非规范 token、错误 key、manifest 被替换或还原后 key 冲突均 fail-closed。
 - share 的隐私边界不是全字段加密：确定性 token 有意暴露类型、相等关系、JSON 结构及大致长度，未命中规则的普通文本和时间保持可读。不同案件需要隔离关联时必须使用不同 key；自由文本身份线索需通过 names file 和发送前人工审阅补充，残留扫描不能证明任意自然语言均已匿名化。
 - `python -m ioc_rejudge ui` 只监听 `127.0.0.1` 且不可配置为其他地址；页面与 API 请求均需携带进程级会话令牌并通过 Host/Origin 校验（防 DNS rebinding 与跨站请求），非 200 响应关闭连接避免 keep-alive 错位。服务拒绝地址复用，端口被占用时回退随机端口，杜绝两个 UI 进程共享同一端口。
-- UI 的 key 口令只驻留服务进程内存，页面响应 `Cache-Control: no-store`，清除口令立即失效；bundle 目录按 `bundle_id` 存储并保留最近 20 个，restore 按 bundle_id 直定位、sha256 兜底匹配本地 manifest。UI 不执行研判 pipeline、不发起网络请求、不提供关闭严格模式的入口。
+- UI 成功解锁后把口令原子写入 key 同目录的 `passphrase` 文件（POSIX `0o600`，Windows 尽力设置），下次启动自动解锁；`/api/lock` 同时清内存和该文件。页面响应 `Cache-Control: no-store`，口令不得进入日志、HTML 或 status 的其它字段。
+- bundle 目录按 `bundle_id` 存储并保留最近 20 个，restore 按 bundle_id 直定位、sha256 兜底匹配本地 manifest。UI 不执行研判 pipeline、不提供关闭严格模式的入口。
+- `POST /api/lookup` 只构造 `ioc_info` provider，默认 `refresh=False`、TTL 7 天，与研判 CLI 共用 `--cache-dir`（默认 `.\provider-cache`）。有凭据时 cache miss 才联网；无凭据时改为 offline 只读缓存，全部 miss 则 4xx 且不得联网。lookup 不要求 key 已解锁；create/restore 仍要求解锁。
 
 ## 10. 兼容性与限制
 

@@ -1,22 +1,27 @@
 """Local single-page assistant for the share bundle workflow.
 
 The server is a thin wrapper around :mod:`ioc_rejudge.share`
-create/restore/scan.  It binds to loopback only, guards every request with a
-per-process session token plus Host/Origin checks, and keeps the key
-passphrase in process memory until the user locks it or the process exits.
-It never runs the adjudication pipeline and never makes network requests of
-its own; the human copies sanitized text to a cloud AI and pastes the answer
-back.
+create/restore/scan, plus an optional IOC Info lookup that reuses the same
+provider cache as the adjudication CLI.  It binds to loopback only, guards
+every request with a per-process session token plus Host/Origin checks, and
+keeps the key passphrase in process memory (also persisted next to the key
+file for auto-unlock on the next start until the user locks).  It never runs
+the adjudication pipeline; lookup talks only to the ``ioc_info`` provider.
+The human copies sanitized text to a cloud AI and pastes the answer back.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
+import os
 import re
 import secrets
 import shutil
+import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -25,6 +30,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+from ioc_rejudge.inputs import read_input_bundle
+from ioc_rejudge.observations import Freshness, ProviderStatus
+from ioc_rejudge.providers.base import ProviderContext, ProviderResult
+from ioc_rejudge.providers.factory import build_providers
 from ioc_rejudge.share import (
     ShareError,
     create_bundle,
@@ -36,16 +45,136 @@ from ioc_rejudge.share import (
 DEFAULT_PORT = 8731
 MAX_BUNDLES = 20
 MAX_BODY_BYTES = 32 * 1024 * 1024
+DEFAULT_CACHE_DIR = Path("provider-cache")
 
 # Bundle directories are named by the 20-hex-char bundle id; the fullmatch
 # also keeps user-supplied ids from ever escaping the bundle directory.
 _BUNDLE_ID_RE = re.compile(r"[0-9a-f]{20}")
+_INVALID_IOC_RE = re.compile(r"^line (\d+): invalid IOC (.+)$")
 _PAGE_FILE = Path(__file__).with_name("ui.html")
+
+
+def _rejected_rows_from_errors(errors: list[str]) -> list[dict]:
+    """Turn input-bundle parse errors into lookup JSONL error rows."""
+    rows: list[dict] = []
+    for message in errors:
+        original = ""
+        match = _INVALID_IOC_RE.match(message)
+        if match:
+            try:
+                value = ast.literal_eval(match.group(2))
+            except (SyntaxError, ValueError):
+                value = match.group(2)
+            original = value if isinstance(value, str) else str(value)
+        rows.append(
+            {
+                "ioc": original,
+                "normalized": "",
+                "ioc_type": "",
+                "status": "error",
+                "freshness": "unknown",
+                "source": "none",
+                "data": [],
+                "error": message,
+            }
+        )
+    return rows
+
+
+def _fresh_cache_hit_keys(provider: Any, targets: list) -> set[str]:
+    """Normalized IOC keys that the ioc_info provider would serve from cache.
+
+    Live fetches that write through the cache also store ``raw_ref`` values
+    with a ``cache:`` prefix, so lookup source mapping cannot rely on the
+    prefix alone and must detect pre-collect fresh hits separately.
+    """
+    hits: set[str] = set()
+    cache = getattr(provider, "cache", None)
+    if cache is None or not getattr(provider.settings, "enabled", False):
+        return hits
+    now_fn = getattr(provider, "now_fn", None)
+    now = now_fn() if callable(now_fn) else None
+    for target in targets:
+        if not provider.supports(target):
+            continue
+        try:
+            entry = cache.get(
+                target.original,
+                provider.cache_params(target),
+                now=now,
+            )
+        except (OSError, TypeError, ValueError):
+            continue
+        if entry is not None and entry.fresh:
+            hits.add(target.normalized)
+    return hits
+
+
+def _lookup_source(status: ProviderStatus, cache_hit: bool) -> str:
+    if status in (ProviderStatus.SUCCESS, ProviderStatus.NO_DATA):
+        return "cache" if cache_hit else "live"
+    return "none"
 
 
 def _timestamp() -> str:
     """A sortable, collision-resistant suffix for audit file names."""
     return f"{int(time.time() * 1000):013d}-{secrets.token_hex(2)}"
+
+
+def _passphrase_path(key_path: Path) -> Path:
+    """Path of the remembered passphrase file beside the key file."""
+    return Path(key_path).expanduser().parent / "passphrase"
+
+
+def _write_passphrase_file(key_path: Path, passphrase: str) -> None:
+    """Atomically persist the passphrase next to the key; best-effort 0o600."""
+    path = _passphrase_path(key_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temp = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(passphrase)
+        try:
+            os.chmod(temp, 0o600)
+        except OSError:
+            pass
+        os.replace(temp, path)
+    except Exception:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _read_passphrase_file(key_path: Path) -> str | None:
+    """Return the saved passphrase, or None when missing/unreadable/empty."""
+    path = _passphrase_path(key_path)
+    if not path.is_file():
+        return None
+    try:
+        value = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return value if value else None
+
+
+def _delete_passphrase_file(key_path: Path) -> None:
+    """Remove the remembered passphrase file; missing file is fine."""
+    path = _passphrase_path(key_path)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _optional_path(value: Any) -> Path | None:
@@ -176,13 +305,26 @@ class UiState:
         bundles_dir: Path,
         token: str,
         max_bundles: int = MAX_BUNDLES,
+        *,
+        cache_dir: Path | None = None,
+        credentials_path: Path | None = None,
+        provider_env: dict[str, str] | None = None,
+        transport_factory=None,
     ) -> None:
         if max_bundles < 1:
             raise ValueError("max_bundles must be at least 1")
+        if credentials_path is not None and provider_env is not None:
+            raise ValueError("credentials_path and provider_env cannot be used together")
         self.key_path = key_path
         self.bundles_dir = bundles_dir
         self.token = token
         self.max_bundles = max_bundles
+        self.cache_dir = Path(cache_dir) if cache_dir is not None else DEFAULT_CACHE_DIR
+        self.credentials_path = (
+            Path(credentials_path).expanduser() if credentials_path is not None else None
+        )
+        self.provider_env = provider_env
+        self.transport_factory = transport_factory
         # The passphrase (not the derived key) is kept, because the wrapped
         # share functions re-load and re-verify the key file per operation.
         self.passphrase: str | None = None
@@ -331,6 +473,7 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
         handlers = {
             "/api/status": self._handle_status,
             "/api/key": self._handle_key,
+            "/api/lookup": self._handle_lookup,
             "/api/create": self._handle_create,
             "/api/restore": self._handle_restore,
             "/api/scan": self._handle_scan,
@@ -362,6 +505,7 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             "key_exists": state.key_path.is_file(),
             "unlocked": state.unlocked,
             "key_id": state.key_id,
+            "passphrase_saved": _passphrase_path(state.key_path).is_file(),
             "bundles": _list_bundles(state.bundles_dir),
         }
 
@@ -378,12 +522,14 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
         )
         state.passphrase = passphrase
         state.key_id = key_id
+        _write_passphrase_file(state.key_path, passphrase)
         return {"key_id": key_id}
 
     def _handle_lock(self, body: dict) -> dict:
         state = self.ui_state
         state.passphrase = None
         state.key_id = None
+        _delete_passphrase_file(state.key_path)
         return {"unlocked": False}
 
     def _require_unlocked(self) -> None:
@@ -479,6 +625,123 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             if staged is not None:
                 staged.unlink(missing_ok=True)
 
+    def _handle_lookup(self, body: dict) -> dict:
+        """Query only the ioc_info provider; unlock is not required."""
+        state = self.ui_state
+        input_path, staged = self._resolve_input(body, state.bundles_dir, "lookup")
+        try:
+            try:
+                bundle = read_input_bundle(str(input_path))
+            except FileNotFoundError as exc:
+                raise ShareError(f"lookup input not found: {input_path}") from exc
+            except (OSError, ValueError) as exc:
+                raise ShareError(f"cannot read lookup input: {exc}") from exc
+
+            rejected_rows = _rejected_rows_from_errors(bundle.errors)
+            targets = list(bundle.targets)
+
+            build_kwargs: dict[str, Any] = {
+                "cache_dir": state.cache_dir,
+                "offline": False,
+                "transport_factory": state.transport_factory,
+            }
+            if state.credentials_path is not None:
+                build_kwargs["credentials_path"] = state.credentials_path
+            elif state.provider_env is not None:
+                build_kwargs["env"] = state.provider_env
+
+            providers = build_providers(["ioc_info"], **build_kwargs)
+            provider = providers[0]
+            # Missing secrets disable the live provider and skip cache. Rebuild
+            # offline so a warm 7-day cache is still readable; misses stay
+            # fail-closed and never hit the network.
+            offline = not provider.settings.enabled
+            if offline:
+                build_kwargs["offline"] = True
+                providers = build_providers(["ioc_info"], **build_kwargs)
+                provider = providers[0]
+
+            cache_hit_keys = _fresh_cache_hit_keys(provider, targets)
+
+            if targets:
+                result = provider.collect(
+                    targets,
+                    ProviderContext(refresh=False, offline=offline),
+                )
+            else:
+                result = ProviderResult(name="ioc_info")
+
+            if targets and offline and result.cache_hits == 0:
+                raise ShareError(
+                    "ioc_info is disabled (missing credentials); cannot query"
+                )
+
+            rows: list[dict] = []
+            for target in targets:
+                status = result.statuses.get(
+                    target.normalized, ProviderStatus.ERROR
+                )
+                freshness = result.freshnesses.get(
+                    target.normalized, Freshness.UNKNOWN
+                )
+                observations = [
+                    obs
+                    for obs in result.observations
+                    if obs.ioc == target.normalized and obs.kind == "ioc_info_record"
+                ]
+                cache_hit = target.normalized in cache_hit_keys
+                row = {
+                    "ioc": target.original,
+                    "normalized": target.normalized,
+                    "ioc_type": target.ioc_type,
+                    "status": (
+                        status.value
+                        if isinstance(status, ProviderStatus)
+                        else str(status)
+                    ),
+                    "freshness": (
+                        freshness.value
+                        if isinstance(freshness, Freshness)
+                        else str(freshness)
+                    ),
+                    "source": _lookup_source(status, cache_hit),
+                    "data": [
+                        dict(obs.payload) if isinstance(obs.payload, dict) else obs.payload
+                        for obs in observations
+                    ],
+                }
+                rows.append(row)
+            rows.extend(rejected_rows)
+
+            # Rejected input rows always carry an "error" message field; provider
+            # ERROR status rows from collect do not.
+            cache_hits = sum(1 for row in rows if row["source"] == "cache")
+            live_fetches = sum(1 for row in rows if row["source"] == "live")
+            no_data = sum(1 for row in rows if row["status"] == "no_data")
+            errors = sum(
+                1
+                for row in rows
+                if row["status"] == "error" and "error" not in row
+            )
+            disabled = sum(1 for row in rows if row["status"] == "disabled")
+            rejected = len(rejected_rows)
+            text = "".join(
+                json.dumps(row, ensure_ascii=False) + "\n" for row in rows
+            )
+            return {
+                "text": text,
+                "rows": len(rows),
+                "cache_hits": cache_hits,
+                "live_fetches": live_fetches,
+                "no_data": no_data,
+                "errors": errors,
+                "disabled": disabled,
+                "rejected": rejected,
+            }
+        finally:
+            if staged is not None:
+                staged.unlink(missing_ok=True)
+
 
 def build_server(
     key_path: str | Path,
@@ -487,6 +750,10 @@ def build_server(
     port: int = DEFAULT_PORT,
     max_bundles: int = MAX_BUNDLES,
     token: str | None = None,
+    cache_dir: str | Path | None = None,
+    credentials_path: str | Path | None = None,
+    provider_env: dict[str, str] | None = None,
+    transport_factory=None,
 ) -> tuple[ThreadingHTTPServer, str]:
     """Create the loopback UI server and return it with its tokenized URL."""
     resolved_key = Path(key_path).expanduser()
@@ -494,11 +761,41 @@ def build_server(
     resolved_key.parent.mkdir(parents=True, exist_ok=True)
     resolved_bundles.mkdir(parents=True, exist_ok=True)
     session_token = token or secrets.token_urlsafe(24)
+    resolved_cache = (
+        Path(cache_dir).expanduser() if cache_dir is not None else DEFAULT_CACHE_DIR
+    )
+    resolved_credentials = (
+        Path(credentials_path).expanduser() if credentials_path is not None else None
+    )
 
     class Handler(_UiRequestHandler):
         pass
 
-    Handler.ui_state = UiState(resolved_key, resolved_bundles, session_token, max_bundles)
+    state = UiState(
+        resolved_key,
+        resolved_bundles,
+        session_token,
+        max_bundles,
+        cache_dir=resolved_cache,
+        credentials_path=resolved_credentials,
+        provider_env=provider_env,
+        transport_factory=transport_factory,
+    )
+    saved = _read_passphrase_file(resolved_key)
+    if saved is not None and resolved_key.is_file():
+        try:
+            key_id = ensure_key(resolved_key, saved, generate=False)
+        except ShareError as exc:
+            # Keep the saved file so the user can fix the key or passphrase;
+            # never echo the passphrase itself.
+            print(
+                f"ioc rejudge share ui: auto-unlock failed: {exc}",
+                file=sys.stderr,
+            )
+        else:
+            state.passphrase = saved
+            state.key_id = key_id
+    Handler.ui_state = state
     Handler.page_path = _PAGE_FILE
     try:
         server = _UiHttpServer(("127.0.0.1", port), Handler)
@@ -545,19 +842,41 @@ def main(argv: list[str] | None = None) -> int:
         help="directory holding share bundles (default: %(default)s)",
     )
     parser.add_argument(
+        "--cache-dir",
+        default=str(DEFAULT_CACHE_DIR),
+        help="provider cache directory for IOC Info lookup (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--credentials-file",
+        default=None,
+        help="optional credentials JSON for IOC Info lookup (default: process env)",
+    )
+    parser.add_argument(
         "--no-browser",
         action="store_true",
         help="print the URL instead of opening the browser",
     )
     args = parser.parse_args(argv)
+    cache_dir = Path(args.cache_dir).expanduser()
+    credentials_path = (
+        Path(args.credentials_file).expanduser()
+        if args.credentials_file
+        else None
+    )
     server, url = build_server(
         Path(args.key_file).expanduser(),
         Path(args.bundle_dir).expanduser(),
         port=args.port,
+        cache_dir=cache_dir,
+        credentials_path=credentials_path,
     )
     print(f"ioc rejudge share ui: {url}")
     print(f"share key file: {Path(args.key_file).expanduser()}")
     print(f"bundle directory: {Path(args.bundle_dir).expanduser()}")
-    print("press Ctrl+C to stop; the passphrase lives only in this process")
+    print(f"provider cache: {cache_dir.resolve()}")
+    print(
+        "press Ctrl+C to stop; passphrase is remembered next to the key file "
+        "until you clear it"
+    )
     serve(server, url=url, open_browser=not args.no_browser)
     return 0

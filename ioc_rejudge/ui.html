@@ -81,11 +81,42 @@
     background: #fffbeb; border: 1px solid #f2e2ab; color: #7a5b0a;
     border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-top: 10px;
   }
-  .actions { margin-top: 10px; display: flex; align-items: center; }
+  .actions { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   #key-panel .note { background: #eff6ff; border-color: #bfd4fb; color: #1e4f9c; }
   body:not(.is-unlocked) .needs-key { display: none; }
   ul.bundles { list-style: none; margin: 0; padding: 0; font-size: 13px; color: var(--muted); }
   ul.bundles li { font-family: ui-monospace, Consolas, monospace; }
+  .json-viewer { margin-top: 8px; }
+  .json-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px; }
+  .json-toolbar button { padding: 4px 12px; font-size: 13px; }
+  .json-card {
+    border: 1px solid var(--line); border-radius: 6px;
+    padding: 8px 10px; margin-top: 8px; background: #fbfcfd;
+  }
+  .json-card-summary { font-weight: 600; font-size: 13px; margin-bottom: 4px; word-break: break-all; }
+  .json-branch { margin-left: 4px; }
+  details.json-branch > summary {
+    cursor: pointer;
+    font: 12px/1.5 ui-monospace, Consolas, monospace;
+    color: var(--ink);
+  }
+  .json-leaf {
+    margin-left: 16px;
+    font: 12px/1.5 ui-monospace, Consolas, monospace;
+    word-break: break-all;
+  }
+  .json-key { color: var(--muted); }
+  .json-string { color: #0f5c2e; }
+  .json-string.truncated { cursor: pointer; text-decoration: underline dotted; }
+  .json-scalar { color: var(--ink); }
+  .json-raw {
+    margin: 4px 0 0; white-space: pre-wrap; word-break: break-all;
+    font: 12px/1.5 ui-monospace, Consolas, monospace; color: var(--danger-ink);
+  }
+  .compact-source { margin-top: 10px; }
+  .compact-source label { color: var(--muted); font-size: 12px; }
+  .compact-source textarea { min-height: 64px; font-size: 12px; }
+  .bundle-meta { color: var(--muted); font-size: 13px; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -104,16 +135,53 @@
 
   <section class="panel" id="key-panel">
     <h2>解锁 share key</h2>
-    <p class="hint">口令只保存在本机服务进程内存中，清除口令或关闭进程后即失效。</p>
-    <label for="key-passphrase">key 口令（新 key 至少 12 个字符）</label>
-    <input type="password" id="key-passphrase" autocomplete="off">
-    <div class="row" style="margin-top: 8px;">
-      <label><input type="checkbox" id="key-generate"> 生成新 key</label>
-      <label><input type="checkbox" id="key-force"> 覆盖已存在的 key 文件</label>
+    <p class="hint" id="key-panel-hint">口令可永久保存在本机 key 同目录；下次打开自动解锁。「清除口令」会忘掉本机记住的口令。</p>
+    <div id="key-form">
+      <label for="key-passphrase">key 口令（非空即可）</label>
+      <input type="password" id="key-passphrase" autocomplete="off">
+      <div class="row" style="margin-top: 8px;">
+        <label><input type="checkbox" id="key-generate"> 生成新 key</label>
+        <label><input type="checkbox" id="key-force"> 覆盖已存在的 key 文件</label>
+      </div>
+      <div class="note" id="key-hint" hidden></div>
+      <div class="actions">
+        <button type="button" id="key-btn">解锁 / 创建</button>
+      </div>
     </div>
-    <div class="note" id="key-hint" hidden></div>
+    <div class="note" id="key-unlocked-note" hidden>已用本机记住的口令自动解锁，无需再次输入。</div>
+  </section>
+
+  <section class="panel" id="lookup-panel">
+    <h2>查询 IOC Info</h2>
+    <p class="hint">丢入 IOC（每行一个）或本机文件；默认用 7 天缓存，没有缓存再走 IOC Info 接口。查询结果是明文，发给云端前请先「脱敏并复制」。</p>
+    <div class="row">
+      <label><input type="radio" name="lookup-src" value="paste" checked> 粘贴文本</label>
+      <label><input type="radio" name="lookup-src" value="path"> 本机文件路径</label>
+    </div>
+    <div id="lookup-paste">
+      <label for="lookup-content">IOC 列表（每行一个）</label>
+      <textarea id="lookup-content" placeholder="lookup.example.invalid"></textarea>
+    </div>
+    <div id="lookup-file" hidden>
+      <label for="lookup-path">文件路径</label>
+      <input type="text" id="lookup-path" placeholder="D:\iocs.txt">
+    </div>
     <div class="actions">
-      <button type="button" id="key-btn">解锁 / 创建</button>
+      <button type="button" id="lookup-btn">查询 IOC Info</button>
+      <span class="flash" id="lookup-flash" hidden></span>
+    </div>
+    <div class="result" id="lookup-result" hidden>
+      <div class="stats" id="lookup-stats"></div>
+      <div class="json-viewer" id="lookup-viewer"></div>
+      <div class="compact-source">
+        <label for="lookup-output">compact JSONL（复制源）</label>
+        <textarea id="lookup-output" readonly></textarea>
+      </div>
+      <div class="actions">
+        <button type="button" id="lookup-sanitize">脱敏并复制</button>
+        <button class="secondary" type="button" id="lookup-copy">复制明文（未脱敏，勿发给云端）</button>
+      </div>
+      <div class="note">「脱敏并复制」需要先解锁 share key；成功后复制一行一个脱敏 JSON，并把结果展示在下方「生成脱敏包」结果区。明文结果勿直接发给云端。</div>
     </div>
   </section>
 
@@ -140,9 +208,13 @@
     </div>
     <div class="result" id="create-result" hidden>
       <div class="stats" id="create-stats"></div>
-      <div>bundle_id（连同脱敏内容一并提供给云端 AI）：</div>
+      <div class="json-viewer" id="create-viewer"></div>
+      <div class="bundle-meta">bundle_id（连同脱敏内容一并提供给云端 AI）：</div>
       <div class="bundle-id" id="create-bundle-id"></div>
-      <textarea id="create-output" readonly></textarea>
+      <div class="compact-source">
+        <label for="create-output">compact JSONL（复制源）</label>
+        <textarea id="create-output" readonly></textarea>
+      </div>
       <div class="actions">
         <button class="secondary" type="button" id="create-copy">复制脱敏内容</button>
       </div>
@@ -171,7 +243,11 @@
     </div>
     <div class="result" id="restore-result" hidden>
       <div class="stats" id="restore-stats"></div>
-      <textarea id="restore-output" readonly></textarea>
+      <div class="json-viewer" id="restore-viewer"></div>
+      <div class="compact-source">
+        <label for="restore-output">compact JSONL（复制源）</label>
+        <textarea id="restore-output" readonly></textarea>
+      </div>
       <div class="actions">
         <button class="secondary" type="button" id="restore-copy">复制还原结果</button>
       </div>
@@ -206,6 +282,7 @@
 'use strict';
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
 const $ = (id) => document.getElementById(id);
+const LONG_STRING = 160;
 
 async function api(path, payload) {
   const response = await fetch(path + '?token=' + encodeURIComponent(TOKEN), {
@@ -231,10 +308,10 @@ function flash(id, message) {
   setTimeout(() => { el.hidden = true; }, 5000);
 }
 
-async function copyText(text, textarea, flashId) {
+async function copyText(text, textarea, flashId, message) {
   try {
     await navigator.clipboard.writeText(text);
-    flash(flashId, '已复制到剪贴板');
+    flash(flashId, message || '已复制到剪贴板');
   } catch (err) {
     textarea.focus();
     textarea.select();
@@ -250,7 +327,11 @@ function collectInput(prefix) {
     return {input_path: value};
   }
   const value = $(prefix + '-content').value;
-  if (!value.trim()) throw new Error('请先粘贴 JSONL 内容');
+  if (!value.trim()) {
+    throw new Error(
+      prefix === 'lookup' ? '请先粘贴 IOC（每行一个）' : '请先粘贴 JSONL 内容'
+    );
+  }
   return {content: value};
 }
 
@@ -264,6 +345,166 @@ function bindSourceToggle(prefix) {
   });
 }
 
+function parseJsonl(text) {
+  const items = [];
+  String(text || '').split(/\r?\n/).forEach((line) => {
+    if (!line.trim()) return;
+    try {
+      items.push({ ok: true, value: JSON.parse(line) });
+    } catch (err) {
+      items.push({ ok: false, raw: line });
+    }
+  });
+  return items;
+}
+
+function cardSummary(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const parts = [];
+    if (value.ioc != null) parts.push('ioc: ' + String(value.ioc));
+    if (value.status != null) parts.push('status: ' + String(value.status));
+    if (value.source != null) parts.push('source: ' + String(value.source));
+    return parts.length ? parts.join(' · ') : 'object';
+  }
+  if (Array.isArray(value)) return 'array[' + value.length + ']';
+  return String(value);
+}
+
+function renderScalar(value) {
+  const span = document.createElement('span');
+  if (typeof value === 'string') {
+    span.className = 'json-string';
+    if (value.length > LONG_STRING) {
+      const short = value.slice(0, LONG_STRING);
+      span.classList.add('truncated');
+      span.title = '点击展开全文';
+      span.textContent = JSON.stringify(short) + '…';
+      span.addEventListener('click', () => {
+        if (span.classList.contains('truncated')) {
+          span.classList.remove('truncated');
+          span.textContent = JSON.stringify(value);
+          span.title = '点击重新截断';
+        } else {
+          span.classList.add('truncated');
+          span.textContent = JSON.stringify(short) + '…';
+          span.title = '点击展开全文';
+        }
+      });
+    } else {
+      span.textContent = JSON.stringify(value);
+    }
+    return span;
+  }
+  span.className = 'json-scalar';
+  if (value === null) span.textContent = 'null';
+  else if (typeof value === 'boolean') span.textContent = value ? 'true' : 'false';
+  else span.textContent = String(value);
+  return span;
+}
+
+function renderTree(value, key, collapsed) {
+  const wrap = document.createElement('div');
+  wrap.className = 'json-node';
+  if (value !== null && typeof value === 'object') {
+    const details = document.createElement('details');
+    details.className = 'json-branch';
+    details.open = !collapsed;
+    const summary = document.createElement('summary');
+    const prefix = key != null ? (key + ': ') : '';
+    if (Array.isArray(value)) {
+      summary.textContent = prefix + 'Array(' + value.length + ')';
+      details.appendChild(summary);
+      value.forEach((item, index) => {
+        details.appendChild(renderTree(item, String(index), true));
+      });
+    } else {
+      const keys = Object.keys(value);
+      summary.textContent = prefix + 'Object{' + keys.length + '}';
+      details.appendChild(summary);
+      keys.forEach((childKey) => {
+        details.appendChild(renderTree(value[childKey], childKey, true));
+      });
+    }
+    wrap.appendChild(details);
+    return wrap;
+  }
+  const row = document.createElement('div');
+  row.className = 'json-leaf';
+  if (key != null) {
+    const keyEl = document.createElement('span');
+    keyEl.className = 'json-key';
+    keyEl.textContent = key + ': ';
+    row.appendChild(keyEl);
+  }
+  row.appendChild(renderScalar(value));
+  wrap.appendChild(row);
+  return wrap;
+}
+
+function setAllOpen(container, open) {
+  container.querySelectorAll('details.json-branch').forEach((el) => {
+    el.open = open;
+  });
+}
+
+function renderJsonlViewer(container, text) {
+  container.textContent = '';
+  const toolbar = document.createElement('div');
+  toolbar.className = 'json-toolbar';
+  const expandBtn = document.createElement('button');
+  expandBtn.type = 'button';
+  expandBtn.className = 'secondary';
+  expandBtn.textContent = '全部展开';
+  const collapseBtn = document.createElement('button');
+  collapseBtn.type = 'button';
+  collapseBtn.className = 'secondary';
+  collapseBtn.textContent = '全部合拢';
+  const cardsHost = document.createElement('div');
+  cardsHost.className = 'json-cards';
+  expandBtn.addEventListener('click', () => setAllOpen(cardsHost, true));
+  collapseBtn.addEventListener('click', () => setAllOpen(cardsHost, false));
+  toolbar.appendChild(expandBtn);
+  toolbar.appendChild(collapseBtn);
+  container.appendChild(toolbar);
+  container.appendChild(cardsHost);
+
+  parseJsonl(text).forEach((item, index) => {
+    const card = document.createElement('div');
+    card.className = 'json-card';
+    const head = document.createElement('div');
+    head.className = 'json-card-summary';
+    if (item.ok) {
+      head.textContent = '#' + (index + 1) + ' · ' + cardSummary(item.value);
+      card.appendChild(head);
+      card.appendChild(renderTree(item.value, null, true));
+    } else {
+      head.textContent = '#' + (index + 1) + ' · 无法解析的行';
+      card.appendChild(head);
+      const pre = document.createElement('pre');
+      pre.className = 'json-raw';
+      pre.textContent = item.raw;
+      card.appendChild(pre);
+    }
+    cardsHost.appendChild(card);
+  });
+}
+
+function showCompactResult(prefix, text) {
+  $(prefix + '-output').value = text;
+  renderJsonlViewer($(prefix + '-viewer'), text);
+  $(prefix + '-result').hidden = false;
+}
+
+function applyCreateResult(result) {
+  $('create-bundle-id').textContent = result.bundle_id;
+  $('create-stats').textContent =
+    '行数 ' + result.rows +
+    ' · token ' + result.token_occurrences +
+    ' · 永久脱敏字段 ' + result.redacted_occurrences +
+    ' · 输入中的敏感项 ' + result.source_findings;
+  showCompactResult('create', result.text);
+}
+
 async function refreshStatus() {
   let status;
   try { status = await api('/api/status', {}); }
@@ -274,13 +515,28 @@ async function refreshStatus() {
   $('status-key').textContent =
     'key: ' + status.key_file +
     (status.key_id ? ' · key_id ' + status.key_id : '') +
-    (status.key_exists ? '' : ' · 文件不存在');
+    (status.key_exists ? '' : ' · 文件不存在') +
+    (status.passphrase_saved ? ' · 已记住口令' : '');
+  const form = $('key-form');
+  const unlockedNote = $('key-unlocked-note');
+  const panelHint = $('key-panel-hint');
+  if (unlocked) {
+    form.hidden = true;
+    unlockedNote.hidden = false;
+    panelHint.hidden = true;
+  } else {
+    form.hidden = false;
+    unlockedNote.hidden = true;
+    panelHint.hidden = false;
+  }
   const hint = $('key-hint');
   if (!status.key_exists) {
     hint.textContent = 'key 文件不存在：输入口令并勾选“生成新 key”以创建；创建后同一台机器请一直复用这个 key。';
     hint.hidden = false;
   } else if (!unlocked) {
-    hint.textContent = '输入既有 key 的口令即可解锁。';
+    hint.textContent = status.passphrase_saved
+      ? '本机记住的口令未能自动解锁，请重新输入。'
+      : '输入既有 key 的口令即可解锁。';
     hint.hidden = false;
   } else {
     hint.hidden = true;
@@ -318,6 +574,55 @@ async function doLock() {
   await refreshStatus();
 }
 
+async function doLookup() {
+  clearError();
+  try {
+    const payload = collectInput('lookup');
+    const result = await api('/api/lookup', payload);
+    $('lookup-stats').textContent =
+      '行数 ' + result.rows +
+      ' · 缓存命中 ' + result.cache_hits +
+      ' · 在线拉取 ' + result.live_fetches +
+      ' · 无数据 ' + result.no_data +
+      ' · 错误 ' + result.errors +
+      ' · 禁用 ' + result.disabled +
+      ' · 拒绝 ' + result.rejected;
+    showCompactResult('lookup', result.text);
+    $('create-content').value = result.text;
+    const pasteRadio = document.querySelector('input[name="create-src"][value="paste"]');
+    if (pasteRadio) {
+      pasteRadio.checked = true;
+      $('create-paste').hidden = false;
+      $('create-file').hidden = true;
+    }
+    flash('lookup-flash', '查询完成；发给云端前请先「脱敏并复制」');
+  } catch (err) { showError(err.message); }
+}
+
+async function doSanitizeCopy() {
+  clearError();
+  try {
+    const lookupCompactText = $('lookup-output').value;
+    if (!lookupCompactText.trim()) throw new Error('请先查询 IOC Info');
+    const payload = { content: lookupCompactText };
+    const namesPath = $('create-names').value.trim();
+    if (namesPath) payload.names_path = namesPath;
+    const result = await api('/api/create', payload);
+    applyCreateResult(result);
+    const createResult = $('create-result');
+    if (createResult && createResult.scrollIntoView) {
+      createResult.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    await copyText(
+      result.text,
+      $('create-output'),
+      'lookup-flash',
+      '已复制一行一个脱敏 JSON'
+    );
+    await refreshStatus();
+  } catch (err) { showError(err.message); }
+}
+
 async function doCreate() {
   clearError();
   try {
@@ -325,14 +630,7 @@ async function doCreate() {
     const namesPath = $('create-names').value.trim();
     if (namesPath) payload.names_path = namesPath;
     const result = await api('/api/create', payload);
-    $('create-bundle-id').textContent = result.bundle_id;
-    $('create-stats').textContent =
-      '行数 ' + result.rows +
-      ' · token ' + result.token_occurrences +
-      ' · 永久脱敏字段 ' + result.redacted_occurrences +
-      ' · 输入中的敏感项 ' + result.source_findings;
-    $('create-output').value = result.text;
-    $('create-result').hidden = false;
+    applyCreateResult(result);
     await copyText(result.text, $('create-output'), 'create-flash');
     await refreshStatus();
   } catch (err) { showError(err.message); }
@@ -345,8 +643,7 @@ async function doRestore() {
     const result = await api('/api/restore', payload);
     $('restore-stats').textContent =
       '匹配 bundle ' + result.matched_bundle_id + ' · 还原 ' + result.rows + ' 行';
-    $('restore-output').value = result.text;
-    $('restore-result').hidden = false;
+    showCompactResult('restore', result.text);
     await copyText(result.text, $('restore-output'), 'restore-flash');
   } catch (err) { showError(err.message); }
 }
@@ -369,11 +666,21 @@ async function doScan() {
 
 $('key-btn').addEventListener('click', doKey);
 $('lock-btn').addEventListener('click', doLock);
+$('lookup-btn').addEventListener('click', doLookup);
+$('lookup-sanitize').addEventListener('click', doSanitizeCopy);
+$('lookup-copy').addEventListener('click', () =>
+  copyText($('lookup-output').value, $('lookup-output'), 'lookup-flash')
+);
 $('create-btn').addEventListener('click', doCreate);
-$('create-copy').addEventListener('click', () => copyText($('create-output').value, $('create-output'), 'create-flash'));
+$('create-copy').addEventListener('click', () =>
+  copyText($('create-output').value, $('create-output'), 'create-flash')
+);
 $('restore-btn').addEventListener('click', doRestore);
-$('restore-copy').addEventListener('click', () => copyText($('restore-output').value, $('restore-output'), 'restore-flash'));
+$('restore-copy').addEventListener('click', () =>
+  copyText($('restore-output').value, $('restore-output'), 'restore-flash')
+);
 $('scan-btn').addEventListener('click', doScan);
+bindSourceToggle('lookup');
 bindSourceToggle('create');
 bindSourceToggle('restore');
 bindSourceToggle('scan');
