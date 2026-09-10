@@ -6,7 +6,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Support both `python -m ioc_rejudge.cli` and direct script execution from
@@ -296,8 +296,9 @@ def run_pipeline_with_diagnostics(input_path: str, config: Config) -> PipelineRe
             print("WARNING: row has no identifiable IOC value", file=sys.stderr)
             continue
 
-        dossier = extract_evidence(dossier, config)
-        verdict = adjudicate(dossier, config)
+        evaluation_now = datetime.now(timezone.utc)
+        dossier = extract_evidence(dossier, config, now=evaluation_now)
+        verdict = adjudicate(dossier, config, now=evaluation_now)
 
         activity_time = ""
         if dossier.latest_material_activity_time:
@@ -307,7 +308,7 @@ def run_pipeline_with_diagnostics(input_path: str, config: Config) -> PipelineRe
         if dossier.latest_intel_update_time:
             intel_time = dossier.latest_intel_update_time.strftime("%Y-%m-%d %H:%M:%S")
 
-        has_residue = _has_threat_residue(dossier, config)
+        has_residue = _has_threat_residue(dossier, config, now=evaluation_now)
         profile_domain = dossier.profile.domain if dossier.profile else {}
         profile_ip = dossier.profile.ip if dossier.profile else {}
         profile_runtime = dossier.profile.runtime if dossier.profile else {}

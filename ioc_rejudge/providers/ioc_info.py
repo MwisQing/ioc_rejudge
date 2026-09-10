@@ -159,7 +159,7 @@ def _record_observed_at(record: object) -> datetime | None:
     if not isinstance(record, dict):
         return None
     for field in ("updatetime", "inserttime", "disposaltime", "observed_at"):
-        parsed = parse_time(str(record.get(field, "")))
+        parsed = parse_time(record.get(field))
         if parsed is not None:
             return parsed
     return None

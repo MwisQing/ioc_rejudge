@@ -119,6 +119,7 @@ class IocDossier:
     historical_icp_values: list[str] = field(default_factory=list)
     retained_urls: list[str] = field(default_factory=list)
     current_icp_check_complete: bool = False
+    current_icp_conflict: bool = False
 
 
 @dataclass

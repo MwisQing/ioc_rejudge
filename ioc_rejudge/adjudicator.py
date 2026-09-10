@@ -1,13 +1,18 @@
 """Judgment tree - A-F evidence to verdict."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import re
 from urllib.parse import urlsplit
 
 from ioc_rejudge.config import Config
-from ioc_rejudge.models import IocDossier, Verdict, Conclusion
+from ioc_rejudge.models import (
+    Conclusion,
+    EvidenceStrength,
+    IocDossier,
+    Verdict,
+)
 from ioc_rejudge.evidence import _is_strong_a, _is_strong_e, is_malicious_sample
 from ioc_rejudge.normalize import coerce_level
-from ioc_rejudge.parser import parse_time
+from ioc_rejudge.parser import is_recent, is_unexpired, normalize_datetime
 
 
 _DISPOSITION_BY_CONCLUSION = {
@@ -41,11 +46,21 @@ def _has_meaningful_icp(dossier: IocDossier) -> bool:
     return any(_is_meaningful_text(value) for value in historical)
 
 
-def _has_expired_whois(dossier: IocDossier) -> bool:
+def _evaluation_now(now: datetime | None = None) -> datetime:
+    candidate = now if now is not None else datetime.now(timezone.utc)
+    normalized = normalize_datetime(candidate)
+    if normalized is None:
+        raise TypeError("now must be a valid datetime")
+    return normalized
+
+
+def _has_expired_whois(
+    dossier: IocDossier, *, now: datetime | None = None
+) -> bool:
     if not isinstance(dossier.whois, dict):
         return False
-    expires = parse_time(dossier.whois.get("expiresDate"))
-    return expires is not None and expires.date() < datetime.now().date()
+    expires = normalize_datetime(dossier.whois.get("expiresDate"))
+    return expires is not None and not is_unexpired(expires, _evaluation_now(now))
 
 
 def _has_historical_or_phishing_url_evidence(dossier: IocDossier) -> bool:
@@ -71,7 +86,9 @@ def _has_historical_or_phishing_url_evidence(dossier: IocDossier) -> bool:
     return False
 
 
-def _is_gray_domain_candidate(dossier: IocDossier, config: Config) -> bool:
+def _is_gray_domain_candidate(
+    dossier: IocDossier, config: Config, *, now: datetime | None = None
+) -> bool:
     if dossier.ioc_type != "domain":
         return False
 
@@ -81,7 +98,7 @@ def _is_gray_domain_candidate(dossier: IocDossier, config: Config) -> bool:
     if not all(_is_meaningful_text(url) for url in retained_urls):
         return False
 
-    if not _has_expired_whois(dossier) or dossier.evidence_b:
+    if not _has_expired_whois(dossier, now=now) or dossier.evidence_b:
         return False
 
     hash_entries = dossier.hash_entries
@@ -199,7 +216,12 @@ def _has_change_marker(field: str, detail: str, tags: list[str]) -> bool:
     return False
 
 
-def _has_threat_residue(dossier: IocDossier, config: Config) -> bool:
+def _has_threat_residue(
+    dossier: IocDossier,
+    config: Config,
+    *,
+    now: datetime | None = None,
+) -> bool:
     """Check for unresolved threat residue that blocks automatic 误报.
 
     Returns True when threat signals exist that cannot be dismissed
@@ -208,6 +230,7 @@ def _has_threat_residue(dossier: IocDossier, config: Config) -> bool:
     hml = config.historical_malicious_level
     hash_ml = config.hash_malicious_level
     window = config.activity_window_days
+    evaluation_now = _evaluation_now(now)
 
     # Strong or suspicious D evidence from profile observations
     for e in dossier.evidence_d:
@@ -232,8 +255,7 @@ def _has_threat_residue(dossier: IocDossier, config: Config) -> bool:
     # Flint last_seen recent with related domains
     flint_last = dossier.flint.get("last_seen", "")
     if flint_last and (dossier.relate_ip_domain_entries or dossier.dtree_entries):
-        t = parse_time(str(flint_last))
-        if t and t >= datetime.now() - timedelta(days=window):
+        if is_recent(flint_last, evaluation_now, timedelta(days=window)):
             return True
 
     # Strong source exists but A evidence did not form
@@ -324,17 +346,20 @@ def _has_evidence_field(dossier: IocDossier, field: str) -> bool:
 
 
 def _authoritative_context_is_expired_false_positive(
-    dossier: IocDossier, config: Config
+    dossier: IocDossier,
+    config: Config,
+    *,
+    now: datetime | None = None,
 ) -> bool:
     """Allow keyword evidence to expire only under a strict normal closure."""
     if dossier.evidence_b:
         return False
-    if not _has_expired_whois(dossier):
+    if not _has_expired_whois(dossier, now=now):
         return False
     return (
         _has_normal_business_closure(dossier)
         and _has_asset_change_candidate(dossier)
-        and not _has_threat_residue(dossier, config)
+        and not _has_threat_residue(dossier, config, now=now)
     )
 
 
@@ -357,8 +382,60 @@ def _authoritative_black_verdict(
     )
 
 
-def adjudicate(dossier: IocDossier, config: Config | None = None) -> Verdict:
+def _has_icp_conflict_black_exception(dossier: IocDossier) -> bool:
+    for evidence in dossier.evidence_a:
+        if evidence.field in {"authoritative_context_keyword", "operator_clue_group"}:
+            return True
+        if (
+            evidence.strength == EvidenceStrength.STRONG
+            and {"direct", "hash"}.issubset(set(evidence.tags))
+        ):
+            return True
+    return False
+
+
+def _adjudicate_current_icp_conflict(dossier: IocDossier) -> Verdict:
+    if _has_icp_conflict_black_exception(dossier):
+        conclusion = (
+            Conclusion.ALIVE_VALID if dossier.evidence_b
+            else Conclusion.INACTIVE_VALID
+        )
+        return _make_verdict(
+            dossier,
+            conclusion,
+            "恶意/业务身份冲突",
+            "近一年活跃" if dossier.evidence_b else "历史有效",
+            "高",
+            "必看",
+            reason=(
+                "判定为黑：存在当前ICP正负冲突，但强恶意证据优先，"
+                f"保留黑结论，同时必须人工复核身份冲突。结论：{conclusion.value}。"
+            ),
+        )
+    return _make_verdict(
+        dossier,
+        Conclusion.PENDING_REVIEW,
+        "恶意/业务身份冲突",
+        "状态不确定",
+        "中",
+        "必看",
+        reason=(
+            "判定为待复核：存在当前ICP正负冲突，恶意证据与业务身份信号"
+            "不能自动互相覆盖，必须人工确认。"
+        ),
+    )
+
+
+def adjudicate(
+    dossier: IocDossier,
+    config: Config | None = None,
+    *,
+    now: datetime | None = None,
+) -> Verdict:
     config = config or Config()
+    evaluation_now = _evaluation_now(now)
+    if dossier.current_icp_conflict is True:
+        return _adjudicate_current_icp_conflict(dossier)
     has_a = bool(dossier.evidence_a)
     has_b = bool(dossier.evidence_b)
     has_c = bool(dossier.evidence_c)
@@ -375,7 +452,9 @@ def adjudicate(dossier: IocDossier, config: Config | None = None) -> Verdict:
             item for item in dossier.evidence_a
             if item.field == "authoritative_context_keyword"
         )
-        if _authoritative_context_is_expired_false_positive(dossier, config):
+        if _authoritative_context_is_expired_false_positive(
+            dossier, config, now=evaluation_now
+        ):
             return _make_verdict(
                 dossier,
                 Conclusion.FALSE_POSITIVE,
@@ -405,7 +484,7 @@ def adjudicate(dossier: IocDossier, config: Config | None = None) -> Verdict:
         _has_evidence_field(dossier, "operator_confirmed_malicious_context")
         and _has_normal_business_closure(dossier)
         and _has_asset_change_candidate(dossier)
-        and not _has_threat_residue(dossier, config)
+        and not _has_threat_residue(dossier, config, now=evaluation_now)
     ):
         return _make_verdict(
             dossier,
@@ -450,7 +529,7 @@ def adjudicate(dossier: IocDossier, config: Config | None = None) -> Verdict:
             "判定为黑：运营人员来源包含明确恶意性质上下文，且当前无未解决ICP备案冲突。",
         )
 
-    if _is_gray_domain_candidate(dossier, config):
+    if _is_gray_domain_candidate(dossier, config, now=evaluation_now):
         verdict = _make_verdict(
             dossier,
             Conclusion.GRAY,
@@ -480,7 +559,7 @@ def adjudicate(dossier: IocDossier, config: Config | None = None) -> Verdict:
     strong_e = _is_strong_e(dossier)
     strong_conflict = strong_a and strong_e
     weak_conflict = has_a and has_e and not strong_conflict
-    threat_residue = _has_threat_residue(dossier, config)
+    threat_residue = _has_threat_residue(dossier, config, now=evaluation_now)
 
     if has_a:
         if has_b:
@@ -584,7 +663,14 @@ def adjudicate(dossier: IocDossier, config: Config | None = None) -> Verdict:
         dossier, Conclusion.PENDING_REVIEW,
         "间接关联" if has_d else "证据不足",
         "无实质活动", "低",
-        "抽检" if has_d else "必看",
+        "抽检" if has_d and not threat_residue else "必看",
+        reason=(
+            "判定为待复核：存在未解决的威胁残留，但尚未形成直接或历史恶意闭环，需要人工核实。"
+            if threat_residue else
+            "判定为待复核：仅有间接关联或通信信息，尚未形成直接或历史恶意闭环，需要进一步核实。"
+            if has_d else
+            "判定为待复核：缺少足以判断恶意性质的证据，需要补充资料后复核。"
+        ),
     )
 
 

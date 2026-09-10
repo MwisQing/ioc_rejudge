@@ -1,6 +1,6 @@
 # 架构说明
 
-本文描述 IOC Rejudge CLI `2.5.0` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
+本文描述 IOC Rejudge CLI `2.6.0` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
 
 ## 1. 总体数据流
 
@@ -68,6 +68,7 @@ strength, payload, raw_ref
 - `observed_at`：业务数据自身的观察时间。
 - 样本 `last_seen`、pDNS 活动时间等才可能成为存活事实。
 - 请求时间、`updatetime` 和 cache 写入时间不自动证明 IOC 活跃。
+- 比较前统一转为 naive UTC；无时区输入保留既有墙上时间，带 offset 的 ISO-8601 输入换算为 UTC。无效值逐项跳过，不能满足 `recent`/`fresh`；未来值也不能满足这两个条件。
 
 ### 2.3 Verdict
 
@@ -88,11 +89,13 @@ strength, payload, raw_ref
 | 模块 | 职责 |
 |---|---|
 | `inputs.py` | 裸 IOC/快照识别、编码处理、结构校验、去重和错误记录 |
-| `parser.py` | 兼容 JSONL 快照和时间解析 |
+| `parser.py` | 兼容 JSONL 快照、ISO/legacy 时间解析、UTC 归一化和统一 freshness/recent 比较 |
 | `normalize.py` | IOC 规范化、记录时序排序和 dossier 聚合 |
 | `models.py` | Evidence、RecordSnapshot、IocDossier、Verdict |
 | `observations.py` | IocTarget、Observation、provider/freshness/route/disposition 类型 |
 | `profile.py` | domain、IP、HTTP 和运行时画像 |
+| `business_identity.py` | 画像与证据共用的可信业务字段和网站主体关系校验 |
+| `review_queue.py` | 待复核结果队列与人工标签的本地 JSONL 辅助读写；当前不作为 CLI 子命令暴露 |
 | `evidence.py` | A-F 证据、样本语义、APT 组合和 URL 作用范围 |
 | `routing.py` | 可靠 DGA-only 分类与分类失败降级 |
 | `dga.py` | DGA facts 和有序硬规则裁判 |
@@ -170,6 +173,7 @@ ICP 默认限制为 8 workers 和 8 requests/second。配置层目前只校验�
 - K01 批量请求在为 per-IOC query key 写入缓存时保留响应包络，但 `data` 只保留当前 IOC 节点；离线回放与在线解析使用同一响应契约。
 - 坏 cache 行不会阻断其他有效行。
 - stale 结果可用于审计，但不能伪装成新鲜白证据。
+- cache freshness 使用包含边界的 `0 <= now - fetched_at <= ttl`；精确 TTL 仍算 fresh，未来或无效 `fetched_at` 按 stale/miss 处理，aware/naive 输入可安全混用。
 - ICP cache key 只含 endpoint/host；写入 cache 和 `run_dir/raw` 前按当前 `uc`/`key` 值递归脱敏，避免服务端回显值进入 raw 或错误文本。
 - `--refresh` 绕过 cache。
 - `--offline` 只能读取 sidecar/cache，不允许网络回退。
@@ -187,6 +191,8 @@ Sidecar 和自定义非 live provider 继续按原 provider 协议执行，不�
 ### 4.5 研判结果缓存
 
 `AdjudicationResultCache` 位于 provider 缓存根目录的 `.cache_adjudication_results/cache_YYYY-MM-DD.jsonl`，默认 TTL 7 天。每行保存规范化 IOC、配置指纹、研判时间和完整 verdict 输出。
+
+当前裁判缓存契约为 `7`；本轮证据与 ICP 规则修复使旧契约结果失效，原始 provider 缓存仍可用于重新研判。
 
 配置指纹覆盖 IOC 规范化形态、输入快照记录、规则/阈值、provider 顺序、公开 settings、查询选项、sidecar 内容摘要、凭据身份摘要和 provider 原始缓存分片存在状态；凭据原文不序列化、不落盘。只有新鲜且指纹完全相同的结果才会命中，命中目标在 provider 收集前被移出 pending 集合。删除或清空 provider 原始缓存分片会造成 `fingerprint_mismatch`，使完整结果重新采集；采集完成后使用最新缓存状态写入结果指纹。部分命中时只为 miss 目标执行 provider pipeline，最终按输入顺序归并。provider `error` 或必要来源缺失的结果不落盘。`--refresh` 强制全部 miss；坏行只进入 `result_cache_errors`，不阻断其他有效结果。
 
@@ -207,7 +213,7 @@ pipeline 在每个收集阶段使用有界线程池并发不同 provider。并�
 - WHOIS、HTTP、ICP、官网、标题和解析 IP 不跨记录回填。
 - WHOIS 字典不跨记录拼字段。
 - 旧 ICP 保存在 `historical_icp_values`，只用于冲突审计，不冒充当前 ICP。
-- provider merge 完成后，只有单条 Observation 和该 IOC 的 provider 聚合状态都为 success，且 Observation 非 stale，才应用到 `current_icp_check_complete` 与当前备案字段；negative 会清空当前备案并完成检查，聚合 error/disabled 或 stale 不覆盖当前状态。该门同时约束标准路由和 DGA 当前 ICP 白信号。
+- provider merge 完成后，统一聚合 `icp/icp_record/icp_registration` 类型且 freshness 为 `fresh` 的 Observation；单条状态与该 IOC 的 provider 聚合状态均须为 success，`current` 须为布尔值，positive 须含非空备案值。仅 positive 时确定性选择备案值并完成检查；仅 negative 时清空当前备案并完成检查；两者并存时设置 `current_icp_conflict`、保留原字段并标记检查未完成。错误、禁用、未知 freshness 和 stale 不能提供当前事实，输入顺序不决定冲突结果。标准路由与 DGA 使用同一聚合边界，历史 IOC Info 备案不提供 DGA 当前 ICP 白信号。
 - RecordSnapshot 保留原始 index、时间、来源和 raw 记录。
 - hash、family、source 等历史恶意集合仍可跨记录聚合。
 
@@ -220,24 +226,32 @@ pipeline 在每个收集阶段使用有界线程池并发不同 provider。并�
 DGA 规则按固定顺序执行：
 
 1. 关联恶意样本优先，按可比较的样本时间区分存活/失活。
-2. 样本查询不完整或不新鲜时进入待复核。
-3. 无恶意样本且当前 ICP 存在时判误报。
-4. 无恶意样本且 WHOIS 未过期时判误报。
-5. 无恶意样本且 pDNS 在配置窗口内时判误报。
-6. 查询完整且无白证据时保留失活有效。
+2. 当前 ICP 正负冲突时进入待复核，不能由生命周期白信号覆盖；若第 1 条已保留黑结论，也标记必须复核。
+3. 样本查询不完整或不新鲜时进入待复核。
+4. 无恶意样本且当前 ICP 存在时判误报。
+5. 无恶意样本且 WHOIS 未过期时判误报。
+6. 无恶意样本且 pDNS 在配置窗口内时判误报。
+7. 查询完整且无白证据时保留失活有效。
 
-`not-a-virus`、低 level 和显式零 confidence 不算关联恶意样本。混合 aware/naive 时间逐项比较，单个不可比较时间只跳过自身。
+`not-a-virus`、低 level 和显式零 confidence 不算关联恶意样本。混合 aware/naive 时间逐项按 UTC 比较，单个不可比较时间只跳过自身；未来样本或 pDNS 时间不能伪造近期活动。
 
 ### 7.2 普通路由
 
 - clue-group evidence 无条件 standard block。普通 operator source + 明确恶意 context 必须由达到 `historical_malicious_level` 的同一条记录承载，不能借用其他记录的高 level；当前/历史 ICP 未解决时进入待复核。
 - 低于恶意等级门槛的 domain 不形成普通 A/C 黑证据；若存在达到 `relate_url_malicious_level` 的具体 URL 且无合格恶意样本，则 domain 降灰并优先保留带 path 的 URL。
 - 高等级只提供黑证据准入，不锁死结论；强业务闭环、显式结构化资产变化与无威胁残留同时成立时允许输出误报。
+- 当前 ICP 正负冲突先于白、灰出口处理；直接恶意样本强 A、权威上下文关键词或 clue-group 可保留黑结论并标记必须复核，其余冲突进入待复核。
+- C 级历史闭环不能只靠 DNS/HTTP/sample 等中性文本或强来源加聚合字段；样本须来自同一条达到等级门槛且关联目标的记录，并通过统一恶意样本检查。恶意准入数值必须有限且可转换。
+- `business_identity.trusted_business_identity()` 同时约束画像与 E 证据：配置字段全部非空，至少一个网站字段锚定目标 host；仅允许 host 相同或差一个 `www.` 前缀，不推断任意子域组织关系。备案号可辅助但不能独立锚定，其他原始业务值可保留为弱证据。
 - WHOIS 未过期或近期 pDNS 不独立判白。
 - 英文恶意 indicator 使用字母数字词法边界；中文保持包含匹配。
-- 公开 APT 只在结构化条件闭环时形成历史恶意证据。
+- 公开 APT 只在结构化条件闭环时形成历史恶意证据：记录主体的规范化 IOC 和类型必须匹配目标，阈值字段须为有限数值，引用须为 host/端口有效且无 userinfo 的 HTTP(S) URL。结构化记录承担 IOC 关联，外部报告 host 无需等于 IOC，正文无需重复 IOC；不声称联网核验正文。
 - `relate_url` 仅对结构、host 和端口均有效的 HTTP(S) URL 建立精确作用范围。
 - 灰包括既有的历史 URL/失活域名分支，以及低等级但具体恶意 URL 仍需保留的正常服务滥用分支；弱白证据本身不能单独触发灰。
+
+### 7.3 时间比较边界
+
+`parser.py` 提供 `normalize_datetime`、`latest_datetime`、`is_recent`、`is_fresh` 和 `is_unexpired`，供 normalize、profile、evidence、adjudicator、pipeline、provider cache 和 result cache 共享。近期/新鲜判断均拒绝未来值、无效值和负窗口，精确窗口端点保留。
 
 ## 8. 输出与诊断
 
@@ -264,7 +278,7 @@ diagnostics 记录解析失败、无效 IOC、provider 状态/异常、必要来
 - `python -m ioc_rejudge ui` 只监听 `127.0.0.1` 且不可配置为其他地址；页面与 API 请求均需携带进程级会话令牌并通过 Host/Origin 校验（防 DNS rebinding 与跨站请求），非 200 响应关闭连接避免 keep-alive 错位。服务拒绝地址复用，端口被占用时回退随机端口，杜绝两个 UI 进程共享同一端口。
 - UI 成功解锁后把口令原子写入 key 同目录的 `passphrase` 文件（POSIX `0o600`，Windows 尽力设置），下次启动自动解锁；`/api/lock` 同时清内存和该文件。页面响应 `Cache-Control: no-store`，口令不得进入日志、HTML 或 status 的其它字段。
 - bundle 目录按 `bundle_id` 存储并保留最近 20 个，restore 按 bundle_id 直定位、sha256 兜底匹配本地 manifest。UI 不执行研判 pipeline、不提供关闭严格模式的入口。
-- `POST /api/lookup` 只构造 `ioc_info` provider，默认 `refresh=False`、TTL 7 天，与研判 CLI 共用 `--cache-dir`（默认 `.\provider-cache`）。有凭据时 cache miss 才联网；无凭据时改为 offline 只读缓存，全部 miss 则 4xx 且不得联网。lookup 不要求 key 已解锁；create/restore 仍要求解锁。
+- `POST /api/lookup` 只构造 `ioc_info` provider，默认 `refresh=False`、TTL 7 天，与研判 CLI 共用 `--cache-dir`（默认 `.\provider-cache`）。进程内复用该 provider 及缓存索引；有凭据时 cache miss 才联网（连接 5 秒、读取 15 秒，不重试、不拉 Go worker），live 失败可回退陈旧缓存。无凭据时改为 offline 只读缓存，全部 miss 则 4xx 且不得联网。lookup 不要求 key 已解锁，且不占用 create/restore 的状态锁；create/restore 仍要求解锁。
 
 ## 10. 兼容性与限制
 

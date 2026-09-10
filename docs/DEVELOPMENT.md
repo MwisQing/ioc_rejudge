@@ -1,6 +1,6 @@
 # 开发与验证
 
-本文是 IOC Rejudge CLI `2.5.0` 的开发准入说明。发布脚本只可在用户明确授权后初始化、提交、打 tag 或推送。
+本文是 IOC Rejudge CLI `2.6.0` 的开发准入说明。发布脚本只可在用户明确授权后初始化、提交、打 tag 或推送。
 
 ## 1. 开发前阅读
 
@@ -14,7 +14,7 @@
 
 ## 2. 环境
 
-- 当前版本：`2.5.0`
+- 当前版本：`2.6.0`
 - 已验证 Python：3.12
 - 运行依赖：`openpyxl`、`requests`、`cryptography`
 - 开发依赖：pytest
@@ -37,7 +37,7 @@ python -c "import openpyxl, pytest, requests; print('dependencies ok')"
 
 ## 3. 当前基线
 
-截至 2026-09-02：
+截至 2026-09-10：
 
 ```powershell
 python -m pytest tests -q
@@ -46,13 +46,15 @@ python -m pytest tests -q
 结果：
 
 ```text
-751 passed, 1 skipped
+866 passed, 1 skipped
 ```
 
 其中包括：
 
 - 旧快照兼容、裸 IOC 输入和 CLI 行为。
 - 时序聚合、证据边界、DGA/普通路由和人工校准。
+- legacy/ISO-8601 aware/naive 时间归一化、recent/fresh 精确边界、未来/无效/负 Unix 时间防护和固定评估时刻传递。
+- 中性上下文与同记录历史样本、非有限数值、APT 记录主体与报告 URL、可信业务网站关联、当前 ICP 冲突及两条路由的输入顺序一致性。
 - 六个默认 live provider、按 IOC/证据需要分流的生命周期查询、sidecar、分接口日期缓存、transport、factory 和分阶段并发 pipeline。
 - 完整研判结果默认 7 天缓存、配置指纹失效、partial hit、refresh 绕过、坏行恢复和离线复用。
 - online mock 到无凭据 offline exact replay。
@@ -92,6 +94,12 @@ python -m pytest tests/test_inputs.py tests/test_parser.py tests/test_normalize.
 python -m pytest tests/test_evidence.py tests/test_boundary.py tests/test_dga.py tests/test_routing.py tests/test_adjudicator.py tests/test_profile_adjudication.py -q
 ```
 
+### 研判正确性回归
+
+```powershell
+python -m pytest tests/test_historical_context_regressions.py tests/test_icp_conflict_regressions.py tests/test_business_identity.py tests/test_reference_identity_regressions.py tests/test_numeric_evidence_regressions.py tests/test_time_boundaries.py tests/test_review_queue.py tests/test_manual_calibration.py -q
+```
+
 ### Provider 基础设施
 
 ```powershell
@@ -117,7 +125,7 @@ python pack.py --check
 python -m pytest tests/test_ui_server.py -q
 ```
 
-专项使用真实回环 HTTP 服务与 urllib/http.client 客户端，覆盖安全门、key 生命周期（含短口令与 passphrase 文件自动解锁）、IOC Info lookup（注入 FakeTransport 的 cache hit/miss、无凭据只读缓存、拒绝行、lookup JSONL 可 create）、可折叠 JSON 文案、「脱敏并复制」、create/restore/scan 回环与 bundle 存储策略；页面断言零外部资源引用。
+专项使用真实回环 HTTP 服务与 urllib/http.client 客户端，覆盖安全门、key 生命周期（含短口令与 passphrase 文件自动解锁）、IOC Info lookup（注入 FakeTransport 的 cache hit/miss、无凭据只读缓存、拒绝行、lookup JSONL 可 create、live 失败回退陈旧缓存、查询不阻塞 status）、可折叠 JSON 文案、「脱敏并复制」、create/restore/scan 回环与 bundle 存储策略；页面断言零外部资源引用。
 
 修改共享模型或跨模块契约时，专项测试不能替代全量测试。
 
@@ -176,7 +184,10 @@ Provider 必须：
 - 保留接口事实时间，不用请求时间替代。
 - `fetched_at` 与 `observed_at` 不可混用。
 - stale 数据仅供审计，不能满足自动白所需的新鲜事实。
-- 对脏时间和 aware/naive 混合逐条防御，不能因一个坏值丢掉其他有效事实。
+- 时间输入统一经过 `parser.py`：legacy 日期/时间和 ISO-8601 offset 输入先转为可比较的 naive UTC；无时区输入保留既有墙上时间。
+- `is_recent`/`is_fresh` 的边界为 `0 <= now - value <= window`，精确窗口端点有效；未来、缺失、无效时间以及负窗口一律不满足条件。
+- 对脏时间和 aware/naive 混合逐条防御，不能因一个坏值丢掉其他有效事实；provider epoch 解析还必须拒绝负数、NaN、Infinity 和溢出值。
+- pipeline 一次运行使用同一个注入的评估时刻完成证据、裁判和结果序列化，避免边界值在相邻调用间漂移。
 
 ## 8. 业务规则约束
 
@@ -188,6 +199,9 @@ Provider 必须：
 - DGA 自动白必须先确认恶意样本查询完整且无关联样本。
 - 非 DGA ICP 保持人工门，不复用 DGA 白规则。
 - URL 证据不自动扩张为 domain 证据。
+- 中性通信描述不能独立形成历史恶意闭环；C 级样本必须由同一条合格记录提供，NaN、Infinity 等非法阈值不能提升恶意证据。
+- 当前 ICP 只取类型明确、fresh 且单条和聚合状态均为 success 的事实；正负并存时阻止白、灰出口，强恶意黑结论仍需标记必须复核。交换 Observation 顺序必须得到相同结论和原因。
+- 可信业务身份在画像与证据两条入口共用网站关系校验；APT 记录主体要匹配目标，外部报告链接可指向其他域名，不要求正文重复 IOC。
 
 当前 11 类人工校准目标：
 
@@ -206,6 +220,8 @@ Provider 必须：
 迁移审计使用匿名 before/after verdict 与 synthetic/mock Observation 调用 `compare_verdicts()`，报告固定分组：黑白互转、转灰、转复核、only-before/only-after，以及 ICP positive、negative、unresolved 成员；禁止真实 ICP 请求。
 
 2026-07-26 ICP 返修使用合成 `.invalid` 成员复核聚合错误边界：黑转白 0、白转黑 1、转灰 0、转复核 1、only-before/only-after 均为 0。`stable-clue.invalid` 属于 clue matches；历史 ICP 分组为 positive=`stable-positive.invalid`、negative=`stable-negative.invalid`、unresolved=`aggregate-error-standard.invalid,aggregate-error-dga.invalid`。结论迁移由 `compare_verdicts()` 生成，ICP 分组来自同次 synthetic Observation 清单，全程不构造 live provider。
+
+2026-09-08 正确性修复使用相同 14 个合成场景生成 before/after：黑转白 0、白转黑 1、转灰 0、转复核 7、成员变化 0。唯一白转黑来自 DGA 历史备案不再冒充当前备案；转复核来自中性上下文和当前 ICP 冲突。原始 10,856 行脱敏快照不在当前工作树，因此本次没有完成该数据集的全量迁移，不能据此推算实际误判率。内部逐项记录见 `docs/superpowers/plans/2026-09-08-adjudication-validation.json`；人工校准与当前全量测试通过。
 
 ## 9. 输入和错误隔离
 

@@ -1,19 +1,19 @@
 # IOC Rejudge CLI
 
-IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.5.0` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。
+IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.6.0` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。
 
 ## 当前状态
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.5.0` |
+| 版本 | `2.6.0` |
 | Python | 已用 Python 3.12 验证 |
 | 输入 | 旧 JSONL 快照、裸 IOC 文件、重复 `--ioc` |
 | IOC 类型 | domain、URL、domain:port、IP、IP:port |
 | 结论 | `存活有效`、`失活有效`、`灰`、`误报`、`待复核` |
 | live provider | K01、IOC Info、F-Dark、WHOIS、pDNS、ICP；按 IOC 类型和研判需要分流 |
 | 本地 provider | 任意 JSONL sidecar；可用于 ICP Observation 回放 |
-| 当前测试 | `727 passed, 1 skipped` |
+| 当前测试 | `866 passed, 1 skipped`（2026-09-10） |
 
 ICP provider 已按固定响应契约实现并通过 mock/cache 验收；真实 endpoint、认证和生产响应仍需在具备授权凭据的环境中单独确认。
 
@@ -60,10 +60,10 @@ python -m ioc_rejudge share restore `
 python -m ioc_rejudge ui
 ```
 
-浏览器会自动打开带会话令牌的本地页面（默认端口 8731，被占用时自动换随机端口）。可用 `--port`、`--key-file`、`--bundle-dir`、`--cache-dir`、`--credentials-file`、`--no-browser` 调整。默认缓存目录与研判 CLI 相同（`.\provider-cache`），便于命中本机已有的 7 天 IOC Info 缓存。页面操作对应完整流程：
+浏览器会自动打开带会话令牌的本地页面（默认端口 8731，被占用时自动换随机端口）。可用 `--port`、`--key-file`、`--bundle-dir`、`--cache-dir`、`--credentials-file`、`--no-browser` 调整。默认缓存目录与研判 CLI 相同（`.\provider-cache`）。当前目录存在 `credentials.local.json` 时会自动用来查 IOC Info，否则读本终端环境变量；也可显式 `--credentials-file`。页面操作对应完整流程：
 
 1. 首次使用输入非空口令并勾选“生成新 key”（默认 `~\.ioc-share\key.json`）。成功后口令保存在 key 同目录的 `passphrase` 文件，下次启动自动解锁；点“清除口令”会同时清内存和该文件。
-2. “查询 IOC Info”：粘贴每行一个 IOC，或填本机文件路径。默认走 7 天缓存，没有缓存再请求接口；无凭据时只读缓存。查询结果是明文，页面可展开/合拢查看，不要直接发给云端。
+2. “查询 IOC Info”：粘贴每行一个 IOC，或填本机文件路径。默认走 7 天缓存，没有缓存再请求接口；接口失败时可以用本机更旧的缓存。无凭据时只读缓存。查询结果是明文，页面可展开/合拢查看，不要直接发给云端。若页面提示查询超时，到启动 UI 的窗口按 Ctrl+C 停掉再启动，不要只刷新网页。
 3. 点“脱敏并复制”：生成一行一个脱敏 JSON 并写入剪贴板（本机仍保存 bundle，便于以后还原）。“复制明文（未脱敏，勿发给云端）”只留给本机核对。
 4. 把剪贴板里的脱敏 JSON 发给云端 AI；如需对方改完再还原，让返回行带上页面上的 `bundle_id`，且不要改 `ss1:` token。
 5. “还原 AI 返回”：粘贴云端返回的 JSONL，自动匹配本地 bundle 并还原。已有研判 JSONL 时仍可用“生成脱敏包”面板。
@@ -238,6 +238,8 @@ K01、IOC Info、F-Dark、WHOIS、pDNS 默认缓存 7 天，ICP 默认缓存 30 
 
 结果缓存 TTL 也支持 `ttl_hours` 或 `ttl_seconds`。过期、坏行或指纹不一致时重新研判；provider `error` 或必要来源缺失的未完成结果不写入缓存，下一次继续重试；`--refresh` 会同时绕过 provider 缓存和研判结果缓存。离线运行可以复用兼容的研判结果缓存。
 
+本轮规则修复会使旧研判结果缓存自动失效；已有 provider 原始响应仍按各自缓存策略复用，重新计算结论。
+
 请求规划先调用 K01、IOC Info、F-Dark 完成分类与恶意样本发现，再按规则调用生命周期接口：domain/URL/domain:port 进行当前 ICP 验证；只有 DGA 路由再请求 WHOIS 和 pDNS，普通路由仅在历史 URL/钓鱼证据可能进入过期域名灰分支时请求 WHOIS；IP/IP:port 跳过 ICP、WHOIS 和 pDNS。
 
 ICP 查询按 host 去重，凭据来自显式凭证文件或兼容环境变量，不读取 `token_icp.txt`。缺凭据在线运行和无缓存 offline miss 都产生零 live ICP 请求。响应写入 cache 或 `run_dir/raw` 前会按当前 ICP 凭据值再次脱敏，避免服务端回显认证值。
@@ -261,7 +263,7 @@ python -m ioc_rejudge `
 ```
 
 回放必须使用与在线运行一致的 provider 选择、非密钥查询配置和 cache。离线传输为 fail-closed，不会悄悄访问网络。
-ICP 的 fresh 成功空结果是 typed negative Observation（`current=false`），不是 `no_data`；offline 可无凭据读取 fresh/stale cache，stale 仅供审计。只有 Observation 和对应 provider 聚合状态都为 success 时，当前 ICP 才能完成检查；聚合 error/disabled 始终保守处理。
+ICP 的 fresh 成功空结果是 typed negative Observation（`current=false`），不是 `no_data`；offline 可无凭据读取 fresh/stale cache，stale 仅供审计。当前 ICP 只采纳类型明确、fresh、Observation 与对应 provider 聚合状态均为 success 的事实，`current` 必须为布尔值，positive 还需非空备案值。历史 IOC Info 备案不替代当前检查；同时收到有效正负事实时保留冲突并进入复核，结论不随返回顺序改变。已有直接恶意样本等强证据仍可保留黑结论，并提示必须复核。
 
 ### 运行可见性
 
@@ -286,6 +288,8 @@ python -m ioc_rejudge `
 系统不使用证据打分或平均。强弱证据按明确优先级组合：
 
 - `updatetime` 是情报记录时间，不是活跃证据。
+- 时间比较统一经过 `parser.py` 的 UTC 归一化：无时区时间保留既有墙上时间，带 offset 的 ISO-8601 时间先换算为 UTC；无效时间逐项忽略，不会让整批比较失败。
+- `is_recent` 和 `is_fresh` 都使用包含边界的 `0 <= now - value <= window`；未来时间、缺失时间和无效时间不能满足近期或新鲜条件。`fetched_at` 只决定缓存新鲜度，`observed_at`/样本时间才可能参与业务活跃判断。
 - `level` 先决定普通情报能否进入黑证据裁判，默认门槛为 40；达到门槛仍不等于最终必黑，也不直接证明当前存活。
 - `失活有效` 仍是黑情报，处置为 `block`。
 - provider `error`、`disabled` 与 `no_data` 严格区分。
@@ -294,15 +298,20 @@ python -m ioc_rejudge `
 DGA 只有在可靠 K01 分类精确为 DGA-only 时进入专用路由：
 
 1. 有关联恶意样本时不能判白，并按样本活动时间区分存活/失活。
-2. 必要样本查询未完整或不新鲜时进入 `待复核`。
-3. 无关联恶意样本时，当前 ICP、WHOIS 未过期或近 30 天 pDNS 任一成立即可判 `误报`。
-4. 白证据均不成立且查询完整时保留为 `失活有效`。
+2. 当前 ICP 正负事实冲突时进入 `待复核`，WHOIS/pDNS 白信号不能覆盖该冲突。
+3. 必要样本查询未完整或不新鲜时进入 `待复核`。
+4. 无关联恶意样本且无当前 ICP 冲突时，当前 ICP、WHOIS 未过期或近 30 天 pDNS 任一成立即可判 `误报`。
+5. 白证据均不成立且查询完整时保留为 `失活有效`。
 
 普通 IOC 规则包括：
 
 - 非 DGA domain 的 clue-group 证据无条件 standard block；其他 operator malicious context 必须由达到恶意等级门槛的同一条记录承载，且仅在当前 ICP 冲突已解决时 block。
 - 低于恶意等级门槛的 domain 不因 `manual`、强来源或上下文恶意词自动升黑；若仍有达到 URL 门槛的具体恶意 URL，则 domain 输出 `灰` 并保留 path 级 URL。
 - 达到 40/50/60/70 等级只表示进入黑证据裁判；当强正常业务闭环、明确结构化资产变化和无威胁残留同时成立时，仍可判 `误报`。
+- DNS 查询、HTTP 连接、sample 等中性描述不再单独建立历史恶意闭环；C 级样本闭环必须由达到等级门槛且关联当前 IOC 的同一条记录提供合格恶意样本。
+- 可信商业身份要求配置中的字段齐全，并有网站 host 与目标一致（允许仅相差 `www.`）；无关官网、单独备案号或标题不能形成强业务身份闭环。
+- 公开 APT 证据要求结构化记录主体匹配当前 IOC、报告链接有效；外部报告域名无需等于 IOC，这不等于已联网验证报告正文。
+- 非有限威胁数值（如 NaN、Infinity）和无法转换的极大数值不参与等级或样本准入判断。
 - WHOIS 未过期或近期 pDNS 不足以单独把普通 IOC 判白。
 - `relate_url` 只证明有效 HTTP(S) URL 作用范围，不自动扩大为 domain 强证据。
 - `灰` 表示当前范围不继续拦截但也不加入白名单，可通过 `retained_urls` 保留具体 URL。

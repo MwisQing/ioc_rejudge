@@ -66,6 +66,7 @@
     background: var(--danger-bg); color: var(--danger-ink);
     border: 1px solid #f1b8b8; border-radius: 8px; padding: 10px 14px;
     margin-top: 16px; white-space: pre-wrap;
+    position: sticky; top: 8px; z-index: 20;
   }
   .result { margin-top: 12px; }
   .result[hidden], .error[hidden], .flash[hidden] { display: none; }
@@ -128,6 +129,7 @@
     <span style="margin-left: auto;"></span>
     <ul class="bundles" id="status-bundles"></ul>
     <button class="secondary" type="button" id="lock-btn">清除口令</button>
+    <span class="flash" id="lock-flash" hidden></span>
   </div>
 </header>
 <main>
@@ -153,7 +155,8 @@
 
   <section class="panel" id="lookup-panel">
     <h2>查询 IOC Info</h2>
-    <p class="hint">丢入 IOC（每行一个）或本机文件；默认用 7 天缓存，没有缓存再走 IOC Info 接口。查询结果是明文，发给云端前请先「脱敏并复制」。</p>
+    <p class="hint">丢入 IOC（每行一个）或本机文件；默认用 7 天缓存，没有缓存再走 IOC Info 接口。查询结果是明文，发给云端前请先「脱敏并复制」。缺凭据时请用 <code>--credentials-file credentials.local.json</code> 启动，或在本终端设置 <code>IOC_INFO_API_KEY</code>。</p>
+    <div class="note" id="lookup-cred-note" hidden>当前没有 IOC Info 凭据：只能读本机 7 天缓存。请关掉本页，在有 credentials.local.json 的目录用 --credentials-file 重新启动。</div>
     <div class="row">
       <label><input type="radio" name="lookup-src" value="paste" checked> 粘贴文本</label>
       <label><input type="radio" name="lookup-src" value="path"> 本机文件路径</label>
@@ -284,12 +287,26 @@ const TOKEN = new URLSearchParams(location.search).get('token') || '';
 const $ = (id) => document.getElementById(id);
 const LONG_STRING = 160;
 
-async function api(path, payload) {
-  const response = await fetch(path + '?token=' + encodeURIComponent(TOKEN), {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(payload || {}),
-  });
+async function api(path, payload, timeoutMs) {
+  const limit = timeoutMs == null ? 45000 : timeoutMs;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), limit);
+  let response;
+  try {
+    response = await fetch(path + '?token=' + encodeURIComponent(TOKEN), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload || {}),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+      throw new Error('查询超时（' + Math.round(limit / 1000) + ' 秒）。请到启动 UI 的黑色窗口按 Ctrl+C 停掉再重新运行，不要只刷新网页。');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   let data = null;
   try { data = await response.json(); } catch (err) { data = null; }
   if (!response.ok) {
@@ -301,8 +318,20 @@ async function api(path, payload) {
   return data;
 }
 
-function showError(message) { const bar = $('error-bar'); bar.textContent = message; bar.hidden = false; }
+function showError(message) {
+  const bar = $('error-bar');
+  bar.textContent = message;
+  bar.hidden = false;
+  if (bar.scrollIntoView) bar.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
 function clearError() { $('error-bar').hidden = true; }
+async function withBusy(button, busyText, work) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = busyText;
+  try { return await work(); }
+  finally { button.disabled = false; button.textContent = original; }
+}
 function flash(id, message) {
   const el = $(id); el.textContent = message; el.hidden = false;
   setTimeout(() => { el.hidden = true; }, 5000);
@@ -541,6 +570,8 @@ async function refreshStatus() {
   } else {
     hint.hidden = true;
   }
+  const credNote = $('lookup-cred-note');
+  if (credNote) credNote.hidden = !!status.ioc_info_enabled;
   const list = $('status-bundles');
   list.textContent = '';
   const bundles = (status.bundles || []).slice(0, 5);
@@ -570,15 +601,41 @@ async function doKey() {
 
 async function doLock() {
   clearError();
-  try { await api('/api/lock', {}); } catch (err) { showError(err.message); }
-  await refreshStatus();
+  const button = $('lock-btn');
+  const typed = ($('key-passphrase').value || '').length > 0;
+  try {
+    const result = await withBusy(button, '清除中…', () => api('/api/lock', {}));
+    $('key-passphrase').value = '';
+    $('key-generate').checked = false;
+    $('key-force').checked = false;
+    await refreshStatus();
+    if (result && result.had_saved_passphrase && !result.passphrase_cleared) {
+      showError('未能删除本机记住的口令文件，请检查 key 同目录的写入权限');
+      return;
+    }
+    if (result && result.had_saved_passphrase) {
+      flash('lock-flash', '已清除本机记住的口令，下次需要重新输入');
+    } else if (result && result.was_unlocked) {
+      flash('lock-flash', '已锁定；本机未保存口令');
+    } else if (typed) {
+      flash('lock-flash', '已清空口令输入框；本机未保存口令');
+    } else {
+      flash('lock-flash', '当前未解锁，也没有本机记住的口令');
+    }
+  } catch (err) {
+    showError(err.message);
+    await refreshStatus();
+  }
 }
 
 async function doLookup() {
   clearError();
+  const button = $('lookup-btn');
   try {
     const payload = collectInput('lookup');
-    const result = await api('/api/lookup', payload);
+    $('lookup-flash').textContent = '正在查询，没有缓存时会走接口，请稍候…';
+    $('lookup-flash').hidden = false;
+    const result = await withBusy(button, '查询中…', () => api('/api/lookup', payload));
     $('lookup-stats').textContent =
       '行数 ' + result.rows +
       ' · 缓存命中 ' + result.cache_hits +
@@ -596,7 +653,10 @@ async function doLookup() {
       $('create-file').hidden = true;
     }
     flash('lookup-flash', '查询完成；发给云端前请先「脱敏并复制」');
-  } catch (err) { showError(err.message); }
+  } catch (err) {
+    $('lookup-flash').hidden = true;
+    showError(err.message);
+  }
 }
 
 async function doSanitizeCopy() {
@@ -607,7 +667,7 @@ async function doSanitizeCopy() {
     const payload = { content: lookupCompactText };
     const namesPath = $('create-names').value.trim();
     if (namesPath) payload.names_path = namesPath;
-    const result = await api('/api/create', payload);
+    const result = await withBusy($('lookup-sanitize'), '脱敏中…', () => api('/api/create', payload));
     applyCreateResult(result);
     const createResult = $('create-result');
     if (createResult && createResult.scrollIntoView) {

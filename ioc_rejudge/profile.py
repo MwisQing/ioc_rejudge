@@ -1,10 +1,11 @@
 """IOC profile extraction - converts raw fields into explainable observations."""
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from ioc_rejudge.business_identity import trusted_business_identity
 from ioc_rejudge.config import Config
 from ioc_rejudge.models import IocDossier, IocProfile, ProfileObservation
 from ioc_rejudge.normalize import coerce_level
-from ioc_rejudge.parser import parse_time
+from ioc_rejudge.parser import is_recent, normalize_datetime
 
 
 def _is_domain(value: str) -> bool:
@@ -30,16 +31,25 @@ def _looks_random(text: str) -> bool:
     return False
 
 
-def extract_profile(dossier: IocDossier, config: Config) -> IocDossier:
+def extract_profile(
+    dossier: IocDossier,
+    config: Config,
+    *,
+    now: datetime | None = None,
+) -> IocDossier:
     """Extract domain, IP, and runtime profile observations from raw fields."""
-    now = datetime.now()
+    evaluation_now = normalize_datetime(
+        now if now is not None else datetime.now(timezone.utc)
+    )
+    if evaluation_now is None:
+        raise TypeError("now must be a valid datetime")
     observations: list[ProfileObservation] = []
     domain_summary: dict = {}
     ip_summary: dict = {}
     runtime_summary: dict = {}
 
-    _extract_domain_profile(dossier, config, now, observations, domain_summary)
-    _extract_ip_profile(dossier, config, observations, ip_summary)
+    _extract_domain_profile(dossier, config, evaluation_now, observations, domain_summary)
+    _extract_ip_profile(dossier, config, evaluation_now, observations, ip_summary)
     _extract_runtime_profile(dossier, observations, runtime_summary)
     _detect_parking_state(dossier, observations)
 
@@ -67,14 +77,18 @@ def _extract_domain_profile(
     registrant_name = whois.get("registrantName", "")
     privacy = whois.get("privacyprotect_whois", "")
 
-    created = parse_time(created_str) if created_str else None
-    expires = parse_time(expires_str) if expires_str else None
-    updated = parse_time(updated_str) if updated_str else None
+    created = normalize_datetime(created_str)
+    expires = normalize_datetime(expires_str)
+    updated = normalize_datetime(updated_str)
 
     # Domain age
     age_days = None
     if created:
-        age_days = (now - created).days
+        age = now - created
+        if age < timedelta(0):
+            age = None
+        age_days = age.days if age is not None else None
+    if age_days is not None:
         summary["age_days"] = age_days
 
         # New domain: within 30 days
@@ -102,7 +116,8 @@ def _extract_domain_profile(
 
         # Short-lived domain
         if expires and created:
-            lifespan = (expires - created).days
+            lifespan_delta = expires - created
+            lifespan = lifespan_delta.days
             if 0 < lifespan <= 90:
                 summary["is_short_lived"] = True
                 observations.append(ProfileObservation(
@@ -116,7 +131,7 @@ def _extract_domain_profile(
 
     # Near expiry / expired (auxiliary only)
     if expires:
-        days_to_expiry = (expires - now).days
+        days_to_expiry = (expires.date() - now.date()).days
         if days_to_expiry < 0:
             observations.append(ProfileObservation(
                 field="whois.expiresDate",
@@ -163,14 +178,15 @@ def _extract_domain_profile(
     # Trusted business identity
     has_icp = bool(dossier.icp_website)
     has_official = bool(dossier.official_website)
-    if has_icp and has_official:
+    business_fields = config.rules.trusted_business_fields
+    if trusted_business_identity(dossier, business_fields):
         summary["has_trusted_business_identity"] = True
         observations.append(ProfileObservation(
-            field="icp_website+official_website",
+            field="+".join(business_fields),
             kind="business_identity",
-            value=f"{dossier.icp_website}, {dossier.official_website}",
+            value=", ".join(str(getattr(dossier, field, "")) for field in business_fields),
             severity="normal",
-            detail="both ICP registration and official website present",
+            detail="configured business fields include a website matching the IOC host",
             tags=["trusted_business"],
         ))
     elif has_icp:
@@ -229,7 +245,7 @@ def _extract_domain_profile(
 
 
 def _extract_ip_profile(
-    dossier: IocDossier, config: Config,
+    dossier: IocDossier, config: Config, now: datetime,
     observations: list[ProfileObservation], summary: dict,
 ):
     relate_entries = dossier.relate_ip_domain_entries
@@ -260,10 +276,10 @@ def _extract_ip_profile(
     summary["high_risk_related_domain_count"] = len(high_risk)
 
     # Recent related domains (within activity window)
-    cutoff = datetime.now() - timedelta(days=config.activity_window_days)
+    window = timedelta(days=config.activity_window_days)
     recent_related = [
         d for d in related_domains
-        if parse_time(d.get("last", "")) and parse_time(d.get("last", "")) >= cutoff
+        if is_recent(d.get("last"), now, window)
     ]
     summary["recent_related_domain_count"] = len(recent_related)
 
@@ -321,8 +337,7 @@ def _extract_ip_profile(
     # Flint infrastructure relations
     flint = dossier.flint
     if flint:
-        flint_last = parse_time(flint.get("last_seen", ""))
-        if flint_last and flint_last >= cutoff:
+        if is_recent(flint.get("last_seen"), now, window):
             observations.append(ProfileObservation(
                 field="flint.last_seen",
                 kind="recent_infrastructure",

@@ -76,8 +76,8 @@ def test_profile_ip_type_skips_domain_checks():
     assert len(domain_obs) == 0
 
 
-def test_profile_trusted_business_identity():
-    """ICP + official_website should produce trusted_business identity observation."""
+def test_profile_unrelated_business_fields_do_not_create_trusted_identity():
+    """Unrelated website values remain observations without proving identity."""
     records = [build_record(
         "normal-business.com",
         icp_website="https://icp.example.com",
@@ -92,8 +92,21 @@ def test_profile_trusted_business_identity():
         if o.kind == "business_identity"
     ]
     assert len(biz_obs) == 1
-    assert "trusted_business" in biz_obs[0].tags
-    assert dossier.profile.domain.get("has_trusted_business_identity") is True
+    assert "trusted_business" not in biz_obs[0].tags
+    assert not dossier.profile.domain.get("has_trusted_business_identity", False)
+
+
+def test_profile_trusted_business_identity_requires_matching_website():
+    dossier = extract_profile(merge_records([build_record(
+        "normal-business.com",
+        icp_website="ICP-CURRENT",
+        official_website="https://www.normal-business.com",
+        level=30,
+    )]), Config())
+
+    assert dossier.profile.domain["has_trusted_business_identity"] is True
+    assert any("trusted_business" in observation.tags
+               for observation in dossier.profile.observations)
 
 
 def test_profile_high_risk_related_domains():

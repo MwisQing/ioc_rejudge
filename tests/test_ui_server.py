@@ -12,11 +12,14 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
 from ioc_rejudge import share as share_module
-from ioc_rejudge.ui import build_server
+from ioc_rejudge.providers.transport import TransportError
+from ioc_rejudge.ui import LOOKUP_READ_TIMEOUT_SECONDS, build_server, resolve_ui_credentials_path
 
 PASSPHRASE = "test-passphrase"
 SHORT_PASSPHRASE = "short"
@@ -100,7 +103,7 @@ def make_server(tmp_path):
             port=port,
             max_bundles=max_bundles,
             cache_dir=resolved_cache,
-            provider_env=provider_env,
+            provider_env=provider_env if provider_env is not None else {},
             transport_factory=transport_factory,
             credentials_path=credentials_path,
         )
@@ -135,7 +138,7 @@ def _lookup_server(make_server, tmp_path, transport, *, provider_env=None):
     )
 
 
-def api_post(url, token, path, payload, headers=None):
+def api_post(url, token, path, payload, headers=None, timeout=10):
     request = urllib.request.Request(
         url + path,
         data=json.dumps(payload).encode("utf-8"),
@@ -146,7 +149,7 @@ def api_post(url, token, path, payload, headers=None):
     for name, value in (headers or {}).items():
         request.add_header(name, value)
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         return exc.code, json.loads(exc.read().decode("utf-8"))
@@ -258,7 +261,16 @@ def test_get_serves_single_file_page(ui):
     assert "全部合拢" in text
     assert "明文" in text
     assert "勿发给云端" in text
+    assert "credentials.local.json" in text
+    assert "IOC_INFO_API_KEY" in text
     assert "function renderJsonlViewer" in text or "function renderTree" in text
+    assert "function withBusy" in text
+    assert "AbortController" in text
+    assert 'id="lock-btn"' in text
+    assert 'id="lock-flash"' in text
+    assert "async function doLock" in text
+    assert "已清除本机记住的口令" in text
+    assert "当前未解锁，也没有本机记住的口令" in text
     # The page must be fully self-contained: no external references at all.
     assert 'src="http' not in text
     assert "https://cdn" not in text.lower()
@@ -273,7 +285,15 @@ def test_key_lifecycle_generate_unlock_lock(ui):
     assert body["key_exists"] is False
     assert body["unlocked"] is False
     assert body["passphrase_saved"] is False
+    assert body["ioc_info_enabled"] is False
     assert body["bundles"] == []
+
+    status, body = api_post(url, token, "/api/lock", {})
+    assert status == 200
+    assert body["unlocked"] is False
+    assert body["was_unlocked"] is False
+    assert body["had_saved_passphrase"] is False
+    assert body["passphrase_cleared"] is False
 
     first_key_id = unlock(url, token)
     status, body = api_post(url, token, "/api/status", {})
@@ -299,11 +319,21 @@ def test_key_lifecycle_generate_unlock_lock(ui):
     status, body = api_post(url, token, "/api/lock", {})
     assert status == 200
     assert body["unlocked"] is False
+    assert body["was_unlocked"] is True
+    assert body["had_saved_passphrase"] is True
+    assert body["passphrase_cleared"] is True
     status, body = api_post(url, token, "/api/status", {})
     assert body["unlocked"] is False
     assert body["key_id"] is None
     assert body["passphrase_saved"] is False
     assert not (key_path.parent / "passphrase").exists()
+
+    status, body = api_post(url, token, "/api/lock", {})
+    assert status == 200
+    assert body["unlocked"] is False
+    assert body["was_unlocked"] is False
+    assert body["had_saved_passphrase"] is False
+    assert body["passphrase_cleared"] is False
 
     status, body = api_post(url, token, "/api/create", {"content": sample_content()})
     assert status == 400
@@ -521,6 +551,7 @@ def test_lookup_cache_miss_then_hit(make_server, tmp_path):
     assert body["cache_hits"] == 0
     assert body["rows"] == 1
     assert len(transport.calls) == 1
+    assert transport.calls[0]["timeout"] == LOOKUP_READ_TIMEOUT_SECONDS
     first_row = json.loads(body["text"].splitlines()[0])
     assert first_row["ioc"] == LOOKUP_IOC
     assert first_row["source"] == "live"
@@ -543,6 +574,22 @@ def test_lookup_cache_miss_then_hit(make_server, tmp_path):
     assert second_row["status"] == "success"
 
 
+def test_lookup_empty_live_result_does_not_retry(make_server, tmp_path):
+    transport = CountingFakeTransport([{"data": {LOOKUP_IOC: []}}])
+    url, token, _key, _bundles = _lookup_server(make_server, tmp_path, transport)
+    status, body = api_post(
+        url,
+        token,
+        "/api/lookup",
+        {"content": LOOKUP_IOC + "\n"},
+    )
+    assert status == 200, body
+    assert len(transport.calls) == 1
+    row = json.loads(body["text"].splitlines()[0])
+    assert row["status"] == "no_data"
+    assert row["source"] == "live"
+
+
 def test_lookup_does_not_require_unlock(make_server, tmp_path):
     transport = CountingFakeTransport([LOOKUP_RESPONSE])
     url, token, _key, _bundles = _lookup_server(make_server, tmp_path, transport)
@@ -560,6 +607,24 @@ def test_lookup_does_not_require_unlock(make_server, tmp_path):
     assert status == 200, body
     assert body["live_fetches"] == 1
     assert body["rows"] == 1
+
+
+def test_resolve_ui_credentials_path_prefers_explicit_then_local_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert resolve_ui_credentials_path(None) is None
+    local = tmp_path / "credentials.local.json"
+    local.write_text("{}", encoding="utf-8")
+    assert resolve_ui_credentials_path(None).resolve() == local.resolve()
+    explicit = tmp_path / "other.json"
+    assert resolve_ui_credentials_path(str(explicit)) == explicit
+
+
+def test_status_reports_ioc_info_enabled_with_injected_key(make_server, tmp_path):
+    transport = CountingFakeTransport([LOOKUP_RESPONSE])
+    url, token, _key, _bundles = _lookup_server(make_server, tmp_path, transport)
+    status, body = api_post(url, token, "/api/status", {})
+    assert status == 200
+    assert body["ioc_info_enabled"] is True
 
 
 def test_lookup_disabled_without_credentials(make_server, tmp_path):
@@ -667,3 +732,86 @@ def test_lookup_jsonl_can_create(make_server, tmp_path):
     page_text = page_body.decode("utf-8")
     assert "脱敏并复制" in page_text
     assert "勿发给云端" in page_text
+    assert "不要只刷新网页" in page_text
+
+
+def _age_ioc_info_cache(cache_dir, *, days=10):
+    root = Path(cache_dir) / ".cache_ioc_info"
+    old = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    for path in root.glob("*.jsonl"):
+        rows = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            row["fetched_at"] = old
+            rows.append(json.dumps(row, ensure_ascii=False))
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def test_lookup_falls_back_to_stale_cache_when_live_fails(make_server, tmp_path):
+    warm = CountingFakeTransport([LOOKUP_RESPONSE])
+    url, token, _key, _bundles = _lookup_server(make_server, tmp_path, warm)
+    status, body = api_post(
+        url,
+        token,
+        "/api/lookup",
+        {"content": LOOKUP_IOC + "\n"},
+    )
+    assert status == 200, body
+    assert body["live_fetches"] == 1
+    _age_ioc_info_cache(tmp_path / "lookup-cache")
+
+    cold = CountingFakeTransport(
+        [TransportError("timeout", "Request timed out for lookup")]
+    )
+    url2, token2, _key2, _bundles2 = _lookup_server(make_server, tmp_path, cold)
+    status, body = api_post(
+        url2,
+        token2,
+        "/api/lookup",
+        {"content": LOOKUP_IOC + "\n"},
+    )
+    assert status == 200, body
+    assert len(cold.calls) == 1
+    row = json.loads(body["text"].splitlines()[0])
+    assert row["source"] == "cache"
+    assert row["status"] == "success"
+    assert row["data"]
+
+
+def test_lookup_does_not_block_status(make_server, tmp_path):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingTransport(CountingFakeTransport):
+        def post_json(self, url, *, headers=None, body=None, timeout=30):
+            self.calls.append({"url": url, "timeout": timeout})
+            entered.set()
+            assert release.wait(timeout=5)
+            return LOOKUP_RESPONSE
+
+    transport = BlockingTransport([])
+    url, token, _key, _bundles = _lookup_server(make_server, tmp_path, transport)
+    result = {}
+
+    def _lookup():
+        result["lookup"] = api_post(
+            url,
+            token,
+            "/api/lookup",
+            {"content": LOOKUP_IOC + "\n"},
+            timeout=8,
+        )
+
+    worker = threading.Thread(target=_lookup)
+    worker.start()
+    assert entered.wait(timeout=5)
+    status, body = api_post(url, token, "/api/status", {}, timeout=2)
+    assert status == 200, body
+    assert "unlocked" in body
+    release.set()
+    worker.join(timeout=8)
+    assert result.get("lookup") is not None
+    lookup_status, lookup_body = result["lookup"]
+    assert lookup_status == 200, lookup_body

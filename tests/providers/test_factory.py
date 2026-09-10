@@ -12,6 +12,7 @@ from ioc_rejudge.providers.base import ProviderContext
 from ioc_rejudge.providers.factory import (
     DEFAULT_PROVIDERS,
     SUPPORTED_PROVIDERS,
+    _positive_number,
     build_providers,
     load_credentials_file,
     load_local_config,
@@ -21,6 +22,12 @@ from ioc_rejudge.providers.factory import (
 
 
 SENTINEL = "SENTINEL_FACTORY_SECRET_7f21"
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_positive_decimal_rejects_nonfinite_ttl_values(value):
+    with pytest.raises(ValueError, match="finite"):
+        _positive_number("whois", "ttl_hours", value, integer=False)
 
 
 class NoCallTransport:

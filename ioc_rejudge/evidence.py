@@ -1,13 +1,15 @@
 """A-F evidence extraction from merged IOC dossier."""
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from math import isfinite
 from urllib.parse import urlsplit
 
+from ioc_rejudge.business_identity import trusted_business_identity
 from ioc_rejudge.config import Config
 from ioc_rejudge.inputs import is_valid_host, is_valid_port
 from ioc_rejudge.models import Evidence, EvidenceLevel, EvidenceStrength, IocDossier
 from ioc_rejudge.normalize import coerce_level, latest_record, normalize_ioc
-from ioc_rejudge.parser import parse_time
+from ioc_rejudge.parser import is_recent, normalize_datetime
 from ioc_rejudge.profile import extract_profile
 
 
@@ -65,20 +67,24 @@ def _parse_access_end(access: dict) -> datetime | None:
     end = access.get("end", "")
     if not end:
         return None
-    if len(str(end)) == 8 and str(end).isdigit():
-        try:
-            return datetime.strptime(str(end), "%Y%m%d")
-        except ValueError:
-            pass
-    return parse_time(str(end))
+    return normalize_datetime(end)
 
 
-def extract_evidence(dossier: IocDossier, config: Config) -> IocDossier:
-    cutoff = datetime.now() - timedelta(days=config.activity_window_days)
-    dossier = extract_profile(dossier, config)
+def extract_evidence(
+    dossier: IocDossier,
+    config: Config,
+    *,
+    now: datetime | None = None,
+) -> IocDossier:
+    evaluation_now = normalize_datetime(
+        now if now is not None else datetime.now(timezone.utc)
+    )
+    if evaluation_now is None:
+        raise TypeError("now must be a valid datetime")
+    dossier = extract_profile(dossier, config, now=evaluation_now)
     _extract_operator_evidence(dossier, config)
     _extract_a(dossier, config)
-    _extract_b(dossier, config, cutoff)
+    _extract_b(dossier, config, evaluation_now)
     _extract_c(dossier, config)
     _extract_structured_public_apt(dossier, config)
     _extract_d(dossier, config)
@@ -253,17 +259,17 @@ def is_malicious_sample(entry: dict | None, config: Config) -> bool:
 
     try:
         level = float(entry.get("level", 0))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return False
-    if level < config.hash_malicious_level:
+    if not isfinite(level) or level < config.hash_malicious_level:
         return False
 
     if "confidence" in entry:
         try:
             confidence = float(entry["confidence"])
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             return False
-        if confidence <= 0:
+        if not isfinite(confidence) or confidence <= 0:
             return False
 
     return True
@@ -484,20 +490,19 @@ def _extract_a(dossier: IocDossier, config: Config):
                 ))
 
 
-def _extract_b(dossier: IocDossier, config: Config, cutoff: datetime):
+def _extract_b(dossier: IocDossier, config: Config, now: datetime):
+    window = timedelta(days=config.activity_window_days)
     for h in dossier.hash_entries:
         if not is_malicious_sample(h, config):
             continue
-        t = parse_time(h.get("time", ""))
-        if t and t >= cutoff:
+        if is_recent(h.get("time"), now, window):
             dossier.evidence_b.append(Evidence(
                 level=EvidenceLevel.B,
                 field=f"hash.time[{h.get('md5', '')}]",
                 detail=f"样本时间 {h.get('time', '')} 在近{config.activity_window_days}天内",
             ))
 
-    flint_last = parse_time(dossier.flint.get("last_seen", ""))
-    if flint_last and flint_last >= cutoff:
+    if is_recent(dossier.flint.get("last_seen"), now, window):
         dossier.evidence_b.append(Evidence(
             level=EvidenceLevel.B,
             field="flint.last_seen",
@@ -505,7 +510,7 @@ def _extract_b(dossier: IocDossier, config: Config, cutoff: datetime):
         ))
 
     access_end = _parse_access_end(dossier.access)
-    if access_end and access_end >= cutoff:
+    if is_recent(access_end, now, window):
         access_val = dossier.access.get("client_count", 0)
         if access_val and access_val > 0:
             dossier.evidence_b.append(Evidence(
@@ -515,8 +520,7 @@ def _extract_b(dossier: IocDossier, config: Config, cutoff: datetime):
             ))
 
     for d in dossier.dtree_entries:
-        t = parse_time(d.get("last", ""))
-        if t and t >= cutoff:
+        if is_recent(d.get("last"), now, window):
             dossier.evidence_b.append(Evidence(
                 level=EvidenceLevel.B,
                 field=f"dtree.last[{d.get('key', '')}]",
@@ -542,22 +546,21 @@ def _extract_c(dossier: IocDossier, config: Config):
     )
     ioc_matched = bool(eligible_ioc_records)
 
-    has_context_loop = ioc_matched and _has_malicious_indicator(combined_text, config)
+    has_context_loop = ioc_matched and _has_strong_malicious_indicator(combined_text, config)
     has_historical_context = ioc_matched and _has_historical_indicator(combined_text, config)
 
-    strong_sources = sorted({
-        source
+    has_sample_loop = any(
+        is_malicious_sample(entry, config)
         for record in eligible_ioc_records
-        for source in _record_sources(record)
-        if _is_strong_source(source, config)
-    })
-    has_source_loop = bool(
-        strong_sources and
-        (dossier.hash_entries or dossier.relate_url_entries or
-         dossier.family or dossier.malicious_type or dossier.attck)
-    ) and ioc_matched
+        for entry in (
+            record.get("hash")
+            if isinstance(record.get("hash"), list)
+            else [record.get("hash")]
+        )
+        if isinstance(entry, dict)
+    )
 
-    if not (has_context_loop or has_source_loop or has_historical_context):
+    if not (has_context_loop or has_sample_loop):
         return
 
     tags = ["historical"]
@@ -633,7 +636,9 @@ def _extract_e(dossier: IocDossier, config: Config):
         field_name: _trusted_business_value(dossier, field_name)
         for field_name in config.rules.trusted_business_fields
     }
-    has_strong_business = bool(trusted_values) and all(trusted_values.values())
+    has_strong_business = trusted_business_identity(
+        dossier, config.rules.trusted_business_fields
+    )
     normalization_tags = ["normalization"]
     if _has_normalization_indicator(dossier, config):
         normalization_tags.append("normalization_indicator")
@@ -815,8 +820,9 @@ def _extract_structured_public_apt(dossier: IocDossier, config: Config):
 
     Required: malicious_type contains case-insensitive exact ``"APT"`` (scalar
     or list); private is boolean False; confidence >= 4; info_level >= 2;
-    level >= 70; a URL extracted from context, comment, or a ``reference``
-    field.  A bare top-level ``url`` field is not sufficient.
+    level >= 70; a valid report URL extracted from context, comment, or a
+    ``reference`` field on a matching record subject. The external report
+    need not repeat the IOC in its URL. A bare top-level ``url`` is insufficient.
     Malformed numeric fields do not crash — they exclude the record instead.
     """
     latest_snapshot = (
@@ -824,6 +830,17 @@ def _extract_structured_public_apt(dossier: IocDossier, config: Config):
     )
     for snap in dossier.record_snapshots:
         raw = snap.raw
+        subject = raw.get("key") or raw.get("host") or raw.get("ioc")
+        if not isinstance(subject, str):
+            continue
+        try:
+            normalized, subject_type, _ = normalize_ioc(
+                subject, str(raw.get("port", "0"))
+            )
+        except (TypeError, ValueError):
+            continue
+        if normalized != dossier.ioc or subject_type != dossier.ioc_type:
+            continue
         mt = raw.get("malicious_type")
         if isinstance(mt, str):
             mt = [mt]
@@ -837,23 +854,23 @@ def _extract_structured_public_apt(dossier: IocDossier, config: Config):
 
         try:
             confidence = float(raw.get("confidence", 0))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             continue
-        if confidence < 4:
+        if not isfinite(confidence) or confidence < 4:
             continue
 
         try:
             info_level = float(raw.get("info_level", 0))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             continue
-        if info_level < 2:
+        if not isfinite(info_level) or info_level < 2:
             continue
 
         try:
             level = float(raw.get("level", 0))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             continue
-        if level < 70:
+        if not isfinite(level) or level < 70:
             continue
 
         reference_fields = ["reference"]
@@ -864,10 +881,19 @@ def _extract_structured_public_apt(dossier: IocDossier, config: Config):
             for field in reference_fields
             if raw.get(field)
         )
-        urls = re.findall(r'https?://[^\s"\'<>]+', reference_text)
-        if not urls:
+        ref_url = ""
+        for url in re.findall(r'https?://[^\s"\'<>]+', reference_text):
+            if not _is_valid_retained_url(url):
+                continue
+            parsed = urlsplit(url)
+            if parsed.username is not None or parsed.password is not None:
+                continue
+            if parsed.netloc.endswith(":"):
+                continue
+            ref_url = url
+            break
+        if not ref_url:
             continue
-        ref_url = urls[0]
 
         dossier.evidence_c.append(Evidence(
             level=EvidenceLevel.C,

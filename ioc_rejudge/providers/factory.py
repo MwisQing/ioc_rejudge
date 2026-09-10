@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 import json
+from math import isfinite
 import os
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -351,6 +352,8 @@ def _positive_number(name: str, option: str, value: object, *, integer: bool):
         parsed = int(value) if integer else float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"provider {name} {option} must be positive") from exc
+    if not integer and not isfinite(parsed):
+        raise ValueError(f"provider {name} {option} must be finite")
     if parsed <= 0:
         raise ValueError(f"provider {name} {option} must be positive")
     return parsed

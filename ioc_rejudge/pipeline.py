@@ -33,14 +33,14 @@ from ioc_rejudge.observations import (
     ProviderStatus,
     Route,
 )
-from ioc_rejudge.parser import parse_time
+from ioc_rejudge.parser import latest_datetime, normalize_datetime
 from ioc_rejudge.providers.base import Provider, ProviderContext, ProviderResult
 from ioc_rejudge.routing import RouteDecision, select_route
 from ioc_rejudge.result_cache import AdjudicationResultCache
 
 
 DGA_PROVIDER_NAME = "k01_compromise"
-ADJUDICATION_CACHE_CONTRACT = 6
+ADJUDICATION_CACHE_CONTRACT = 7
 REQUIRED_SAMPLE_PROVIDERS = ("ioc_info", "fdark")
 _COMPLETE_STATUSES = {ProviderStatus.SUCCESS, ProviderStatus.NO_DATA}
 _DISCOVERY_PROVIDER_NAMES = {DGA_PROVIDER_NAME, *REQUIRED_SAMPLE_PROVIDERS}
@@ -291,18 +291,7 @@ def _collect_observations(
 
 
 def _coerce_datetime(value: object) -> datetime | None:
-    if isinstance(value, datetime):
-        return value
-    if value in (None, ""):
-        return None
-    text = str(value).strip()
-    parsed = parse_time(text)
-    if parsed is not None:
-        return parsed
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+    return normalize_datetime(value)
 
 
 def _observation_payload_record(observation: Observation) -> dict:
@@ -349,43 +338,24 @@ def _entry_time(entry: dict, fallback: datetime | None) -> datetime | None:
     return fallback
 
 
-def _has_current_icp(
-    observations: list[Observation],
-    provider_statuses: dict[str, ProviderStatus] | None = None,
-) -> bool:
-    for observation in observations:
-        if (
-            observation.status != ProviderStatus.SUCCESS
-            or observation.freshness == Freshness.STALE
-            or (
-                provider_statuses is not None
-                and provider_statuses.get(observation.provider) != ProviderStatus.SUCCESS
-            )
-        ):
-            continue
-        payload = _observation_payload_record(observation)
-        values = (
-            payload.get("icp_website"),
-            payload.get("icp"),
-            payload.get("registration"),
-        )
-        if payload.get("current") is True:
-            return True
-        if any(isinstance(value, str) and value.strip() for value in values):
-            return True
-    return False
+_CURRENT_ICP_NONE = "none"
+_CURRENT_ICP_POSITIVE = "positive"
+_CURRENT_ICP_NEGATIVE_ONLY = "negative-only"
+_CURRENT_ICP_CONFLICT = "conflict"
 
 
-def _apply_current_icp_state(
-    dossier: IocDossier,
+def _aggregate_current_icp(
     observations: list[Observation],
     provider_statuses: dict[str, ProviderStatus] | None = None,
-) -> None:
+) -> tuple[str, str]:
+    """Aggregate valid typed current-ICP observations deterministically."""
+    positive_registrations: set[str] = set()
+    has_negative = False
     for observation in observations:
         if (
             observation.kind not in {"icp", "icp_record", "icp_registration"}
             or observation.status != ProviderStatus.SUCCESS
-            or observation.freshness == Freshness.STALE
+            or observation.freshness != Freshness.FRESH
             or (
                 provider_statuses is not None
                 and provider_statuses.get(observation.provider) != ProviderStatus.SUCCESS
@@ -397,14 +367,46 @@ def _apply_current_icp_state(
         if not isinstance(current, bool):
             continue
         if current is False:
-            dossier.icp_website = ""
-            dossier.current_icp_check_complete = True
+            has_negative = True
             continue
         registration = payload.get("registration")
-        if not isinstance(registration, str) or not registration.strip():
-            continue
-        dossier.icp_website = registration.strip()
+        if isinstance(registration, str) and registration.strip():
+            positive_registrations.add(registration.strip())
+
+    if positive_registrations and has_negative:
+        return _CURRENT_ICP_CONFLICT, ""
+    if positive_registrations:
+        return _CURRENT_ICP_POSITIVE, sorted(positive_registrations)[0]
+    if has_negative:
+        return _CURRENT_ICP_NEGATIVE_ONLY, ""
+    return _CURRENT_ICP_NONE, ""
+
+
+def _has_current_icp(
+    observations: list[Observation],
+    provider_statuses: dict[str, ProviderStatus] | None = None,
+) -> bool:
+    state, _ = _aggregate_current_icp(observations, provider_statuses)
+    return state == _CURRENT_ICP_POSITIVE
+
+
+def _apply_current_icp_state(
+    dossier: IocDossier,
+    observations: list[Observation],
+    provider_statuses: dict[str, ProviderStatus] | None = None,
+) -> None:
+    state, registration = _aggregate_current_icp(observations, provider_statuses)
+    if state == _CURRENT_ICP_POSITIVE:
+        dossier.icp_website = registration
         dossier.current_icp_check_complete = True
+        dossier.current_icp_conflict = False
+    elif state == _CURRENT_ICP_NEGATIVE_ONLY:
+        dossier.icp_website = ""
+        dossier.current_icp_check_complete = True
+        dossier.current_icp_conflict = False
+    elif state == _CURRENT_ICP_CONFLICT:
+        dossier.current_icp_check_complete = False
+        dossier.current_icp_conflict = True
 
 
 def _latest_observed_time(
@@ -430,14 +432,7 @@ def _latest_observed_time(
                 values.append(value)
     if not values:
         return None
-    latest = values[0]
-    for value in values[1:]:
-        try:
-            if value > latest:
-                latest = value
-        except TypeError:
-            continue
-    return latest
+    return latest_datetime(values)
 
 
 def _build_dga_facts(
@@ -478,17 +473,19 @@ def _build_dga_facts(
         {"pdns", "pdns_activity"},
         ("time_last", "last_seen", "observed_at"),
     )
+    current_icp_state, _ = _aggregate_current_icp(observations, statuses)
     facts = DgaFacts(
         sample_check_complete=not missing,
         has_malicious_sample=has_malicious,
         malicious_sample_times=malicious_times,
-        has_current_icp=_has_current_icp(observations, statuses),
+        has_current_icp=current_icp_state == _CURRENT_ICP_POSITIVE,
         whois_expires=whois_expires,
         pdns_last_seen=pdns_last_seen,
         provider_statuses={
             name: _provider_status_value(status)
             for name, status in statuses.items()
         },
+        current_icp_conflict=current_icp_state == _CURRENT_ICP_CONFLICT,
     )
     return facts, missing
 
@@ -530,6 +527,8 @@ def _build_standard_dossier(
     observations: list[Observation],
     provider_statuses: dict[str, ProviderStatus],
     config: Config,
+    *,
+    now: datetime | None = None,
 ) -> tuple[IocDossier, int]:
     records = [dict(record) for record in snapshot_records]
     enrichment: dict = {"key": target.normalized, "host": target.host}
@@ -581,7 +580,7 @@ def _build_standard_dossier(
             ports=list(target.ports),
         )
     _apply_current_icp_state(dossier, observations, provider_statuses)
-    return extract_evidence(dossier, config), len(records)
+    return extract_evidence(dossier, config, now=now), len(records)
 
 
 def _downgrade_unknown_classification(verdict: Verdict) -> Verdict:
@@ -638,6 +637,7 @@ def _serialize_verdict(
     classification_unknown: bool,
     missing_required_providers: list[str],
     config: Config,
+    now: datetime | None = None,
 ) -> dict:
     if not verdict.scope_actions:
         verdict.scope_actions = [{
@@ -706,7 +706,7 @@ def _serialize_verdict(
         return row
 
     profile = dossier.profile
-    has_residue = _has_threat_residue(dossier, config)
+    has_residue = _has_threat_residue(dossier, config, now=now)
     md5_values = [str(item.get("md5")) for item in dossier.hash_entries if item.get("md5")]
     row.update({
         "latest_material_activity_time": _format_time(dossier.latest_material_activity_time),
@@ -874,6 +874,11 @@ def _run_unified_pipeline_uncached(
     progress: Callable[[str], None] | None = None,
 ) -> UnifiedPipelineResult:
     """Collect provider facts and adjudicate all targets in input order."""
+    effective_now = normalize_datetime(
+        now if now is not None else datetime.now(timezone.utc)
+    )
+    if effective_now is None:
+        raise TypeError("now must be a valid datetime")
     provider_list = list(providers)
     provider_names = [str(provider.name) for provider in provider_list]
     if len(provider_names) != len(set(provider_names)):
@@ -985,7 +990,7 @@ def _run_unified_pipeline_uncached(
                 verdict = adjudicate_dga(
                     target.normalized,
                     facts,
-                    now=now,
+                    now=effective_now,
                     pdns_recent_days=config.dga_pdns_recent_days,
                     activity_window_days=config.activity_window_days,
                 )
@@ -996,8 +1001,9 @@ def _run_unified_pipeline_uncached(
                     observations,
                     statuses,
                     config,
+                    now=effective_now,
                 )
-                verdict = adjudicate(dossier, config)
+                verdict = adjudicate(dossier, config, now=effective_now)
                 if decision.classification_unknown:
                     verdict = _downgrade_unknown_classification(verdict)
         except Exception as exc:
@@ -1021,6 +1027,7 @@ def _run_unified_pipeline_uncached(
                 classification_unknown=decision.classification_unknown,
                 missing_required_providers=missing_required,
                 config=config,
+                now=effective_now,
             )
         except Exception as exc:  # per-IOC boundary: one bad dossier must not kill the batch
             message = _safe_provider_error(exc)
@@ -1038,6 +1045,7 @@ def _run_unified_pipeline_uncached(
                 classification_unknown=decision.classification_unknown,
                 missing_required_providers=missing_required,
                 config=config,
+                now=effective_now,
             )
         verdicts.append(row)
 
@@ -1110,10 +1118,11 @@ def result_cache_fingerprint(
 ) -> str:
     """Hash every local input that can change a completed verdict row."""
     evaluation_day = ""
-    if isinstance(evaluation_time, datetime):
-        if evaluation_time.tzinfo is not None:
-            evaluation_time = evaluation_time.astimezone(timezone.utc)
-        evaluation_day = evaluation_time.date().isoformat()
+    if evaluation_time is not None:
+        normalized_evaluation_time = normalize_datetime(evaluation_time)
+        if normalized_evaluation_time is None:
+            raise TypeError("evaluation_time must be a valid datetime")
+        evaluation_day = normalized_evaluation_time.date().isoformat()
     shape = {
         "contract": ADJUDICATION_CACHE_CONTRACT,
         "evaluation_day": evaluation_day,
@@ -1166,7 +1175,11 @@ def run_unified_pipeline(
             bundle, provider_list, config, context, now=now, progress=progress
         )
 
-    effective_now = now or datetime.now(timezone.utc)
+    effective_now = normalize_datetime(
+        now if now is not None else datetime.now(timezone.utc)
+    )
+    if effective_now is None:
+        raise TypeError("now must be a valid datetime")
     snapshots = _snapshot_records(bundle)
     fingerprints = {
         target.normalized: result_cache_fingerprint(

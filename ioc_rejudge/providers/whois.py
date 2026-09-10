@@ -13,7 +13,7 @@ from ioc_rejudge.observations import (
     Observation,
     ProviderStatus,
 )
-from ioc_rejudge.parser import parse_time
+from ioc_rejudge.parser import normalize_datetime, parse_time
 from ioc_rejudge.providers.base import (
     ProviderContext,
     ProviderResult,
@@ -62,24 +62,14 @@ def _as_values(value: object) -> list[object]:
 
 
 def _parse_date(value: object) -> datetime | None:
-    if isinstance(value, datetime):
-        return value
-    if value in (None, ""):
-        return None
-    text = str(value).strip()
-    parsed = parse_time(text)
-    if parsed is not None:
-        return parsed
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+    return parse_time(value)
 
 
 def _utc_naive(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
+    normalized = normalize_datetime(value)
+    if normalized is None:
+        raise ValueError("invalid datetime")
+    return normalized
 
 
 def _date_fact(

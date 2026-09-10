@@ -12,6 +12,7 @@ from threading import Lock
 from typing import Any
 
 from ioc_rejudge.normalize import normalize_ioc
+from ioc_rejudge.parser import is_fresh, normalize_datetime, parse_time
 
 
 _PROVIDER_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -167,8 +168,8 @@ class JsonlProviderCache:
     ) -> CacheEntry:
         normalized = self._normalize_ioc(ioc)
         query_params = dict(params or {})
-        fetched = fetched_at or datetime.now(timezone.utc)
-        if not isinstance(fetched, datetime):
+        fetched = fetched_at if fetched_at is not None else datetime.now(timezone.utc)
+        if not isinstance(fetched, datetime) or normalize_datetime(fetched) is None:
             raise TypeError("fetched_at must be a datetime")
         cache_key = self.key(normalized, query_params)
         stored_params = self._redact(query_params)
@@ -207,22 +208,17 @@ class JsonlProviderCache:
 
     @staticmethod
     def _parse_datetime(value: object) -> datetime | None:
-        if not isinstance(value, str) or not value.strip():
-            return None
-        try:
-            return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-        except ValueError:
-            return None
+        return parse_time(value)
 
     @staticmethod
     def _utc_naive(value: datetime) -> datetime:
-        if value.tzinfo is None:
-            return value
-        return value.astimezone(timezone.utc).replace(tzinfo=None)
+        normalized = normalize_datetime(value)
+        if normalized is None:
+            raise ValueError("invalid datetime")
+        return normalized
 
     def _is_fresh(self, fetched_at: datetime, now: datetime) -> bool:
-        age = self._utc_naive(now) - self._utc_naive(fetched_at)
-        return age <= self.ttl
+        return is_fresh(fetched_at, now, self.ttl)
 
     def _ensure_index(self) -> None:
         paths = self._read_paths()

@@ -13,7 +13,7 @@ from ioc_rejudge.observations import (
     Observation,
     ProviderStatus,
 )
-from ioc_rejudge.parser import parse_time
+from ioc_rejudge.parser import parse_epoch_time, parse_time
 from ioc_rejudge.providers.base import (
     ProviderContext,
     ProviderResult,
@@ -37,28 +37,13 @@ def _is_domain_host(host: str) -> bool:
 
 
 def _activity_time(value: object) -> datetime | None:
-    if isinstance(value, bool) or value in (None, ""):
+    if value in (None, ""):
         return None
-    if isinstance(value, (int, float)) or (
-        isinstance(value, str) and value.strip().replace(".", "", 1).isdigit()
-    ):
-        try:
-            timestamp = float(value)
-            if timestamp < 0:
-                return None
-            if timestamp > 10_000_000_000:
-                timestamp /= 1000
-            return datetime.fromtimestamp(timestamp, timezone.utc)
-        except (OverflowError, OSError, ValueError):
-            return None
-    text = str(value).strip()
-    parsed = parse_time(text)
-    if parsed is not None:
-        return parsed
-    try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+    if isinstance(value, (int, float)) or isinstance(value, str):
+        epoch = parse_epoch_time(value)
+        if epoch is not None:
+            return epoch
+    return parse_time(value)
 
 
 def _normalized_time(raw: object, parsed: datetime | None) -> object:

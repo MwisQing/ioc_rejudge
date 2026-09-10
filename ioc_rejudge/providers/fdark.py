@@ -16,7 +16,7 @@ from ioc_rejudge.observations import (
     Observation,
     ProviderStatus,
 )
-from ioc_rejudge.parser import parse_time
+from ioc_rejudge.parser import parse_epoch_time, parse_time
 from ioc_rejudge.providers.base import (
     ProviderContext,
     ProviderResult,
@@ -501,19 +501,13 @@ def build_request_params(
 
 
 def _sample_time(value: object) -> datetime | None:
-    if isinstance(value, bool):
+    if value in (None, ""):
         return None
-    if isinstance(value, (int, float)) or (
-        isinstance(value, str) and value.strip().replace(".", "", 1).isdigit()
-    ):
-        try:
-            timestamp = float(value)
-            if timestamp > 10_000_000_000:
-                timestamp /= 1000
-            return datetime.fromtimestamp(timestamp, timezone.utc)
-        except (OverflowError, OSError, ValueError):
-            return None
-    return parse_time(str(value)) if value not in (None, "") else None
+    if isinstance(value, (int, float)) or isinstance(value, str):
+        epoch = parse_epoch_time(value)
+        if epoch is not None:
+            return epoch
+    return parse_time(value)
 
 
 class FDarkProvider:

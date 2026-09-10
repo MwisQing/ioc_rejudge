@@ -30,10 +30,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+import requests
+
 from ioc_rejudge.inputs import read_input_bundle
 from ioc_rejudge.observations import Freshness, ProviderStatus
 from ioc_rejudge.providers.base import ProviderContext, ProviderResult
 from ioc_rejudge.providers.factory import build_providers
+from ioc_rejudge.providers.transport import RequestsTransport
 from ioc_rejudge.share import (
     ShareError,
     create_bundle,
@@ -46,6 +49,18 @@ DEFAULT_PORT = 8731
 MAX_BUNDLES = 20
 MAX_BODY_BYTES = 32 * 1024 * 1024
 DEFAULT_CACHE_DIR = Path("provider-cache")
+DEFAULT_CREDENTIALS_FILE = Path("credentials.local.json")
+LOOKUP_CREDENTIALS_ERROR = (
+    "ioc_info is disabled (missing credentials); cannot query. "
+    "Start with --credentials-file credentials.local.json "
+    "or set IOC_INFO_API_KEY in this terminal."
+)
+# Interactive lookup must not inherit the pipeline's 10 empty-result retries
+# or spawn a Go HTTP worker; either can leave the page spinning for minutes.
+LOOKUP_MAX_ATTEMPTS = 1
+LOOKUP_CONNECT_TIMEOUT_SECONDS = 5
+LOOKUP_READ_TIMEOUT_SECONDS = 15
+_PARALLEL_API_PATHS = frozenset({"/api/status", "/api/lookup"})
 
 # Bundle directories are named by the 20-hex-char bundle id; the fullmatch
 # also keeps user-supplied ids from ever escaping the bundle directory.
@@ -119,6 +134,130 @@ def _lookup_source(status: ProviderStatus, cache_hit: bool) -> str:
 def _timestamp() -> str:
     """A sortable, collision-resistant suffix for audit file names."""
     return f"{int(time.time() * 1000):013d}-{secrets.token_hex(2)}"
+
+
+def resolve_ui_credentials_path(explicit: str | None) -> Path | None:
+    """Return the credentials file the UI should use.
+
+    An explicit ``--credentials-file`` always wins. Otherwise a project-root
+    ``credentials.local.json`` is used when it exists, matching the usual
+    adjudication CLI workflow on the official machine.
+    """
+    if explicit:
+        return Path(explicit).expanduser()
+    if DEFAULT_CREDENTIALS_FILE.is_file():
+        return DEFAULT_CREDENTIALS_FILE
+    return None
+
+
+class _LookupTransport(RequestsTransport):
+    """Interactive lookup HTTP: ignore env proxies, bound connect/read time."""
+
+    def __init__(self) -> None:
+        session = requests.Session()
+        session.trust_env = False
+        super().__init__(session)
+
+    def post_json(self, url, *, headers=None, body=None, timeout=30):
+        bounded = (
+            timeout
+            if isinstance(timeout, tuple)
+            else (
+                LOOKUP_CONNECT_TIMEOUT_SECONDS,
+                min(int(timeout), LOOKUP_READ_TIMEOUT_SECONDS),
+            )
+        )
+        return super().post_json(url, headers=headers, body=body, timeout=bounded)
+
+
+def _lookup_transport_factory(state: Any):
+    """Python HTTP for interactive lookup; tests may inject FakeTransport."""
+    if getattr(state, "transport_factory", None) is not None:
+        return state.transport_factory
+    return lambda _name: _LookupTransport()
+
+
+def _build_lookup_provider(state: Any) -> tuple[Any, bool]:
+    """Return ``(provider, offline)`` for every UI lookup in this process."""
+    build_kwargs: dict[str, Any] = {
+        "cache_dir": state.cache_dir,
+        "offline": False,
+        "transport_factory": _lookup_transport_factory(state),
+    }
+    if state.credentials_path is not None:
+        build_kwargs["credentials_path"] = state.credentials_path
+    elif state.provider_env is not None:
+        build_kwargs["env"] = state.provider_env
+    provider = build_providers(["ioc_info"], **build_kwargs)[0]
+    provider.max_attempts = LOOKUP_MAX_ATTEMPTS
+    provider.settings.timeout = LOOKUP_READ_TIMEOUT_SECONDS
+    if not provider.settings.enabled:
+        build_kwargs["offline"] = True
+        provider = build_providers(["ioc_info"], **build_kwargs)[0]
+        provider.max_attempts = LOOKUP_MAX_ATTEMPTS
+        return provider, True
+    return provider, False
+
+
+def _warmup_lookup_cache(state: Any) -> None:
+    """Load the ioc_info cache index once so the first click is not a full scan."""
+    provider = getattr(state, "lookup_provider", None)
+    cache = getattr(provider, "cache", None) if provider is not None else None
+    if cache is None:
+        return
+    started = time.monotonic()
+    try:
+        cache.get("__ui_warmup__", {})
+    except (OSError, TypeError, ValueError):
+        return
+    elapsed = time.monotonic() - started
+    if elapsed >= 1:
+        print(f"ioc info cache index loaded in {elapsed:.1f}s", file=sys.stderr)
+
+
+def _cached_lookup(provider: Any, target: Any):
+    """Return (status, observations, entry) from cache, including stale rows."""
+    cache = getattr(provider, "cache", None)
+    consume = getattr(provider, "_consume_cache", None)
+    if cache is None or not callable(consume):
+        return None
+    try:
+        now_fn = getattr(provider, "now_fn", None)
+        entry = cache.get(
+            target.original,
+            provider.cache_params(target),
+            now=now_fn() if callable(now_fn) else None,
+        )
+    except (OSError, TypeError, ValueError):
+        return None
+    if entry is None:
+        return None
+    status, observations = consume(target, entry)
+    return status, observations, entry
+
+
+def _ioc_info_enabled(
+    *,
+    cache_dir: Path,
+    credentials_path: Path | None,
+    provider_env: dict[str, str] | None,
+    transport_factory,
+) -> bool:
+    """True when the ioc_info provider has credentials; never echoes secrets."""
+    build_kwargs: dict[str, Any] = {
+        "cache_dir": cache_dir,
+        "offline": False,
+        "transport_factory": transport_factory,
+    }
+    if credentials_path is not None:
+        build_kwargs["credentials_path"] = credentials_path
+    elif provider_env is not None:
+        build_kwargs["env"] = provider_env
+    try:
+        provider = build_providers(["ioc_info"], **build_kwargs)[0]
+    except (OSError, ValueError):
+        return False
+    return bool(getattr(provider.settings, "enabled", False))
 
 
 def _passphrase_path(key_path: Path) -> Path:
@@ -325,11 +464,15 @@ class UiState:
         )
         self.provider_env = provider_env
         self.transport_factory = transport_factory
+        self.ioc_info_enabled = False
+        self.lookup_provider = None
+        self.lookup_offline = True
         # The passphrase (not the derived key) is kept, because the wrapped
         # share functions re-load and re-verify the key file per operation.
         self.passphrase: str | None = None
         self.key_id: str | None = None
         self.lock = threading.Lock()
+        self.lookup_lock = threading.Lock()
 
     @property
     def unlocked(self) -> bool:
@@ -484,10 +627,15 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "unknown api endpoint"})
             return
         try:
-            # One lock serializes key and bundle directory mutations so
-            # concurrent page actions cannot interleave file operations.
-            with self.ui_state.lock:
+            # Key/bundle mutations stay serialized. Status and lookup do not
+            # take that lock: a slow IOC Info call must not freeze the page
+            # or queue the next query behind a request the browser already
+            # abandoned.
+            if urlsplit(self.path).path in _PARALLEL_API_PATHS:
                 result = handler(body)
+            else:
+                with self.ui_state.lock:
+                    result = handler(body)
         except ShareError as exc:
             self._send_json(400, {"error": str(exc)})
             return
@@ -506,6 +654,7 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             "unlocked": state.unlocked,
             "key_id": state.key_id,
             "passphrase_saved": _passphrase_path(state.key_path).is_file(),
+            "ioc_info_enabled": state.ioc_info_enabled,
             "bundles": _list_bundles(state.bundles_dir),
         }
 
@@ -527,10 +676,19 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_lock(self, body: dict) -> dict:
         state = self.ui_state
+        was_unlocked = state.unlocked
+        passphrase_path = _passphrase_path(state.key_path)
+        had_saved_passphrase = passphrase_path.is_file()
         state.passphrase = None
         state.key_id = None
         _delete_passphrase_file(state.key_path)
-        return {"unlocked": False}
+        return {
+            "unlocked": False,
+            "was_unlocked": was_unlocked,
+            "passphrase_cleared": had_saved_passphrase
+            and not passphrase_path.is_file(),
+            "had_saved_passphrase": had_saved_passphrase,
+        }
 
     def _require_unlocked(self) -> None:
         if not self.ui_state.unlocked:
@@ -640,41 +798,57 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             rejected_rows = _rejected_rows_from_errors(bundle.errors)
             targets = list(bundle.targets)
 
-            build_kwargs: dict[str, Any] = {
-                "cache_dir": state.cache_dir,
-                "offline": False,
-                "transport_factory": state.transport_factory,
-            }
-            if state.credentials_path is not None:
-                build_kwargs["credentials_path"] = state.credentials_path
-            elif state.provider_env is not None:
-                build_kwargs["env"] = state.provider_env
+            provider = state.lookup_provider
+            if provider is None:
+                raise ShareError(LOOKUP_CREDENTIALS_ERROR)
+            offline = bool(state.lookup_offline)
 
-            providers = build_providers(["ioc_info"], **build_kwargs)
-            provider = providers[0]
-            # Missing secrets disable the live provider and skip cache. Rebuild
-            # offline so a warm 7-day cache is still readable; misses stay
-            # fail-closed and never hit the network.
-            offline = not provider.settings.enabled
-            if offline:
-                build_kwargs["offline"] = True
-                providers = build_providers(["ioc_info"], **build_kwargs)
-                provider = providers[0]
+            started = time.monotonic()
+            with state.lookup_lock:
+                cache_hit_keys = _fresh_cache_hit_keys(provider, targets)
+                try:
+                    if targets:
+                        result = provider.collect(
+                            targets,
+                            ProviderContext(refresh=False, offline=offline),
+                        )
+                    else:
+                        result = ProviderResult(name="ioc_info")
+                except Exception:
+                    print(
+                        f"ioc info lookup failed after {time.monotonic() - started:.1f}s",
+                        file=sys.stderr,
+                    )
+                    raise
+            print(
+                f"ioc info lookup: {len(targets)} ioc in {time.monotonic() - started:.1f}s",
+                file=sys.stderr,
+            )
 
-            cache_hit_keys = _fresh_cache_hit_keys(provider, targets)
-
-            if targets:
-                result = provider.collect(
-                    targets,
-                    ProviderContext(refresh=False, offline=offline),
+            for target in targets:
+                status = result.statuses.get(
+                    target.normalized, ProviderStatus.ERROR
                 )
-            else:
-                result = ProviderResult(name="ioc_info")
-
-            if targets and offline and result.cache_hits == 0:
-                raise ShareError(
-                    "ioc_info is disabled (missing credentials); cannot query"
+                if status != ProviderStatus.ERROR:
+                    continue
+                cached = _cached_lookup(provider, target)
+                if cached is None:
+                    continue
+                status, cached_observations, entry = cached
+                result.statuses[target.normalized] = status
+                result.freshnesses[target.normalized] = (
+                    Freshness.FRESH if entry.fresh else Freshness.STALE
                 )
+                result.observations = [
+                    obs
+                    for obs in result.observations
+                    if obs.ioc != target.normalized
+                ]
+                result.observations.extend(cached_observations)
+                cache_hit_keys.add(target.normalized)
+
+            if targets and offline and not cache_hit_keys and result.cache_hits == 0:
+                raise ShareError(LOOKUP_CREDENTIALS_ERROR)
 
             rows: list[dict] = []
             for target in targets:
@@ -795,6 +969,18 @@ def build_server(
         else:
             state.passphrase = saved
             state.key_id = key_id
+    state.ioc_info_enabled = _ioc_info_enabled(
+        cache_dir=resolved_cache,
+        credentials_path=resolved_credentials,
+        provider_env=provider_env,
+        transport_factory=transport_factory,
+    )
+    try:
+        state.lookup_provider, state.lookup_offline = _build_lookup_provider(state)
+    except (OSError, ValueError):
+        state.lookup_provider = None
+        state.lookup_offline = True
+    _warmup_lookup_cache(state)
     Handler.ui_state = state
     Handler.page_path = _PAGE_FILE
     try:
@@ -849,7 +1035,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--credentials-file",
         default=None,
-        help="optional credentials JSON for IOC Info lookup (default: process env)",
+        help="credentials JSON for IOC Info lookup (default: credentials.local.json if present, else process env)",
     )
     parser.add_argument(
         "--no-browser",
@@ -858,11 +1044,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     cache_dir = Path(args.cache_dir).expanduser()
-    credentials_path = (
-        Path(args.credentials_file).expanduser()
-        if args.credentials_file
-        else None
-    )
+    credentials_path = resolve_ui_credentials_path(args.credentials_file)
     server, url = build_server(
         Path(args.key_file).expanduser(),
         Path(args.bundle_dir).expanduser(),
@@ -874,6 +1056,18 @@ def main(argv: list[str] | None = None) -> int:
     print(f"share key file: {Path(args.key_file).expanduser()}")
     print(f"bundle directory: {Path(args.bundle_dir).expanduser()}")
     print(f"provider cache: {cache_dir.resolve()}")
+    if credentials_path is not None:
+        print(f"ioc info credentials: {credentials_path}")
+    else:
+        print(
+            "ioc info credentials: process environment "
+            "(no credentials.local.json in the current directory)"
+        )
+    if not server.RequestHandlerClass.ui_state.ioc_info_enabled:
+        print(
+            "ioc info lookup: no credentials; queries only read the local 7-day cache",
+            file=sys.stderr,
+        )
     print(
         "press Ctrl+C to stop; passphrase is remembered next to the key file "
         "until you clear it"

@@ -1,16 +1,17 @@
 """IOC normalization and grouping."""
 import re
 from datetime import datetime
+from math import isfinite
 from urllib.parse import urlparse
 from ioc_rejudge.models import IocDossier, RecordSnapshot
-from ioc_rejudge.parser import parse_time
+from ioc_rejudge.parser import latest_datetime, normalize_datetime
 
 
 def _record_time(record: dict) -> datetime | None:
     """Extract the best-effort record timestamp."""
     for field in ("updatetime", "inserttime", "disposaltime"):
-        parsed = parse_time(str(record.get(field, "")))
-        if parsed:
+        parsed = normalize_datetime(record.get(field))
+        if parsed is not None:
             return parsed
     return None
 
@@ -32,7 +33,11 @@ def _ordered_snapshots(records: list[dict]) -> list[RecordSnapshot]:
     ]
     return sorted(
         snapshots,
-        key=lambda s: (s.record_time or datetime.min, s.index),
+        key=lambda s: (
+            s.record_time is not None,
+            s.record_time if s.record_time is not None else datetime.min,
+            s.index,
+        ),
     )
 
 
@@ -134,8 +139,8 @@ def _pick_latest(records: list[dict], field: str) -> str | None:
         val = rec.get(field)
         if not val:
             continue
-        dt = parse_time(str(val))
-        if dt and (latest_dt is None or dt > latest_dt):
+        dt = normalize_datetime(val)
+        if dt is not None and (latest_dt is None or dt > latest_dt):
             latest_dt = dt
             latest_val = str(val)
     return latest_val
@@ -188,8 +193,8 @@ def _pick_latest_dict(records: list[dict], field: str) -> dict:
         fallback = val  # keep last as fallback
         # Try to find a time field inside this dict
         for key in TIME_KEYS:
-            dt = parse_time(val.get(key, ""))
-            if dt and (best_dt is None or dt > best_dt):
+            dt = normalize_datetime(val.get(key))
+            if dt is not None and (best_dt is None or dt > best_dt):
                 best_dt = dt
                 best_val = val
                 break
@@ -199,16 +204,13 @@ def _pick_latest_dict(records: list[dict], field: str) -> dict:
 
 def coerce_level(value: object, default: float = 0.0) -> float:
     """Coerce a possibly dirty level field (None, bool, str, junk) to a float."""
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         return default
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value.strip())
-        except ValueError:
-            return default
-    return default
+    try:
+        parsed = float(value)
+    except (ValueError, TypeError, OverflowError):
+        return default
+    return parsed if isfinite(parsed) else default
 
 
 def merge_records(records: list[dict]) -> IocDossier:
@@ -321,29 +323,29 @@ def merge_records(records: list[dict]) -> IocDossier:
 
     activity_times = []
     for h in hash_entries:
-        t = parse_time(h.get("time", ""))
-        if t:
+        t = normalize_datetime(h.get("time"))
+        if t is not None:
             activity_times.append(t)
-    flint_last = parse_time(latest_flint.get("last_seen", ""))
-    if flint_last:
+    flint_last = normalize_datetime(latest_flint.get("last_seen"))
+    if flint_last is not None:
         activity_times.append(flint_last)
-    access_end = parse_time(latest_access.get("end", ""))
-    if access_end:
+    access_end = normalize_datetime(latest_access.get("end"))
+    if access_end is not None:
         activity_times.append(access_end)
     for d in dtree_entries:
-        t = parse_time(d.get("last", ""))
-        if t:
+        t = normalize_datetime(d.get("last"))
+        if t is not None:
             activity_times.append(t)
 
     if activity_times:
-        dossier.latest_material_activity_time = max(activity_times)
+        dossier.latest_material_activity_time = latest_datetime(activity_times)
 
-    whois_updated = parse_time(latest_whois.get("updatedDate", ""))
-    if whois_updated:
+    whois_updated = normalize_datetime(latest_whois.get("updatedDate"))
+    if whois_updated is not None:
         dossier.latest_profile_update_time = whois_updated
 
     latest_intel = _pick_latest(records, "updatetime")
     if latest_intel:
-        dossier.latest_intel_update_time = parse_time(latest_intel)
+        dossier.latest_intel_update_time = normalize_datetime(latest_intel)
 
     return dossier

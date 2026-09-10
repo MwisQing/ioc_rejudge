@@ -129,8 +129,8 @@ class SidecarProvider:
                 continue
 
             # Parse timestamps via the project-wide parse_time helper.
-            fetched_at = parse_time(str(row.get("fetched_at", "")))
-            observed_at = parse_time(str(row.get("observed_at", "")))
+            fetched_at = parse_time(row.get("fetched_at"))
+            observed_at = parse_time(row.get("observed_at"))
 
             # Apply status to the aggregate mapping.
             current = statuses[target.normalized]

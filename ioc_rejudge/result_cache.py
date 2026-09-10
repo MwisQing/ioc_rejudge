@@ -10,6 +10,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from ioc_rejudge.parser import is_fresh, normalize_datetime, parse_time
+
 
 @dataclass(frozen=True)
 class ResultCacheSettings:
@@ -48,18 +50,14 @@ class AdjudicationResultCache:
 
     @staticmethod
     def _utc_naive(value: datetime) -> datetime:
-        if value.tzinfo is None:
-            return value
-        return value.astimezone(timezone.utc).replace(tzinfo=None)
+        normalized = normalize_datetime(value)
+        if normalized is None:
+            raise ValueError("invalid datetime")
+        return normalized
 
     @staticmethod
     def _parse_datetime(value: object) -> datetime | None:
-        if not isinstance(value, str) or not value.strip():
-            return None
-        try:
-            return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-        except ValueError:
-            return None
+        return parse_time(value)
 
     @classmethod
     def _lock_for(cls, path: Path) -> Lock:
@@ -113,8 +111,8 @@ class AdjudicationResultCache:
         stored_result = json.loads(json.dumps(result, ensure_ascii=False))
         if stored_result.get("ioc") != normalized_ioc:
             raise ValueError("cached adjudication result IOC does not match cache key")
-        fetched = fetched_at or datetime.now(timezone.utc)
-        if not isinstance(fetched, datetime):
+        fetched = fetched_at if fetched_at is not None else datetime.now(timezone.utc)
+        if not isinstance(fetched, datetime) or normalize_datetime(fetched) is None:
             raise TypeError("fetched_at must be a datetime")
         row = {
             "key": self.key(normalized_ioc, normalized_fingerprint),
@@ -231,7 +229,7 @@ class AdjudicationResultCache:
         current = now or datetime.now(timezone.utc)
         if not isinstance(current, datetime):
             raise TypeError("now must be a datetime")
-        fresh = self._utc_naive(current) - self._utc_naive(fetched) <= self.ttl
+        fresh = is_fresh(fetched, current, self.ttl)
         entry = ResultCacheEntry(
             normalized_ioc,
             normalized_fingerprint,
