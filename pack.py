@@ -28,6 +28,7 @@ _INCLUDE_PATHS = [
     "docs/ARCHITECTURE.md",
     "docs/DEVELOPMENT.md",
     "docs/HISTORY.md",
+    "docs/FRONTEND_OPTIMIZATION.md",
     "pack.py",
     "push.py",
     "upgrade.py",

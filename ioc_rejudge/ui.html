@@ -35,6 +35,17 @@
     padding: 10px 14px; font-size: 13px; color: var(--muted);
   }
   .statusbar b { color: var(--ink); font-weight: 600; }
+  .mode-nav {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;
+  }
+  .mode-nav a {
+    color: var(--accent); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 10px; text-decoration: none; background: var(--card);
+    font-size: 13px;
+  }
+  .mode-nav a:hover, .mode-nav a:focus-visible {
+    border-color: var(--accent); outline: none;
+  }
   .badge {
     display: inline-block; padding: 1px 10px; border-radius: 999px;
     font-size: 12px; border: 1px solid var(--line); color: var(--muted);
@@ -134,8 +145,58 @@
     background: #fff1f2; border: 1px solid #f4b7bc; color: #991b1b;
     border-radius: 6px; padding: 8px 10px; margin: 8px 0 0;
   }
+  .drop-zone {
+    border: 1px dashed #9aa5b1; border-radius: 6px; padding: 12px 14px;
+    margin-top: 8px; background: #fbfcfd; color: var(--muted);
+    text-align: center; cursor: pointer;
+  }
+  .drop-zone.dragover, .drop-zone:focus-visible {
+    border-color: var(--accent); background: #eff6ff; color: var(--accent);
+    outline: none;
+  }
+  .drop-zone[aria-disabled="true"] { cursor: not-allowed; opacity: .6; }
   .review-grid {
     display: grid; grid-template-columns: 1fr; gap: 0;
+  }
+  @media (max-width: 719px) {
+    .table-wrap {
+      overflow: visible; border: 0; background: transparent;
+    }
+    table.workbench-results-table {
+      display: block; min-width: 0; width: 100%;
+    }
+    table.workbench-results-table thead {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
+    table.workbench-results-table tbody {
+      display: grid; gap: 10px;
+    }
+    table.workbench-results-table tbody tr {
+      display: block; border: 1px solid var(--line); border-radius: 6px;
+      background: #fbfcfd; padding: 4px 10px;
+    }
+    table.workbench-results-table tbody tr:hover,
+    table.workbench-results-table tbody tr:focus-visible {
+      background: #f0f6ff; outline: 2px solid #9fc2f5; outline-offset: 1px;
+    }
+    table.workbench-results-table tbody td,
+    table.workbench-results-table tbody td.wrap {
+      display: grid; grid-template-columns: minmax(6.5rem, 34%) minmax(0, 1fr);
+      gap: 8px; min-width: 0; padding: 7px 0; border-bottom: 1px solid var(--line);
+      white-space: normal; overflow-wrap: anywhere; word-break: break-word;
+    }
+    table.workbench-results-table tbody td:last-child { border-bottom: 0; }
+    table.workbench-results-table tbody td::before {
+      content: attr(data-label); color: var(--muted); font-size: 12px;
+      font-weight: 600; line-height: 1.4;
+    }
+    table.workbench-results-table tbody td:first-child { font-weight: 600; }
+    table.workbench-results-table tbody td:first-child::after { content: none; }
+    table.workbench-results-table tbody tr td[colspan] {
+      display: block; border-bottom: 0; padding: 12px 0; text-align: center;
+    }
+    table.workbench-results-table tbody tr td[colspan]::before { content: none; }
   }
   @media (min-width: 720px) {
     .review-grid { grid-template-columns: 1fr 1fr; gap: 0 12px; }
@@ -145,7 +206,7 @@
 <body>
 <header>
   <h1>IOC share 助手</h1>
-  <div class="statusbar">
+  <div class="statusbar" id="statusbar">
     <span id="status-key">正在加载…</span>
     <span class="badge" id="status-unlocked">未解锁</span>
     <span style="margin-left: auto;"></span>
@@ -153,6 +214,11 @@
     <button class="secondary" type="button" id="lock-btn">清除口令</button>
     <span class="flash" id="lock-flash" hidden></span>
   </div>
+  <nav class="mode-nav" aria-label="页面模式">
+    <a href="#workbench-panel">研判工作台</a>
+    <a href="#create-panel">脱敏协作</a>
+    <a href="#statusbar">运维状态</a>
+  </nav>
 </header>
 <main>
   <div class="error" id="error-bar" hidden></div>
@@ -310,6 +376,10 @@
 
     <label for="workbench-file">研判输入 JSONL</label>
     <input type="file" id="workbench-file" accept=".jsonl,.json,application/json,text/plain">
+    <div class="drop-zone" id="workbench-drop-zone" role="button" tabindex="0" aria-describedby="workbench-file-status">
+      拖入单个 JSONL 文件，或点击这里选择文件
+    </div>
+    <div class="stats" id="workbench-file-status">未选择文件</div>
     <div class="actions">
       <button type="button" id="workbench-import">导入 staging</button>
       <button class="secondary" type="button" id="workbench-start" disabled>启动任务</button>
@@ -324,30 +394,86 @@
     <div class="row">
       <div>
         <label for="workbench-dispositions">结论筛选（逗号分隔，可空）</label>
-        <input type="text" id="workbench-dispositions" placeholder="black,gray,pending_review">
+        <input type="text" id="workbench-dispositions" placeholder="block,review,gray,false_positive">
       </div>
       <div>
         <label for="workbench-query">关键字</label>
         <input type="text" id="workbench-query" placeholder="IOC / 证据关键字">
       </div>
     </div>
+    <div class="actions" id="workbench-quick-filters" aria-label="快捷筛选">
+      <span class="stats">快捷筛选</span>
+      <button class="secondary" type="button" id="workbench-filter-all" data-workbench-disposition="" aria-pressed="false">全部</button>
+      <button class="secondary" type="button" id="workbench-filter-block" data-workbench-disposition="block" aria-pressed="false">黑</button>
+      <button class="secondary" type="button" id="workbench-filter-review" data-workbench-disposition="review" aria-pressed="false">待复核</button>
+      <button class="secondary" type="button" id="workbench-filter-gray" data-workbench-disposition="gray" aria-pressed="false">灰</button>
+      <button class="secondary" type="button" id="workbench-filter-false-positive" data-workbench-disposition="false_positive" aria-pressed="false">误报</button>
+      <button class="secondary" type="button" id="workbench-filter-provider-issues" disabled aria-pressed="false" aria-describedby="workbench-provider-filter-status">Provider 异常</button>
+    </div>
     <div class="actions">
       <button class="secondary" type="button" id="workbench-results" disabled>加载结果</button>
-      <button class="secondary" type="button" id="workbench-export" disabled>导出 JSONL</button>
+      <button class="secondary" type="button" id="workbench-prev-page" disabled>上一页</button>
+      <span class="stats" id="workbench-page-status">第 0 / 0 页 · 共 0 行</span>
+      <button class="secondary" type="button" id="workbench-next-page" disabled>下一页</button>
+      <button class="secondary" type="button" id="workbench-diagnostics" disabled>查看诊断</button>
+      <button class="secondary" type="button" id="workbench-summary" disabled>运行摘要</button>
+      <label for="workbench-export-format">导出格式</label>
+      <select id="workbench-export-format">
+        <option value="jsonl">JSONL</option>
+        <option value="csv">CSV</option>
+        <option value="xlsx">Excel (.xlsx)</option>
+        <option value="diagnostics">诊断</option>
+        <option value="diff">Diff</option>
+        <option value="bundle">Bundle</option>
+      </select>
+      <button class="secondary" type="button" id="workbench-export" disabled>导出</button>
+      <span class="flash" id="workbench-export-flash" hidden></span>
+    </div>
+    <div class="stats" id="workbench-export-preview">当前筛选预计导出 0 行</div>
+
+    <div class="result" id="workbench-diagnostics-result" hidden>
+      <div class="stats" id="workbench-diagnostics-stats"></div>
+      <div class="json-viewer" id="workbench-diagnostics-viewer"></div>
+    </div>
+
+    <div class="result" id="workbench-summary-result" hidden>
+      <div class="stats" id="workbench-summary-stats"></div>
+      <div class="json-viewer" id="workbench-summary-viewer"></div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="workbench-baseline-task">baseline task_id（可选）</label>
+        <input type="text" id="workbench-baseline-task" placeholder="task-…">
+      </div>
+      <div class="actions">
+        <button class="secondary" type="button" id="workbench-diff" disabled>对比 baseline</button>
+      </div>
+    </div>
+    <div class="stats" id="workbench-provider-filter-status">Provider 异常筛选会匹配 error、disabled、failed、timeout 和缺失必要来源；no_data 不视为失败。</div>
+    <div class="result" id="workbench-diff-result" hidden>
+      <div class="stats" id="workbench-diff-stats"></div>
+      <div class="json-viewer" id="workbench-diff-viewer"></div>
     </div>
 
     <div class="result" id="workbench-results-result" hidden>
       <div class="stats" id="workbench-results-stats"></div>
       <div class="table-wrap">
-        <table aria-live="polite">
-          <thead><tr><th>result_id</th><th>IOC</th><th>结论</th><th>置信度</th><th>摘要</th></tr></thead>
+        <table class="workbench-results-table" aria-live="polite">
+          <thead><tr><th>result_id</th><th>IOC</th><th>结论 / 处置</th><th>route</th><th>复核建议</th><th>置信度</th><th>缺失来源</th><th>provider 状态</th><th>保留 URL</th><th>摘要</th></tr></thead>
           <tbody id="workbench-results-body"></tbody>
         </table>
       </div>
     </div>
 
+    <div class="actions" id="workbench-detail-navigation">
+      <button class="secondary" type="button" id="workbench-prev-result" disabled>上一条</button>
+      <span class="stats" id="workbench-detail-nav-status">未选择结果</span>
+      <button class="secondary" type="button" id="workbench-next-result" disabled>下一条</button>
+    </div>
+
     <div class="result" id="workbench-detail-result" hidden>
-      <h3>解释详情</h3>
+      <h3>解释详情 <span class="stats" id="workbench-selected-result"></span></h3>
       <div class="json-viewer" id="workbench-detail-viewer"></div>
       <div class="review-grid">
         <div>
@@ -377,6 +503,43 @@
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
 const $ = (id) => document.getElementById(id);
 const LONG_STRING = 160;
+const WORKBENCH_RENDER_CHUNK_SIZE = 24;
+let keyExists = null;
+const workbenchState = {
+  configured: true,
+  backendAvailable: true,
+  importId: '',
+  importMeta: null,
+  taskId: '',
+  task: null,
+  selectedResultId: '',
+  resultRows: [],
+  resultTotal: 0,
+  resultOffset: 0,
+  resultLimit: 100,
+  resultsLoaded: false,
+  providerIssues: false,
+  pollTimer: null,
+  refreshInFlight: false,
+  selectedFile: null,
+  renderVersion: 0,
+  capabilities: {
+    diagnostics: true,
+    summary: true,
+    diff: true,
+    bundle: true,
+  },
+};
+
+const WORKBENCH_STATE_LABELS = {
+  queued: '排队中',
+  pending: '等待中',
+  running: '运行中',
+  succeeded: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+  cancelling: '正在取消',
+};
 
 async function api(path, payload, timeoutMs) {
   const limit = timeoutMs == null ? 45000 : timeoutMs;
@@ -405,6 +568,7 @@ async function api(path, payload, timeoutMs) {
       throw new Error('会话令牌无效或请求被拒绝：请从启动命令打印的 URL 重新打开本页面。');
     }
     const err = new Error(data && data.error ? data.error : ('HTTP ' + response.status));
+    err.status = response.status;
     err.unavailable = response.status === 501;
     throw err;
   }
@@ -431,7 +595,11 @@ async function apiGet(path, timeoutMs) {
   let data = null;
   try { data = await response.json(); } catch (err) { data = null; }
   if (!response.ok) {
+    if (response.status === 403) {
+      throw new Error('会话令牌无效或请求被拒绝：请从启动命令打印的 URL 重新打开本页面。');
+    }
     const err = new Error(data && data.error ? data.error : ('HTTP ' + response.status));
+    err.status = response.status;
     err.unavailable = response.status === 501;
     throw err;
   }
@@ -455,6 +623,330 @@ async function withBusy(button, busyText, work) {
 function flash(id, message) {
   const el = $(id); el.textContent = message; el.hidden = false;
   setTimeout(() => { el.hidden = true; }, 5000);
+}
+
+function workbenchStateLabel(state) {
+  return WORKBENCH_STATE_LABELS[state] || (state ? String(state) : '未知');
+}
+
+function workbenchSetAvailability(configured, backendAvailable) {
+  workbenchState.configured = configured !== false;
+  workbenchState.backendAvailable = backendAvailable !== false;
+  const status = $('workbench-status');
+  if (!workbenchState.configured) {
+    status.textContent = '研判工作台未配置：当前页面不会伪造任务、结果或导出成功。';
+    status.hidden = false;
+  } else if (!workbenchState.backendAvailable) {
+    status.textContent = '研判后端不可用：当前最多只能尝试导入 staging，任务、结果、复核和导出不会显示成功状态。';
+    status.hidden = false;
+  } else {
+    status.textContent = '';
+    status.hidden = true;
+  }
+  workbenchSyncControls();
+}
+
+function workbenchMarkCapabilityUnavailable(capability, message) {
+  if (Object.prototype.hasOwnProperty.call(workbenchState.capabilities, capability)) {
+    workbenchState.capabilities[capability] = false;
+  }
+  const text = (capability || 'workbench') + ' unavailable' + (message ? ': ' + message : '');
+  if (capability === 'diagnostics') {
+    $('workbench-diagnostics-stats').textContent = text;
+    $('workbench-diagnostics-result').hidden = false;
+  } else if (capability === 'summary') {
+    $('workbench-summary-stats').textContent = text;
+    $('workbench-summary-result').hidden = false;
+  } else if (capability === 'diff') {
+    $('workbench-diff-stats').textContent = text;
+    $('workbench-diff-result').hidden = false;
+  } else {
+    flash('workbench-export-flash', text);
+  }
+  workbenchSyncControls();
+}
+
+function workbenchError(err, capability) {
+  showError(err && err.message ? err.message : String(err));
+  const unavailable = err && (err.unavailable || err.status === 404);
+  if (unavailable && capability) {
+    workbenchMarkCapabilityUnavailable(capability, err.message);
+  } else if (unavailable) {
+    workbenchSetAvailability(workbenchState.configured, false);
+  }
+}
+
+function workbenchSyncQuickFilter() {
+  const raw = ($('workbench-dispositions').value || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const selected = raw.length === 1 ? raw[0] : null;
+  document.querySelectorAll('[data-workbench-disposition]').forEach((button) => {
+    button.setAttribute(
+      'aria-pressed',
+      button.dataset.workbenchDisposition === (selected || '') ? 'true' : 'false'
+    );
+  });
+  $('workbench-filter-provider-issues').setAttribute(
+    'aria-pressed', workbenchState.providerIssues ? 'true' : 'false'
+  );
+}
+
+function workbenchSafeSummary(value, key) {
+  if (key && /(?:path|secret|token|password|credential|authorization|api[_-]?key)/i.test(key)) {
+    return '[redacted]';
+  }
+  if (Array.isArray(value)) return value.map((item) => workbenchSafeSummary(item));
+  if (value && typeof value === 'object') {
+    const safe = {};
+    Object.keys(value).forEach((childKey) => {
+      safe[childKey] = workbenchSafeSummary(value[childKey], childKey);
+    });
+    return safe;
+  }
+  if (typeof value === 'string' && (/^[A-Za-z]:[\\/]/.test(value) || value.startsWith('/'))) {
+    return '[path redacted]';
+  }
+  return value;
+}
+
+function workbenchUpdateExportPreview() {
+  const format = $('workbench-export-format').value;
+  const baseline = $('workbench-baseline-task').value.trim();
+  const filterText = [];
+  const filters = workbenchFilters();
+  if (filters.dispositions) filterText.push('处置 ' + filters.dispositions.join(', '));
+  if (filters.query) filterText.push('关键字 ' + filters.query);
+  if (filters.provider_issues) filterText.push('Provider 异常/缺失');
+  const count = workbenchState.resultsLoaded
+    ? workbenchState.resultTotal
+    : '未知（请先加载结果）';
+  let text = '当前筛选预计导出 ' + count + ' · 格式 ' + format;
+  text += filterText.length ? ' · ' + filterText.join(' · ') : ' · 未筛选';
+  if (['diff', 'bundle'].includes(format)) {
+    text += baseline ? ' · baseline ' + baseline : ' · 需要 baseline task_id';
+  }
+  $('workbench-export-preview').textContent = text;
+}
+
+function workbenchSyncControls() {
+  const taskState = workbenchState.task && workbenchState.task.state;
+  const taskActive = ['queued', 'pending', 'running', 'cancelling'].includes(taskState);
+  const taskReady = taskState === 'succeeded';
+  const taskCapable = workbenchState.configured && workbenchState.backendAvailable;
+  const pageLimit = workbenchState.resultLimit > 0 ? workbenchState.resultLimit : 100;
+  const hasMoreBefore = workbenchState.resultOffset > 0;
+  const hasMoreAfter = workbenchState.resultOffset + workbenchState.resultRows.length < workbenchState.resultTotal;
+  const selectedIndex = workbenchState.resultRows.findIndex(
+    (row) => workbenchCell(row.result_id) === workbenchState.selectedResultId
+  );
+  const currentPage = workbenchState.resultTotal
+    ? Math.floor(workbenchState.resultOffset / pageLimit) + 1
+    : 0;
+  const totalPages = workbenchState.resultTotal
+    ? Math.ceil(workbenchState.resultTotal / pageLimit)
+    : 0;
+  $('workbench-import').disabled = !workbenchState.configured;
+  $('workbench-start').disabled = !taskCapable || !workbenchState.importId || !!workbenchState.taskId;
+  $('workbench-refresh').disabled = !taskCapable || !workbenchState.taskId;
+  $('workbench-cancel').disabled = !taskCapable || !workbenchState.taskId || !taskActive;
+  $('workbench-results').disabled = !taskCapable || !workbenchState.taskId || !taskReady;
+  $('workbench-prev-page').disabled = !taskCapable || !workbenchState.taskId || !taskReady || !hasMoreBefore;
+  $('workbench-next-page').disabled = !taskCapable || !workbenchState.taskId || !taskReady || !hasMoreAfter;
+  document.querySelectorAll('[data-workbench-disposition]').forEach((button) => {
+    button.disabled = !taskCapable || !workbenchState.taskId || !taskReady;
+  });
+  $('workbench-filter-provider-issues').disabled =
+    !taskCapable || !workbenchState.taskId || !taskReady;
+  $('workbench-diagnostics').disabled = !taskCapable || !workbenchState.taskId;
+  $('workbench-summary').disabled = !taskCapable || !workbenchState.taskId;
+  $('workbench-diagnostics').disabled = $('workbench-diagnostics').disabled || !workbenchState.capabilities.diagnostics;
+  $('workbench-summary').disabled = $('workbench-summary').disabled || !workbenchState.capabilities.summary;
+  document.querySelectorAll('#workbench-export-format option').forEach((option) => {
+    option.disabled = Object.prototype.hasOwnProperty.call(workbenchState.capabilities, option.value)
+      && !workbenchState.capabilities[option.value];
+  });
+  $('workbench-export-format').disabled = !taskCapable || !workbenchState.taskId || !taskReady;
+  const exportFormat = $('workbench-export-format').value;
+  const needsBaseline = ['diff', 'bundle'].includes(exportFormat);
+  const baselineReady = !needsBaseline || !!$('workbench-baseline-task').value.trim();
+  const exportCapabilityReady = !Object.prototype.hasOwnProperty.call(workbenchState.capabilities, exportFormat)
+    || workbenchState.capabilities[exportFormat];
+  $('workbench-export').disabled = !taskCapable || !workbenchState.taskId || !taskReady
+    || !baselineReady || !exportCapabilityReady;
+  $('workbench-drop-zone').setAttribute('aria-disabled', workbenchState.configured ? 'false' : 'true');
+  $('workbench-diff').disabled = !taskCapable || !workbenchState.taskId || !taskReady
+    || !workbenchState.capabilities.diff || !$('workbench-baseline-task').value.trim();
+  $('workbench-review').disabled = !taskCapable || !workbenchState.taskId || !taskReady || !workbenchState.selectedResultId;
+  $('workbench-prev-result').disabled = !taskCapable || !taskReady || selectedIndex <= 0;
+  $('workbench-next-result').disabled = !taskCapable || !taskReady || selectedIndex < 0 || selectedIndex >= workbenchState.resultRows.length - 1;
+  $('workbench-page-status').textContent =
+    '第 ' + currentPage + ' / ' + totalPages + ' 页 · 共 ' + workbenchState.resultTotal + ' 行';
+  $('workbench-detail-nav-status').textContent = selectedIndex < 0
+    ? '未选择结果'
+    : '当前第 ' + (selectedIndex + 1) + ' / ' + workbenchState.resultRows.length + ' 条';
+  workbenchSyncQuickFilter();
+  workbenchUpdateExportPreview();
+}
+
+function workbenchFilters() {
+  const raw = $('workbench-dispositions').value || '';
+  const dispositions = [...new Set(
+    raw.split(',').map((value) => value.trim()).filter(Boolean)
+  )];
+  const query = ($('workbench-query').value || '').trim();
+  const payload = {};
+  if (dispositions.length) payload.dispositions = dispositions;
+  if (query) payload.query = query;
+  if (workbenchState.providerIssues) payload.provider_issues = true;
+  return payload;
+}
+
+function workbenchSetTask(task) {
+  workbenchState.task = task || null;
+  const state = task && task.state ? task.state : '';
+  const parts = [];
+  if (task && task.task_id) parts.push('task_id ' + task.task_id);
+  if (task && task.import_id) parts.push('import_id ' + task.import_id);
+  parts.push('状态 ' + workbenchStateLabel(state));
+  if (task && task.mode) parts.push('模式 ' + task.mode);
+  if (task && task.result_count != null) parts.push('结果 ' + task.result_count + ' 行');
+  if (task && task.progress && task.progress.phase) {
+    const completed = task.progress.completed == null ? 0 : task.progress.completed;
+    const total = task.progress.total == null ? '?' : task.progress.total;
+    parts.push('阶段 ' + task.progress.phase + ' ' + completed + '/' + total);
+  }
+  if (task && task.error) parts.push('错误 ' + task.error);
+  $('workbench-task-stats').textContent = parts.join(' · ');
+  $('workbench-task-result').hidden = !task;
+  workbenchSyncControls();
+}
+
+function workbenchShowImport(meta) {
+  const parts = [
+    '已导入 ' + (meta.filename || 'input.jsonl'),
+    'import_id ' + meta.import_id,
+    '大小 ' + meta.size + ' bytes',
+    '行数 ' + meta.rows,
+  ];
+  $('workbench-task-stats').textContent = parts.join(' · ');
+  $('workbench-task-result').hidden = false;
+}
+
+function workbenchCell(value) {
+  if (value == null) return '';
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value); } catch (err) { return String(value); }
+  }
+  return String(value);
+}
+
+function workbenchCompact(value, maxLength) {
+  const limit = maxLength || 180;
+  const text = workbenchCell(value);
+  return text.length > limit ? text.slice(0, limit - 1) + '…' : text;
+}
+
+function workbenchListSummary(value, maxItems, maxLength) {
+  if (!Array.isArray(value)) return workbenchCompact(value, maxLength);
+  const itemLimit = maxItems || 4;
+  const shown = value.slice(0, itemLimit).map((item) => workbenchCompact(item, 100));
+  if (value.length > itemLimit) shown.push('+' + (value.length - itemLimit) + ' 项');
+  return workbenchCompact(shown.join(' · '), maxLength || 180);
+}
+
+function workbenchProviderSummary(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return workbenchCompact(value, 180);
+  }
+  const entries = Object.keys(value).map((name) => name + ':' + workbenchCompact(value[name], 48));
+  return workbenchCompact(entries.join(' · '), 220);
+}
+
+function scheduleWorkbenchRender(callback) {
+  if (typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(callback);
+  } else {
+    window.setTimeout(callback, 0);
+  }
+}
+
+function createWorkbenchResultRow(row) {
+  const resultId = workbenchCell(row.result_id);
+  const tr = document.createElement('tr');
+  tr.dataset.resultId = resultId;
+  tr.tabIndex = 0;
+  tr.setAttribute('aria-label', '查看 ' + resultId + ' 的解释');
+  const conclusion = [row.conclusion, row.disposition].filter((value) => value != null && value !== '').join(' / ');
+  const cells = [
+    {label: 'result_id', value: resultId},
+    {label: 'IOC', value: row.ioc},
+    {label: '结论 / 处置', value: conclusion},
+    {label: 'route', value: row.route},
+    {label: '复核建议', value: row.review_suggestion},
+    {label: '置信度', value: row.confidence},
+    {label: '缺失来源', value: workbenchListSummary(row.missing_required_providers), wrap: true},
+    {label: 'provider 状态', value: workbenchProviderSummary(row.provider_statuses), wrap: true},
+    {label: '保留 URL', value: workbenchListSummary(row.retained_urls), wrap: true},
+    {label: '摘要', value: workbenchCompact(row.reason || row.summary, 220), wrap: true},
+  ];
+  cells.forEach((item) => {
+    const td = document.createElement('td');
+    if (item.wrap) td.className = 'wrap';
+    td.dataset.label = item.label;
+    td.textContent = workbenchCell(item.value);
+    tr.appendChild(td);
+  });
+  const select = () => loadWorkbenchExplanation(resultId);
+  tr.addEventListener('click', select);
+  tr.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      select();
+    }
+  });
+  return tr;
+}
+
+function renderWorkbenchRows(rows) {
+  const body = $('workbench-results-body');
+  const renderToken = ++workbenchState.renderVersion;
+  const source = Array.isArray(rows) ? rows.slice() : [];
+  body.replaceChildren();
+  body.setAttribute('aria-busy', 'true');
+  if (!source.length) {
+    const empty = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 10;
+    cell.textContent = '当前筛选没有结果';
+    empty.appendChild(cell);
+    body.appendChild(empty);
+    body.setAttribute('aria-busy', 'false');
+    return Promise.resolve(renderToken);
+  }
+  let cursor = 0;
+  return new Promise((resolve) => {
+    const appendChunk = () => {
+      if (renderToken !== workbenchState.renderVersion) {
+        resolve(renderToken);
+        return;
+      }
+      const fragment = document.createDocumentFragment();
+      const end = Math.min(cursor + WORKBENCH_RENDER_CHUNK_SIZE, source.length);
+      for (; cursor < end; cursor += 1) {
+        fragment.appendChild(createWorkbenchResultRow(source[cursor]));
+      }
+      body.appendChild(fragment);
+      if (cursor < source.length) {
+        scheduleWorkbenchRender(appendChunk);
+      } else {
+        body.setAttribute('aria-busy', 'false');
+        resolve(renderToken);
+      }
+    };
+    appendChunk();
+  });
 }
 
 async function copyText(text, textarea, flashId, message) {
@@ -658,6 +1150,7 @@ async function refreshStatus() {
   let status;
   try { status = await api('/api/status', {}); }
   catch (err) { showError(err.message); return; }
+  keyExists = !!status.key_exists;
   const unlocked = !!status.unlocked;
   document.body.classList.toggle('is-unlocked', unlocked);
   $('status-unlocked').textContent = unlocked ? '已解锁' : '未解锁';
@@ -692,6 +1185,12 @@ async function refreshStatus() {
   }
   const credNote = $('lookup-cred-note');
   if (credNote) credNote.hidden = !!status.ioc_info_enabled;
+  if (status.workbench) {
+    workbenchSetAvailability(
+      status.workbench.configured,
+      status.workbench.backend_available
+    );
+  }
   const list = $('status-bundles');
   list.textContent = '';
   const historyLimit = status.bundle_history_limit == null ? 5 : status.bundle_history_limit;
@@ -716,10 +1215,14 @@ async function doKey() {
   try {
     const passphrase = $('key-passphrase').value;
     if (!passphrase) throw new Error('请输入口令');
+    const force = $('key-force').checked;
+    if (force && keyExists !== false && !window.confirm('确认覆盖本机已有 key？旧 key 将无法还原此前的 bundle。')) {
+      return;
+    }
     await api('/api/key', {
       passphrase: passphrase,
       generate: $('key-generate').checked,
-      force: $('key-force').checked,
+      force: force,
     });
     $('key-passphrase').value = '';
     await refreshStatus();
@@ -786,6 +1289,12 @@ async function doLookup() {
   }
 }
 
+async function doLookupPlainCopy() {
+  clearError();
+  if (!window.confirm('明文可能包含敏感 IOC 和凭据，只能在本机使用。确认复制？')) return;
+  await copyText($('lookup-output').value, $('lookup-output'), 'lookup-flash');
+}
+
 async function doSanitizeCopy() {
   clearError();
   try {
@@ -835,6 +1344,12 @@ async function doRestore() {
   } catch (err) { showError(err.message); }
 }
 
+async function doRestorePlainCopy() {
+  clearError();
+  if (!window.confirm('还原结果包含真实 IOC 和身份值，只能在本机使用。确认复制？')) return;
+  await copyText($('restore-output').value, $('restore-output'), 'restore-flash');
+}
+
 async function doScan() {
   clearError();
   try {
@@ -851,26 +1366,510 @@ async function doScan() {
   } catch (err) { showError(err.message); }
 }
 
+function workbenchSelectFile(file) {
+  if (!file || typeof file.text !== 'function') {
+    workbenchState.selectedFile = null;
+    $('workbench-file-status').textContent = '未选择文件';
+    throw new Error('请选择一个本地文件');
+  }
+  workbenchState.selectedFile = file;
+  $('workbench-file-status').textContent =
+    '已选择 ' + (file.name || 'input.jsonl') + ' · ' + file.size + ' bytes；导入时由后端校验 JSONL';
+}
+
+function workbenchHandleDrop(event) {
+  event.preventDefault();
+  $('workbench-drop-zone').classList.remove('dragover');
+  const files = event.dataTransfer && event.dataTransfer.files
+    ? Array.from(event.dataTransfer.files)
+    : [];
+  if (files.length !== 1) {
+    workbenchState.selectedFile = null;
+    $('workbench-file-status').textContent = '未选择文件';
+    showError('请一次拖入一个研判输入 JSONL 文件');
+    return;
+  }
+  try {
+    workbenchSelectFile(files[0]);
+    clearError();
+  } catch (err) {
+    workbenchError(err);
+  }
+}
+
+async function doWorkbenchImport() {
+  clearError();
+  const button = $('workbench-import');
+  try {
+    const file = workbenchState.selectedFile;
+    if (!file) throw new Error('请选择或拖入研判输入 JSONL');
+    const content = await file.text();
+    const result = await withBusy(button, '导入中…', () => api('/api/workbench/import', {
+      filename: file.name,
+      content: content,
+    }));
+    if (!result || !result.import_id) throw new Error('导入响应缺少 import_id');
+    workbenchState.importId = result.import_id;
+    workbenchState.importMeta = result;
+    workbenchState.taskId = '';
+    workbenchState.task = null;
+    workbenchState.selectedResultId = '';
+    workbenchState.resultRows = [];
+    workbenchState.resultTotal = 0;
+    workbenchState.resultOffset = 0;
+    workbenchState.resultLimit = 100;
+    workbenchState.resultsLoaded = false;
+    workbenchState.providerIssues = false;
+    if (workbenchState.pollTimer) clearTimeout(workbenchState.pollTimer);
+    workbenchState.pollTimer = null;
+    $('workbench-results-result').hidden = true;
+    $('workbench-detail-result').hidden = true;
+    workbenchShowImport(result);
+    workbenchSyncControls();
+    flash('workbench-export-flash', '已导入 staging；可以启动任务');
+  } catch (err) {
+    workbenchError(err);
+    workbenchSyncControls();
+  }
+}
+
+async function doWorkbenchStart() {
+  clearError();
+  const button = $('workbench-start');
+  try {
+    if (!workbenchState.importId) throw new Error('请先导入 staging');
+    const result = await withBusy(button, '启动中…', () => api('/api/workbench/task', {
+      import_id: workbenchState.importId,
+      options: {background: true},
+    }));
+    if (!result || !result.task_id) throw new Error('启动响应缺少 task_id');
+    workbenchState.taskId = result.task_id;
+    workbenchSetTask(result);
+    $('workbench-results-result').hidden = true;
+    $('workbench-detail-result').hidden = true;
+    workbenchState.selectedResultId = '';
+    workbenchState.resultsLoaded = false;
+    workbenchSyncControls();
+    workbenchScheduleRefresh();
+  } catch (err) {
+    workbenchError(err);
+    workbenchSyncControls();
+  }
+}
+
+async function doWorkbenchRefresh() {
+  clearError();
+  const button = $('workbench-refresh');
+  try {
+    if (!workbenchState.taskId) throw new Error('当前没有任务');
+    if (workbenchState.refreshInFlight) return workbenchState.task;
+    workbenchState.refreshInFlight = true;
+    const result = await withBusy(button, '刷新中…', () => apiGet(
+      '/api/workbench/task/' + encodeURIComponent(workbenchState.taskId)
+    ));
+    if (!result || !result.task_id) throw new Error('状态响应缺少 task_id');
+    workbenchSetTask(result);
+    if (['queued', 'pending', 'running', 'cancelling'].includes(result.state)) {
+      workbenchScheduleRefresh();
+    } else if (workbenchState.pollTimer) {
+      clearTimeout(workbenchState.pollTimer);
+      workbenchState.pollTimer = null;
+    }
+    return result;
+  } catch (err) {
+    workbenchError(err);
+    workbenchSyncControls();
+  } finally {
+    workbenchState.refreshInFlight = false;
+  }
+}
+
+function workbenchScheduleRefresh() {
+  if (workbenchState.pollTimer) clearTimeout(workbenchState.pollTimer);
+  if (!workbenchState.taskId) return;
+  const state = workbenchState.task && workbenchState.task.state;
+  if (!['queued', 'pending', 'running', 'cancelling'].includes(state)) return;
+  workbenchState.pollTimer = setTimeout(() => {
+    workbenchState.pollTimer = null;
+    doWorkbenchRefresh();
+  }, 1200);
+}
+
+async function doWorkbenchCancel() {
+  clearError();
+  const button = $('workbench-cancel');
+  try {
+    if (!workbenchState.taskId) throw new Error('当前没有任务');
+    const result = await withBusy(button, '取消中…', () => api('/api/workbench/cancel', {
+      task_id: workbenchState.taskId,
+    }));
+    if (!result || !result.task_id) throw new Error('取消响应缺少 task_id');
+    workbenchSetTask(Object.assign({}, workbenchState.task || {}, result));
+  } catch (err) {
+    workbenchError(err);
+    workbenchSyncControls();
+  }
+}
+
+async function loadWorkbenchResults(requestedOffset, preserveSelection) {
+  clearError();
+  const button = $('workbench-results');
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    const offset = Number.isInteger(requestedOffset) && requestedOffset >= 0
+      ? requestedOffset
+      : 0;
+    const filters = workbenchFilters();
+    const payload = Object.assign({
+      task_id: workbenchState.taskId,
+      offset: offset,
+      limit: workbenchState.resultLimit,
+    }, filters);
+    const result = await withBusy(button, '加载中…', () => api('/api/workbench/results', payload));
+    if (!result || !Array.isArray(result.rows)) throw new Error('结果响应缺少 rows');
+    workbenchState.resultRows = result.rows;
+    workbenchState.resultTotal = Number(result.total || 0);
+    workbenchState.resultOffset = Number(result.offset || 0);
+    workbenchState.resultLimit = Number(result.limit || workbenchState.resultLimit);
+    workbenchState.resultsLoaded = true;
+    const selectedIsVisible = workbenchState.resultRows.some(
+      (row) => workbenchCell(row.result_id) === workbenchState.selectedResultId
+    );
+    if (!preserveSelection || !selectedIsVisible) {
+      workbenchState.selectedResultId = '';
+      $('workbench-detail-result').hidden = true;
+      $('workbench-selected-result').textContent = '';
+    }
+    const filterText = [];
+    if (filters.dispositions) filterText.push('处置 ' + filters.dispositions.join(', '));
+    if (filters.query) filterText.push('关键字 ' + filters.query);
+    if (filters.provider_issues) filterText.push('Provider 异常/缺失');
+    $('workbench-results-stats').textContent = [
+      'task_id ' + (result.task_id || workbenchState.taskId),
+      '状态 ' + workbenchStateLabel(result.state),
+      '匹配 ' + workbenchState.resultTotal + ' 行',
+      '本页 ' + workbenchState.resultRows.length + ' 行',
+      filterText.length ? filterText.join(' · ') : '未筛选',
+    ].join(' · ');
+    const renderedVersion = await renderWorkbenchRows(workbenchState.resultRows);
+    if (renderedVersion !== workbenchState.renderVersion) return result;
+    $('workbench-results-result').hidden = false;
+    workbenchSyncControls();
+    return result;
+  } catch (err) {
+    workbenchError(err);
+    workbenchSyncControls();
+    return null;
+  }
+}
+
+async function loadWorkbenchExplanation(resultId) {
+  clearError();
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    if (!resultId) throw new Error('结果缺少 result_id');
+    workbenchState.selectedResultId = resultId;
+    $('workbench-selected-result').textContent = 'result_id ' + resultId;
+    $('workbench-detail-viewer').textContent = '正在加载解释…';
+    $('workbench-detail-result').hidden = false;
+    workbenchSyncControls();
+    const result = await api('/api/workbench/explanation', {
+      task_id: workbenchState.taskId,
+      result_id: resultId,
+    });
+    renderJsonlViewer(
+      $('workbench-detail-viewer'),
+      JSON.stringify(result == null ? {} : result)
+    );
+    return result;
+  } catch (err) {
+    workbenchError(err);
+    return null;
+  }
+}
+
+async function loadWorkbenchPage(direction) {
+  clearError();
+  const button = direction < 0 ? $('workbench-prev-page') : $('workbench-next-page');
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    const limit = workbenchState.resultLimit > 0 ? workbenchState.resultLimit : 100;
+    const target = workbenchState.resultOffset + (direction < 0 ? -limit : limit);
+    if (target < 0 || target >= workbenchState.resultTotal) return;
+    await withBusy(button, '加载中…', () => loadWorkbenchResults(target, false));
+  } catch (err) {
+    workbenchError(err);
+  } finally {
+    workbenchSyncControls();
+  }
+}
+
+async function applyWorkbenchQuickFilter(disposition, button) {
+  clearError();
+  try {
+    $('workbench-dispositions').value = disposition;
+    workbenchState.providerIssues = false;
+    workbenchSyncQuickFilter();
+    await withBusy(button, '加载中…', () => loadWorkbenchResults(0, false));
+  } catch (err) {
+    workbenchError(err);
+  } finally {
+    workbenchSyncControls();
+  }
+}
+
+async function applyWorkbenchProviderFilter(button) {
+  clearError();
+  try {
+    workbenchState.providerIssues = true;
+    $('workbench-dispositions').value = '';
+    workbenchSyncControls();
+    await withBusy(button, '加载中…', () => loadWorkbenchResults(0, false));
+  } catch (err) {
+    workbenchError(err);
+  } finally {
+    workbenchSyncControls();
+  }
+}
+
+async function navigateWorkbenchResult(direction) {
+  clearError();
+  const button = direction < 0 ? $('workbench-prev-result') : $('workbench-next-result');
+  try {
+    const index = workbenchState.resultRows.findIndex(
+      (row) => workbenchCell(row.result_id) === workbenchState.selectedResultId
+    );
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= workbenchState.resultRows.length) return;
+    const resultId = workbenchCell(workbenchState.resultRows[target].result_id);
+    await withBusy(button, '加载中…', () => loadWorkbenchExplanation(resultId));
+  } catch (err) {
+    workbenchError(err);
+  } finally {
+    workbenchSyncControls();
+  }
+}
+
+async function doWorkbenchReview() {
+  clearError();
+  const button = $('workbench-review');
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    if (!workbenchState.selectedResultId) throw new Error('请先点击一条结果查看解释');
+    const decision = ($('workbench-decision').value || '').trim();
+    if (!decision) throw new Error('请选择复核结论');
+    const resultId = workbenchState.selectedResultId;
+    const result = await withBusy(button, '提交中…', () => api('/api/workbench/review', {
+      task_id: workbenchState.taskId,
+      result_id: resultId,
+      decision: decision,
+      reason: $('workbench-reason').value || '',
+      reviewer: $('workbench-reviewer').value || '',
+    }));
+    if (!result || !result.result_id) throw new Error('复核响应缺少 result_id');
+    flash('workbench-flash', '人工复核 overlay 已追加；系统结论未覆盖');
+    const refreshed = await loadWorkbenchResults(workbenchState.resultOffset, true);
+    if (!refreshed) return;
+    await loadWorkbenchExplanation(resultId);
+  } catch (err) {
+    workbenchError(err);
+    workbenchSyncControls();
+  }
+}
+
+async function doWorkbenchExport() {
+  clearError();
+  const button = $('workbench-export');
+  let format = 'jsonl';
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    format = $('workbench-export-format').value;
+    if (!['jsonl', 'csv', 'xlsx', 'diagnostics', 'diff', 'bundle'].includes(format)) {
+      throw new Error('导出格式不受支持');
+    }
+    const baselineTaskId = $('workbench-baseline-task').value.trim();
+    if (['diff', 'bundle'].includes(format) && !baselineTaskId) {
+      throw new Error('导出 ' + format + ' 前请填写 baseline task_id');
+    }
+    const payload = Object.assign({
+      task_id: workbenchState.taskId,
+      format: format,
+    }, workbenchFilters());
+    if (['diff', 'bundle'].includes(format)) payload.baseline_task_id = baselineTaskId;
+    const result = await withBusy(button, '导出中…', () => api('/api/workbench/export', payload));
+    if (!result || result.available === false) {
+      workbenchMarkCapabilityUnavailable(format, result && result.message);
+      return;
+    }
+    if (!result || !result.export_id) throw new Error('导出响应缺少 export_id');
+    const downloadPath = '/api/workbench/export/' + encodeURIComponent(result.export_id) + '/download?token=' + encodeURIComponent(TOKEN);
+    const link = document.createElement('a');
+    link.href = downloadPath;
+    link.download = result.filename || (result.export_id + '.' + format);
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    flash(
+      'workbench-export-flash',
+      '已生成 ' + (result.filename || format.toUpperCase()) + '，正在下载 ' + (result.rows == null ? '' : result.rows + ' 行')
+    );
+  } catch (err) {
+    workbenchError(err, ['diagnostics', 'diff', 'bundle'].includes(format) ? format : null);
+    workbenchSyncControls();
+  }
+}
+
+async function loadWorkbenchSummary() {
+  clearError();
+  const button = $('workbench-summary');
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    const result = await withBusy(button, '加载中…', () => apiGet(
+      '/api/workbench/task/' + encodeURIComponent(workbenchState.taskId) + '/summary'
+    ));
+    if (!result || result.available === false) {
+      workbenchMarkCapabilityUnavailable('summary', result && result.message);
+      return result;
+    }
+    $('workbench-summary-stats').textContent =
+      'task_id ' + workbenchState.taskId + ' · 已加载运行摘要（敏感路径和凭据已隐藏）';
+    renderJsonlViewer(
+      $('workbench-summary-viewer'),
+      JSON.stringify(workbenchSafeSummary(result))
+    );
+    $('workbench-summary-result').hidden = false;
+    return result;
+  } catch (err) {
+    workbenchError(err, 'summary');
+    return null;
+  }
+}
+
+async function loadWorkbenchDiagnostics() {
+  clearError();
+  const button = $('workbench-diagnostics');
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    const result = await withBusy(button, '加载中…', () => apiGet(
+      '/api/workbench/task/' + encodeURIComponent(workbenchState.taskId) + '/diagnostics'
+    ));
+    if (!result || result.available === false) {
+      workbenchMarkCapabilityUnavailable('diagnostics', result && result.message);
+      return result;
+    }
+    $('workbench-diagnostics-stats').textContent = result.available
+      ? 'task_id ' + workbenchState.taskId + ' · 已加载诊断'
+      : (result.message || '诊断尚未生成');
+    renderJsonlViewer($('workbench-diagnostics-viewer'), JSON.stringify(result));
+    $('workbench-diagnostics-result').hidden = false;
+    return result;
+  } catch (err) {
+    workbenchError(err, 'diagnostics');
+    return null;
+  }
+}
+
+async function loadWorkbenchDiff() {
+  clearError();
+  const button = $('workbench-diff');
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    const baselineTaskId = $('workbench-baseline-task').value.trim();
+    if (!baselineTaskId) throw new Error('请填写 baseline task_id');
+    const result = await withBusy(button, '加载中…', () => api('/api/workbench/diff', {
+      task_id: workbenchState.taskId,
+      baseline_task_id: baselineTaskId,
+    }));
+    if (!result || result.available === false) {
+      workbenchMarkCapabilityUnavailable('diff', result && result.message);
+      return result;
+    }
+    $('workbench-diff-stats').textContent = '当前 ' + workbenchState.taskId + ' · baseline ' + baselineTaskId;
+    renderJsonlViewer($('workbench-diff-viewer'), JSON.stringify(result.diff || result));
+    $('workbench-diff-result').hidden = false;
+    return result;
+  } catch (err) {
+    workbenchError(err, 'diff');
+    return null;
+  }
+}
+
 $('key-btn').addEventListener('click', doKey);
 $('lock-btn').addEventListener('click', doLock);
 $('lookup-btn').addEventListener('click', doLookup);
 $('lookup-sanitize').addEventListener('click', doSanitizeCopy);
-$('lookup-copy').addEventListener('click', () =>
-  copyText($('lookup-output').value, $('lookup-output'), 'lookup-flash')
-);
+$('lookup-copy').addEventListener('click', doLookupPlainCopy);
 $('create-btn').addEventListener('click', doCreate);
 $('create-copy').addEventListener('click', () =>
   copyText($('create-output').value, $('create-output'), 'create-flash')
 );
 $('restore-btn').addEventListener('click', doRestore);
-$('restore-copy').addEventListener('click', () =>
-  copyText($('restore-output').value, $('restore-output'), 'restore-flash')
-);
+$('restore-copy').addEventListener('click', doRestorePlainCopy);
 $('scan-btn').addEventListener('click', doScan);
+$('workbench-import').addEventListener('click', doWorkbenchImport);
+$('workbench-start').addEventListener('click', doWorkbenchStart);
+$('workbench-refresh').addEventListener('click', doWorkbenchRefresh);
+$('workbench-cancel').addEventListener('click', doWorkbenchCancel);
+$('workbench-results').addEventListener('click', loadWorkbenchResults);
+$('workbench-prev-page').addEventListener('click', () => loadWorkbenchPage(-1));
+$('workbench-next-page').addEventListener('click', () => loadWorkbenchPage(1));
+$('workbench-diagnostics').addEventListener('click', loadWorkbenchDiagnostics);
+$('workbench-summary').addEventListener('click', loadWorkbenchSummary);
+$('workbench-diff').addEventListener('click', loadWorkbenchDiff);
+$('workbench-baseline-task').addEventListener('input', workbenchSyncControls);
+$('workbench-dispositions').addEventListener('input', workbenchSyncControls);
+$('workbench-query').addEventListener('input', workbenchSyncControls);
+$('workbench-export-format').addEventListener('change', workbenchSyncControls);
+$('workbench-file').addEventListener('change', () => {
+  const files = $('workbench-file').files ? Array.from($('workbench-file').files) : [];
+  if (!files.length) return;
+  if (files.length !== 1) {
+    workbenchState.selectedFile = null;
+    $('workbench-file-status').textContent = '未选择文件';
+    showError('请一次选择一个研判输入 JSONL 文件');
+    return;
+  }
+  try {
+    workbenchSelectFile(files[0]);
+    clearError();
+  } catch (err) {
+    workbenchError(err);
+  }
+});
+$('workbench-drop-zone').addEventListener('click', () => $('workbench-file').click());
+$('workbench-drop-zone').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    $('workbench-file').click();
+  }
+});
+$('workbench-drop-zone').addEventListener('dragover', (event) => {
+  event.preventDefault();
+  $('workbench-drop-zone').classList.add('dragover');
+});
+$('workbench-drop-zone').addEventListener('dragleave', () => {
+  $('workbench-drop-zone').classList.remove('dragover');
+});
+$('workbench-drop-zone').addEventListener('drop', workbenchHandleDrop);
+$('workbench-prev-result').addEventListener('click', () => navigateWorkbenchResult(-1));
+$('workbench-next-result').addEventListener('click', () => navigateWorkbenchResult(1));
+$('workbench-review').addEventListener('click', doWorkbenchReview);
+$('workbench-export').addEventListener('click', doWorkbenchExport);
+document.querySelectorAll('[data-workbench-disposition]').forEach((button) => {
+  button.addEventListener('click', () => applyWorkbenchQuickFilter(
+    button.dataset.workbenchDisposition || '',
+    button
+  ));
+});
+$('workbench-filter-provider-issues').addEventListener('click', () =>
+  applyWorkbenchProviderFilter($('workbench-filter-provider-issues'))
+);
 bindSourceToggle('lookup');
 bindSourceToggle('create');
 bindSourceToggle('restore');
 bindSourceToggle('scan');
+workbenchSyncControls();
 refreshStatus();
 </script>
 </body>

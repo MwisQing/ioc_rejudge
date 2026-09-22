@@ -1,5 +1,21 @@
 # 更新日志
 
+## 未发布
+
+暂无。
+
+## 2.8.0 - 2026-09-22
+
+- 新增：本地 workbench 页面接通导入 staging、后台任务启动/自动轮询/状态刷新、取消边界、分页筛选、快捷 disposition、解释详情、当前页复核导航、人工 review overlay、diagnostics、baseline diff 和 JSONL/CSV/XLSX 下载；不可用后端、活动任务和失败状态不会伪造成功。
+- 新增：workbench 支持拖放单个 JSONL、运行摘要、diagnostics/diff/bundle 受控导出、结果字段摘要和 Provider 异常/缺失快捷筛选；导出范围会显示当前筛选条件与预计行数。
+- 安全：查询明文、还原结果复制和覆盖已有 key 前增加二次确认；摘要与浏览器响应不暴露本地路径、凭据或 token。
+- 验证：workbench/UI 专项 `44 passed`，全量 Python 测试 `1153 passed, 1 skipped`，真实 Chromium 桌面/390px 回归通过，`compileall`、Node 页面脚本语法和 `git diff --check` 通过。
+- 新增：离线 workbench 支持显式后台模式，任务状态原子持久化并区分 queued/running/succeeded/failed/cancelled；服务重启会把未完成任务收口为 failed，取消只作用于尚未开始的任务。
+- 修复：筛选结果的 `result_id` 始终对应原始结果行，避免点击筛选后的第二条结果打开第一条解释；浏览器任务响应不再暴露本地结果/diagnostics 路径。
+- 文档：更新高频用户前端优化说明、README 和协作上下文，明确 P1 已实施与本轮 P2 范围及剩余非目标。
+- 体验：增加研判工作台、脱敏协作、运维状态的顶部锚点导航，减少长页面滚动。
+- 体验：窄屏结果表改为带字段标签的卡片，结果按 24 行/帧增量挂载并可取消过时渲染；补充真实浏览器回归，覆盖导入、后台任务、结果加载和明文复制确认。
+
 ## 2.7.0 - 2026-09-22
 
 - 新增：离线路线命令入口，支持 `job` 生命周期、`review` 人工标签/重开、`explain` 解释、`history` 查询、`health --offline` 配置检查、`cache inspect/cleanup`、`import-table` 和 `export-bundle`；成功输出机器可读 JSON，缓存清理默认 dry-run，provider 参数在本地后端中 fail-closed。

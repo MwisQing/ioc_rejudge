@@ -92,6 +92,7 @@ class WorkbenchAdapter:
         *,
         dispositions: list[str] | None = None,
         query: str | None = None,
+        provider_issues: bool | None = None,
         offset: int = 0,
         limit: int = 100,
     ) -> dict[str, Any]:
@@ -117,12 +118,34 @@ class WorkbenchAdapter:
         *,
         dispositions: list[str] | None = None,
         query: str | None = None,
+        provider_issues: bool | None = None,
         export_format: str = "jsonl",
     ) -> dict[str, Any]:
         raise WorkbenchUnavailable("export.create")
 
     def export_file(self, export_id: str) -> Path:
         raise WorkbenchUnavailable("export.download")
+
+    def diagnostics(self, task_id: str) -> dict[str, Any]:
+        raise WorkbenchUnavailable("diagnostics.read")
+
+    def diff(self, task_id: str, baseline_task_id: str) -> dict[str, Any]:
+        raise WorkbenchUnavailable("diff.read")
+
+    def summary(self, task_id: str) -> dict[str, Any]:
+        raise WorkbenchUnavailable("summary.read")
+
+    def export_artifact(
+        self,
+        task_id: str,
+        *,
+        artifact_format: str,
+        dispositions: list[str] | None = None,
+        query: str | None = None,
+        provider_issues: bool | None = None,
+        baseline_task_id: str | None = None,
+    ) -> dict[str, Any]:
+        raise WorkbenchUnavailable("export.artifact")
 
 
 class LocalWorkbenchAdapter(WorkbenchAdapter):
@@ -227,4 +250,3 @@ class LocalWorkbenchAdapter(WorkbenchAdapter):
             encoding="utf-8",
         )
         return StagedImport(import_id, safe_name, target, len(encoded), rows).as_dict()
-

@@ -1,19 +1,19 @@
 # IOC Rejudge CLI
 
-IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.7.0` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。新增的离线路线命令、CSV/XLSX 适配、结果 bundle 导出和本地 workbench 让批处理与人工复核可以在无网络环境完成。
+IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.8.0` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。新增的离线路线命令、CSV/XLSX 适配、结果 bundle 导出和本地 workbench 让批处理与人工复核可以在无网络环境完成。
 
 ## 当前状态
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.7.0` |
+| 版本 | `2.8.0` |
 | Python | 已用 Python 3.12 验证 |
 | 输入 | 旧 JSONL 快照、裸 IOC 文件、重复 `--ioc` |
 | IOC 类型 | domain、URL、domain:port、IP、IP:port |
 | 结论 | `存活有效`、`失活有效`、`灰`、`误报`、`待复核` |
 | live provider | K01、IOC Info、F-Dark、WHOIS、pDNS、ICP；按 IOC 类型和研判需要分流 |
 | 本地 provider | 任意 JSONL sidecar；可用于 ICP Observation 回放 |
-| 当前测试 | `1140 passed, 1 skipped`（2026-09-22） |
+| 当前测试 | `1153 passed, 1 skipped`（2026-09-22） |
 
 ICP provider 已按固定响应契约实现并通过 mock/cache 验收；真实 endpoint、认证和生产响应仍需在具备授权凭据的环境中单独确认。
 
@@ -88,7 +88,7 @@ python -m ioc_rejudge import-table --input .\report.csv --column indicator --out
 python -m ioc_rejudge export-bundle --input .\results.jsonl --output-dir .\bundle
 ```
 
-也可以使用 `roadmap` 包装入口。`import-table` 支持 CSV/XLSX 的物理行号、defang 恢复、公式风险拦截和重复报告；`export-bundle` 会预检路径冲突并原子写出 JSONL、CSV、XLSX 及可选 diagnostics/diff。`cache cleanup` 默认只生成计划，只有加 `--apply` 才删除完整旧 shard。UI 默认使用本地离线 workbench，持久化任务、结果和 diagnostics；它拒绝 live provider 参数，不读取真实凭据，也不发起网络请求。
+也可以使用 `roadmap` 包装入口。`import-table` 支持 CSV/XLSX 的物理行号、defang 恢复、公式风险拦截和重复报告；`export-bundle` 会预检路径冲突并原子写出 JSONL、CSV、XLSX 及可选 diagnostics/diff。`cache cleanup` 默认只生成计划，只有加 `--apply` 才删除完整旧 shard。UI 默认使用本地离线 workbench：页面可以拖放或选择 legacy JSONL 导入 staging，以后台模式启动任务并自动轮询状态，在安全边界内取消尚未开始的任务，查看 diagnostics 和安全运行摘要，按 disposition/关键字/Provider 异常分页筛选，点击结果查看解释，提交人工 overlay，用 baseline task 做 diff，并选择 JSONL/CSV/XLSX/diagnostics/diff/bundle 下载。明文查询和还原结果复制、覆盖 key 前会二次确认；页面不读取真实凭据，也不发起网络请求。摘要和浏览器响应不暴露本地路径或凭据；跨运行历史和生产 provider 诊断仍以 CLI 为准。
 
 ## 安装
 

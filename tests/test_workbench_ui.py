@@ -151,17 +151,19 @@ class RecordingWorkbenchAdapter(WorkbenchAdapter):
         *,
         dispositions=None,
         query=None,
+        provider_issues=None,
         offset=0,
         limit=100,
     ):
-        self._record(
-            "results",
-            task_id,
-            dispositions=dispositions,
-            query=query,
-            offset=offset,
-            limit=limit,
-        )
+        kwargs = {
+            "dispositions": dispositions,
+            "query": query,
+            "offset": offset,
+            "limit": limit,
+        }
+        if provider_issues is not None:
+            kwargs["provider_issues"] = provider_issues
+        self._record("results", task_id, **kwargs)
         return {
             "task_id": task_id,
             "total": 1,
@@ -203,15 +205,17 @@ class RecordingWorkbenchAdapter(WorkbenchAdapter):
         *,
         dispositions=None,
         query=None,
+        provider_issues=None,
         export_format="jsonl",
     ):
-        self._record(
-            "export",
-            task_id,
-            dispositions=dispositions,
-            query=query,
-            export_format=export_format,
-        )
+        kwargs = {
+            "dispositions": dispositions,
+            "query": query,
+            "export_format": export_format,
+        }
+        if provider_issues is not None:
+            kwargs["provider_issues"] = provider_issues
+        self._record("export", task_id, **kwargs)
         export_id = "export-1"
         path = self._dir / "exports" / f"{export_id}.{export_format}"
         return {
@@ -226,6 +230,55 @@ class RecordingWorkbenchAdapter(WorkbenchAdapter):
         if self.outside_export is not None:
             return self.outside_export
         return self._dir / "exports" / f"{export_id}.jsonl"
+
+    def diagnostics(self, task_id):
+        self._record("diagnostics", task_id)
+        return {"task_id": task_id, "available": True, "processed_count": 1}
+
+    def diff(self, task_id, baseline_task_id):
+        self._record("diff", task_id, baseline_task_id)
+        return {
+            "task_id": task_id,
+            "baseline_task_id": baseline_task_id,
+            "available": True,
+            "diff": {"operations": 1, "changed": []},
+        }
+
+    def summary(self, task_id):
+        self._record("summary", task_id)
+        return {
+            "task_id": task_id,
+            "version": "2.8.0",
+            "input_path": str(self._dir / "secret.jsonl"),
+            "api_token": "do-not-return",
+            "task": {"diagnostics_path": str(self._dir / "diagnostics.json")},
+        }
+
+    def export_artifact(
+        self,
+        task_id,
+        *,
+        artifact_format,
+        dispositions=None,
+        query=None,
+        provider_issues=None,
+        baseline_task_id=None,
+    ):
+        kwargs = {
+            "artifact_format": artifact_format,
+            "dispositions": dispositions,
+            "query": query,
+            "baseline_task_id": baseline_task_id,
+        }
+        if provider_issues is not None:
+            kwargs["provider_issues"] = provider_issues
+        self._record("export_artifact", task_id, **kwargs)
+        return {
+            "export_id": "export-artifact-1",
+            "filename": "export-artifact-1.zip",
+            "format": artifact_format,
+            "rows": 1,
+        }
 
 
 def test_local_adapter_stages_and_validates_jsonl_safely(make_server):
@@ -425,6 +478,57 @@ def test_fake_adapter_results_explanation_review_and_export(make_server, tmp_pat
     assert adapter.calls[4] == ("export_file", ("export-1",), {})
 
 
+def test_workbench_provider_issue_filter_is_structured_and_optional(make_server, tmp_path):
+    adapter = RecordingWorkbenchAdapter(tmp_path / "fake-root")
+    base, token, _workbench_dir = make_server(adapter)
+
+    status, body = json_request(
+        base,
+        "/api/workbench/results",
+        payload={"task_id": "task-1", "provider_issues": True},
+        token=token,
+    )
+    assert status == 200, body
+    assert adapter.calls[-1] == (
+        "results",
+        ("task-1",),
+        {
+            "dispositions": None,
+            "query": None,
+            "offset": 0,
+            "limit": 100,
+            "provider_issues": True,
+        },
+    )
+
+    status, body = json_request(
+        base,
+        "/api/workbench/export",
+        payload={"task_id": "task-1", "format": "jsonl", "provider_issues": True},
+        token=token,
+    )
+    assert status == 200, body
+    assert adapter.calls[-1] == (
+        "export",
+        ("task-1",),
+        {
+            "dispositions": None,
+            "query": None,
+            "export_format": "jsonl",
+            "provider_issues": True,
+        },
+    )
+
+    status, body = json_request(
+        base,
+        "/api/workbench/results",
+        payload={"task_id": "task-1", "provider_issues": "yes"},
+        token=token,
+    )
+    assert status == 400
+    assert "provider_issues" in body["error"]
+
+
 def test_export_download_rejects_adapter_path_outside_workbench(
     make_server,
     tmp_path,
@@ -444,6 +548,128 @@ def test_export_download_rejects_adapter_path_outside_workbench(
     assert status == 400
     assert body["error"] == "export file is outside the workbench directory"
     assert outside.read_text(encoding="utf-8") == "secret\n"
+
+
+def test_workbench_diagnostics_and_diff_routes(make_server):
+    adapter = RecordingWorkbenchAdapter(Path("/tmp/unused"))
+    base, token, _workbench_dir = make_server(adapter)
+
+    status, body = json_request(
+        base,
+        "/api/workbench/diagnostics",
+        payload={"task_id": "task-1"},
+        token=token,
+    )
+    assert status == 200, body
+    assert body["available"] is True
+
+    status, body = json_request(
+        base,
+        "/api/workbench/diff",
+        payload={"task_id": "task-2", "baseline_task_id": "task-1"},
+        token=token,
+    )
+    assert status == 200, body
+    assert body["diff"]["operations"] == 1
+    assert adapter.calls == [
+        ("diagnostics", ("task-1",), {}),
+        ("diff", ("task-2", "task-1"), {}),
+    ]
+
+
+def test_workbench_summary_and_artifact_routes_are_safe(make_server):
+    adapter = RecordingWorkbenchAdapter(Path("/tmp/unused"))
+    base, token, _workbench_dir = make_server(adapter)
+
+    status, body = json_request(
+        base,
+        "/api/workbench/task/task-1/summary",
+        method="GET",
+        token=token,
+    )
+    assert status == 200, body
+    assert body["version"] == "2.8.0"
+    assert "input_path" not in json.dumps(body)
+    assert "diagnostics_path" not in json.dumps(body)
+    assert "do-not-return" not in json.dumps(body)
+
+    status, body = json_request(
+        base,
+        "/api/workbench/export",
+        payload={
+            "task_id": "task-2",
+            "format": "bundle",
+            "baseline_task_id": "task-1",
+        },
+        token=token,
+    )
+    assert status == 200, body
+    assert body["export_id"] == "export-artifact-1"
+    assert adapter.calls[-1] == (
+        "export_artifact",
+        ("task-2",),
+        {
+            "artifact_format": "bundle",
+            "dispositions": None,
+            "query": None,
+            "baseline_task_id": "task-1",
+        },
+    )
+
+
+def test_workbench_task_paths_are_not_returned_to_browser(make_server):
+    class PathLeakingAdapter(RecordingWorkbenchAdapter):
+        def start_task(self, import_id, *, providers=None, options=None):
+            result = super().start_task(import_id, providers=providers, options=options)
+            result["result_path"] = str(self._dir / "tasks" / "task-1" / "results.jsonl")
+            result["diagnostics_path"] = str(self._dir / "tasks" / "task-1" / "diagnostics.json")
+            return result
+
+        def task_status(self, task_id):
+            result = super().task_status(task_id)
+            result["result_path"] = str(self._dir / "tasks" / task_id / "results.jsonl")
+            result["diagnostics_path"] = str(self._dir / "tasks" / task_id / "diagnostics.json")
+            return result
+
+        def diagnostics(self, task_id):
+            return {
+                "task_id": task_id,
+                "available": True,
+                "input_path": str(self._dir / "tasks" / task_id / "input.jsonl"),
+                "diagnostics_path": str(self._dir / "tasks" / task_id / "diagnostics.json"),
+            }
+
+    adapter = PathLeakingAdapter(Path("/tmp/unused"))
+    base, token, _workbench_dir = make_server(adapter)
+    status, body = json_request(
+        base,
+        "/api/workbench/task",
+        payload={"import_id": "import-1"},
+        token=token,
+    )
+    assert status == 200, body
+    assert "result_path" not in body
+    assert "diagnostics_path" not in body
+
+    status, body = json_request(
+        base,
+        "/api/workbench/diagnostics",
+        payload={"task_id": "task-1"},
+        token=token,
+    )
+    assert status == 200, body
+    assert "input_path" not in body
+    assert "diagnostics_path" not in body
+
+    status, body = json_request(
+        base,
+        "/api/workbench/task/task-1",
+        method="GET",
+        token=token,
+    )
+    assert status == 200, body
+    assert "result_path" not in body
+    assert "diagnostics_path" not in body
 
 
 def test_session_token_and_host_origin_are_required(make_server):

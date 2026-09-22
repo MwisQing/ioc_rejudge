@@ -1,6 +1,8 @@
 import json
 import subprocess
 import sys
+import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -243,6 +245,85 @@ def test_workbench_local_offline_happy_path(tmp_path):
     downloaded = adapter.export_file(export["export_id"])
     assert downloaded.is_file()
     assert downloaded.suffix == ".jsonl"
+
+
+def test_workbench_filtered_result_id_keeps_source_ordinal(tmp_path):
+    adapter = OfflineWorkbenchAdapter(tmp_path / "workbench")
+    second = SNAPSHOT.replace("test-malware.invalid", "second-malware.invalid")
+    staged = adapter.stage_input("snapshot.jsonl", SNAPSHOT + second)
+    started = adapter.start_task(staged["import_id"])
+    assert started["state"] == "succeeded"
+
+    results = adapter.results(started["task_id"], query="second-malware")
+    assert results["total"] == 1
+    result_id = results["rows"][0]["result_id"]
+    assert result_id.endswith("-000002")
+
+    explanation = adapter.explanation(started["task_id"], result_id)
+    assert explanation["ioc"] == "second-malware.invalid"
+
+
+def test_workbench_provider_issue_filter_matches_failures_and_missing_sources():
+    rows = [
+        {"ioc": "ok", "provider_statuses": {"whois": "success"}},
+        {"ioc": "error", "provider_statuses": {"whois": "error"}},
+        {"ioc": "missing", "missing_required_providers": ["icp"]},
+        {"ioc": "no-data", "provider_statuses": {"whois": "no_data"}},
+    ]
+    filtered = OfflineWorkbenchAdapter._filter_rows(
+        rows, dispositions=None, query=None, provider_issues=True
+    )
+    assert [row["ioc"] for row in filtered] == ["error", "missing"]
+
+
+def test_workbench_background_task_is_observable_and_exposes_safe_diagnostics(tmp_path):
+    adapter = OfflineWorkbenchAdapter(tmp_path / "workbench")
+    staged = adapter.stage_input("snapshot.jsonl", SNAPSHOT)
+    started = adapter.start_task(staged["import_id"], options={"background": True})
+    assert started["state"] in {"queued", "running", "succeeded"}
+
+    deadline = time.monotonic() + 10
+    status = started
+    while status["state"] in {"queued", "running"} and time.monotonic() < deadline:
+        time.sleep(0.02)
+        status = adapter.task_status(started["task_id"])
+    assert status["state"] == "succeeded", status
+    diagnostics = adapter.diagnostics(started["task_id"])
+    assert diagnostics["available"] is True
+    assert "input_path" not in diagnostics
+
+    summary = adapter.summary(started["task_id"])
+    assert summary["version"] == "2.8.0"
+    assert len(summary["input"]["sha256"]) == 64
+    assert summary["execution"]["network"] == "disabled"
+    assert "input_path" not in json.dumps(summary, ensure_ascii=False)
+
+    baseline = adapter.start_task(staged["import_id"])
+    comparison = adapter.diff(started["task_id"], baseline["task_id"])
+    assert comparison["available"] is True
+    assert comparison["diff"]["operations"] == 1
+
+    diagnostic_export = adapter.export_artifact(
+        started["task_id"], artifact_format="diagnostics"
+    )
+    assert Path(adapter.export_file(diagnostic_export["export_id"])).suffix == ".json"
+    diff_export = adapter.export_artifact(
+        started["task_id"],
+        artifact_format="diff",
+        baseline_task_id=baseline["task_id"],
+    )
+    assert json.loads(
+        adapter.export_file(diff_export["export_id"]).read_text(encoding="utf-8")
+    )["available"] is True
+    bundle_export = adapter.export_artifact(
+        started["task_id"],
+        artifact_format="bundle",
+        baseline_task_id=baseline["task_id"],
+    )
+    with zipfile.ZipFile(adapter.export_file(bundle_export["export_id"])) as archive:
+        assert set(archive.namelist()) == {
+            "results.jsonl", "results.csv", "results.xlsx", "diagnostics.json", "diff.json"
+        }
 
 
 def test_workbench_rejects_provider_mode_and_bad_import(tmp_path):

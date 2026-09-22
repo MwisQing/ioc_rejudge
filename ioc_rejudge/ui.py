@@ -70,6 +70,10 @@ LOOKUP_CONNECT_TIMEOUT_SECONDS = 5
 LOOKUP_READ_TIMEOUT_SECONDS = 15
 _PARALLEL_API_PATHS = frozenset({"/api/status", "/api/lookup"})
 _WORKBENCH_API_PREFIX = "/api/workbench/"
+_SENSITIVE_SUMMARY_KEY_RE = re.compile(
+    r"(?:^|_)(?:secret|password|credential|authorization|api[_-]?key|token)(?:$|_)",
+    re.IGNORECASE,
+)
 
 # Bundle directories are named by the 20-hex-char bundle id; the fullmatch
 # also keeps user-supplied ids from ever escaping the bundle directory.
@@ -887,6 +891,8 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             "/api/workbench/explanation": self._handle_workbench_explanation,
             "/api/workbench/review": self._handle_workbench_review,
             "/api/workbench/export": self._handle_workbench_export,
+            "/api/workbench/diagnostics": self._handle_workbench_diagnostics,
+            "/api/workbench/diff": self._handle_workbench_diff,
         }
         handler = handlers.get(urlsplit(self.path).path)
         if handler is None:
@@ -934,6 +940,19 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
                 raise WorkbenchError("task_id is invalid")
             with state.lock:
                 result = state.workbench_adapter.task_status(task_id)
+            self._send_json(200, self._public_workbench_task(result))
+            return
+        if len(parts) == 5 and parts[:3] == ["api", "workbench", "task"]:
+            task_id = parts[3]
+            if parts[4] not in {"diagnostics", "summary"} or not self._valid_workbench_id(task_id):
+                raise WorkbenchError("task diagnostics path is invalid")
+            with state.lock:
+                if parts[4] == "summary":
+                    result = state.workbench_adapter.summary(task_id)
+                    result = self._public_workbench_summary(result)
+                else:
+                    result = state.workbench_adapter.diagnostics(task_id)
+                    result = self._public_workbench_diagnostics(result)
             self._send_json(200, result)
             return
         if len(parts) == 5 and parts[:3] == ["api", "workbench", "export"]:
@@ -959,7 +978,7 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
         return value
 
     @staticmethod
-    def _filters(body: dict) -> tuple[list[str] | None, str | None]:
+    def _filters(body: dict) -> tuple[list[str] | None, str | None, bool | None]:
         dispositions = body.get("dispositions")
         if dispositions is not None:
             if not isinstance(dispositions, list) or not all(
@@ -969,7 +988,10 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
         query = body.get("query")
         if query is not None and (not isinstance(query, str) or len(query) > 512):
             raise WorkbenchError("query must be a string of at most 512 characters")
-        return dispositions, query
+        provider_issues = body.get("provider_issues")
+        if provider_issues is not None and not isinstance(provider_issues, bool):
+            raise WorkbenchError("provider_issues must be a boolean")
+        return dispositions, query, provider_issues
 
     @staticmethod
     def _valid_id(value: Any, field: str) -> str:
@@ -992,11 +1014,47 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
         options = body.get("options")
         if options is not None and not isinstance(options, dict):
             raise WorkbenchError("options must be an object")
-        return adapter.start_task(
+        return self._public_workbench_task(adapter.start_task(
             import_id,
             providers=self._optional_providers(body),
             options=options,
-        )
+        ))
+
+    @staticmethod
+    def _public_workbench_task(result: dict) -> dict:
+        """Keep local filesystem paths out of browser-visible task JSON."""
+        if not isinstance(result, dict):
+            return result
+        public = dict(result)
+        public.pop("result_path", None)
+        public.pop("diagnostics_path", None)
+        return public
+
+    @staticmethod
+    def _public_workbench_diagnostics(result: dict) -> dict:
+        """Keep local input/output paths out of browser-visible diagnostics."""
+        if not isinstance(result, dict):
+            return result
+        public = dict(result)
+        for field in ("input_path", "result_path", "diagnostics_path"):
+            public.pop(field, None)
+        return public
+
+    @classmethod
+    def _public_workbench_summary(cls, result: Any, key: str | None = None) -> Any:
+        """Recursively remove paths and redact sensitive summary fields."""
+        if key and _SENSITIVE_SUMMARY_KEY_RE.search(key):
+            return "[redacted]"
+        if isinstance(result, dict):
+            return {
+                child_key: cls._public_workbench_summary(value, child_key)
+                for child_key, value in result.items()
+                if child_key not in {"path", "input_path", "result_path", "diagnostics_path"}
+                and not child_key.endswith("_path")
+            }
+        if isinstance(result, list):
+            return [cls._public_workbench_summary(value) for value in result]
+        return result
 
     def _handle_workbench_cancel(self, body: dict) -> dict:
         task_id = self._valid_id(body.get("task_id"), "task_id")
@@ -1004,20 +1062,22 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_workbench_results(self, body: dict) -> dict:
         task_id = self._valid_id(body.get("task_id"), "task_id")
-        dispositions, query = self._filters(body)
+        dispositions, query, provider_issues = self._filters(body)
         offset = body.get("offset", 0)
         limit = body.get("limit", 100)
         if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
             raise WorkbenchError("offset must be a non-negative integer")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
             raise WorkbenchError("limit must be an integer between 1 and 500")
-        return self.ui_state.workbench_adapter.results(
-            task_id,
-            dispositions=dispositions,
-            query=query,
-            offset=offset,
-            limit=limit,
-        )
+        kwargs = {
+            "dispositions": dispositions,
+            "query": query,
+            "offset": offset,
+            "limit": limit,
+        }
+        if provider_issues is not None:
+            kwargs["provider_issues"] = provider_issues
+        return self.ui_state.workbench_adapter.results(task_id, **kwargs)
 
     def _handle_workbench_explanation(self, body: dict) -> dict:
         task_id = self._valid_id(body.get("task_id"), "task_id")
@@ -1044,16 +1104,48 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_workbench_export(self, body: dict) -> dict:
         task_id = self._valid_id(body.get("task_id"), "task_id")
-        dispositions, query = self._filters(body)
+        dispositions, query, provider_issues = self._filters(body)
         export_format = body.get("format", "jsonl")
+        if export_format in {"diagnostics", "diff", "bundle"}:
+            baseline_task_id = body.get("baseline_task_id")
+            if export_format in {"diff", "bundle"}:
+                baseline_task_id = self._valid_id(baseline_task_id, "baseline_task_id")
+                if baseline_task_id == task_id:
+                    raise WorkbenchError("task_id and baseline_task_id must differ")
+            kwargs = {
+                "artifact_format": export_format,
+                "dispositions": dispositions,
+                "query": query,
+                "baseline_task_id": baseline_task_id,
+            }
+            if provider_issues is not None:
+                kwargs["provider_issues"] = provider_issues
+            return self.ui_state.workbench_adapter.export_artifact(task_id, **kwargs)
         if export_format not in {"jsonl", "csv", "xlsx"}:
-            raise WorkbenchError("format must be jsonl, csv, or xlsx")
-        return self.ui_state.workbench_adapter.export(
-            task_id,
-            dispositions=dispositions,
-            query=query,
-            export_format=export_format,
+            raise WorkbenchError("format must be jsonl, csv, xlsx, diagnostics, diff, or bundle")
+        kwargs = {
+            "dispositions": dispositions,
+            "query": query,
+            "export_format": export_format,
+        }
+        if provider_issues is not None:
+            kwargs["provider_issues"] = provider_issues
+        return self.ui_state.workbench_adapter.export(task_id, **kwargs)
+
+    def _handle_workbench_diagnostics(self, body: dict) -> dict:
+        task_id = self._valid_id(body.get("task_id"), "task_id")
+        return self._public_workbench_diagnostics(
+            self.ui_state.workbench_adapter.diagnostics(task_id)
         )
+
+    def _handle_workbench_diff(self, body: dict) -> dict:
+        task_id = self._valid_id(body.get("task_id"), "task_id")
+        baseline_task_id = self._valid_id(
+            body.get("baseline_task_id"), "baseline_task_id"
+        )
+        if task_id == baseline_task_id:
+            raise WorkbenchError("task_id and baseline_task_id must differ")
+        return self.ui_state.workbench_adapter.diff(task_id, baseline_task_id)
 
     def _send_controlled_file(self, path: Path) -> None:
         state = self.ui_state

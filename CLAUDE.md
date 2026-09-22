@@ -2,7 +2,7 @@
 
 > 操作本项目前先读本文件。完成有意义的变更后，更新底部进度记录。
 >
-> 当前版本为 `2.7.0`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收、项目内独立凭证文件、本地安全分享 bundle 和本地 share 助手 UI（含 IOC Info 查询、记住口令、可折叠 JSON 与 v0.7 漏检覆盖）。本版本同时提供离线 job/review/explain/history/health/cache 路线、CSV/XLSX 输入适配、结果 bundle 导出与本地 workbench，并收口研判正确性第一轮与统一时间边界。
+> 当前版本为 `2.8.0`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收、项目内独立凭证文件、本地安全分享 bundle 和本地 share 助手 UI（含 IOC Info 查询、记住口令、可折叠 JSON 与 v0.7 漏检覆盖）。本版本同时提供离线 job/review/explain/history/health/cache 路线、CSV/XLSX 输入适配、结果 bundle 导出与本地 workbench，并收口研判正确性第一轮、统一时间边界和完整 Web UI 工作流。
 
 ## 1. 阅读顺序
 
@@ -27,7 +27,7 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.7.0` |
+| 版本 | `2.8.0` |
 | 项目类型 | Python CLI |
 | 当前输入 | iocProducer 风格 JSONL 快照、裸 IOC 文件或重复 `--ioc` |
 | 当前联网 | 裸 IOC 统一模式可按所选 provider 联网；`--offline` 与旧快照兼容模式不联网 |
@@ -286,7 +286,7 @@ ioc_rejudge_cli_1.4.1/
 python -m pytest tests -q
 ```
 
-当前结果（2026-09-22 路线能力集成后）：`1140 passed, 1 skipped`。skip 为 Windows 不适用的 POSIX 脚本执行探针；真实 Windows `provider_http.exe` 已由本地 HTTP 端到端验收覆盖。另含 GitHub Release 下载更新、本地凭证文件来源隔离、控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比（含 `operations=` 摘要与 `operational_changes`）、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间、逐接口日期缓存、完整研判结果缓存、评估时间 fingerprint、按目标 provider 依赖摘要与 sidecar 单次哈希、凭据回显值脱敏（六个 provider + `secret_values` 缓存边界 + 并发哨兵写入）、缓存索引性能、生命周期请求规划、最新 comment/context、过期误报出口、share bundle、share 助手 UI（安全门/回环/记住口令/IOC Info lookup/可折叠 JSON/脱敏并复制/历史可还原上限/端口回退）、输入坏行隔离/无界 nested 计数与物理行号/输出路径 sibling 预检与 os.replace-only 原子写入/流式 JSONL/`classification_unknown` 导出/`--strict`/release zip 语法与日历时间戳/NaN·Inf·TTL 溢出配置拒绝、scheme-aware 目标身份/同日 temporal `valid_until`（实质活动全量、未来事件 1µs、provider TTL、sidecar TTL 与未来 fetched_at 激活），发布 allow-list/忽略规则安全专项，以及离线路线 CLI（含 history）、CSV/XLSX 输入适配、结果 bundle 导出、cache inspect/cleanup、review 队列闭环和本地 workbench 持久化。
+当前结果（2026-09-22 前端 workbench 最终验收后）：`1153 passed, 1 skipped`。skip 为 Windows 不适用的 POSIX 脚本执行探针；真实 Windows `provider_http.exe` 已由本地 HTTP 端到端验收覆盖。另含 GitHub Release 下载更新、本地凭证文件来源隔离、控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比（含 `operations=` 摘要与 `operational_changes`）、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间、逐接口日期缓存、完整研判结果缓存、评估时间 fingerprint、按目标 provider 依赖摘要与 sidecar 单次哈希、凭据回显值脱敏（六个 provider + `secret_values` 缓存边界 + 并发哨兵写入）、缓存索引性能、生命周期请求规划、最新 comment/context、过期误报出口、share bundle、share 助手 UI（安全门/回环/记住口令/IOC Info lookup/可折叠 JSON/脱敏并复制/历史可还原上限/端口回退）、输入坏行隔离/无界 nested 计数与物理行号/输出路径 sibling 预检与 os.replace-only 原子写入/流式 JSONL/`classification_unknown` 导出/`--strict`/release zip 语法与日历时间戳/NaN·Inf·TTL 溢出配置拒绝、scheme-aware 目标身份/同日 temporal `valid_until`（实质活动全量、未来事件 1µs、provider TTL、sidecar TTL 与未来 fetched_at 激活），发布 allow-list/忽略规则安全专项，以及离线路线 CLI（含 history）、CSV/XLSX 输入适配、结果 bundle 导出、cache inspect/cleanup、review 队列闭环和本地 workbench 持久化。
 
 本轮新增统一时间解析与比较边界回归：覆盖 aware/naive 混合、精确 recent/fresh 端点、未来/无效时间、负 Unix 时间、未来 WHOIS 注册日期、固定评估时刻和结果缓存。时间边界与 provider 工厂专项 15 项、人工校准 12 项通过；未使用真实 IOC、人工标签、网络请求或 ICP 凭据。
 
@@ -444,3 +444,8 @@ python -m pytest tests -q
 | 2026-09-21 | 审查修复 task 3 集成 | R4/R5/R9/R13：新鲜 WHOIS Observation 按 fetch 时间覆盖快照旧到期日且不发明情报时间；FDark 保留 hash 类型/confidence/样本时间/provenance，缺失·无效·未来样本时间与低级·零置信·not-a-virus 不成当前恶意；凭据回显值在六 provider 消费与持久化边界统一脱敏，`put(secret_values=())` key 用原始 params、落盘与返回字段脱敏，并发哨兵写入验证字节；sidecar freshness 由 fetched_at+TTL+评估时刻推导；`valid_until` 纳入 sidecar TTL/NO_DATA 与未来 fetched_at 激活，指纹含 sidecar TTL；移除生产 `JsonlProviderCache.delete`（测试改临时分片重写验证真缺席失效）；CLI diff 摘要 `operations=N`。契约 `12`。专项 provider 套件 + task2/task3/diff/cli 全绿，全量 `1066 passed, 1 skipped`。未提交、未发版。 |
 | 2026-09-22 | 路线能力集成 | 新增离线 `job`/`review`/`explain`/`history`/`health`/`cache`/`import-table`/`export-bundle` 命令；CSV/XLSX 导入、结果 bundle 原子导出、provider/result cache 统计与整 shard 清理、review overlay 闭环；UI 默认接入本地离线 workbench，持久化 task/results/diagnostics/review/export，并明确拒绝 live provider 参数。适配层补充 CSV 引号换行、公式风险、defang、XLSX 关闭和 `cache_type=all` schema 边界。Python `1140 passed, 1 skipped`，Go、`pack.py --check`、旧 CLI help 与 offline health 通过。未提交、未推送、未发布。 |
 | 2026-09-22 | 2.7.0 发布 | 发布提交 `586746be2f58149ee7f47ed453757aa07f936ba5` 与附注标签 `v2.7.0` 已推送到 `origin/master` 和 `origin` tags，无 force push；发布包 `ioc_rejudge_v2.7.0_20260922-093044.zip` 含 144 个发布文件，禁入项 0，SHA-256 `5909c44412efe807c71ba342360df5ed699d89f39b5c596be245e9ca4eb34357`。源树与独立解压包均为 Python `1140 passed, 1 skipped`，Go worker、`compileall`、CLI help、`pack.py --check` 通过；本机 `gh` 未登录，未创建 GitHub Release 或上传资产。 |
+| 2026-09-22 | 前端 workbench P0 | 依据 `docs/FRONTEND_OPTIMIZATION.md` 接通本地 UI 的 staging 导入、任务启动/状态/取消、结果筛选、解释详情、人工 review overlay 和 JSONL 下载；新增页面契约测试，明确 unavailable、系统结论与人工 overlay 边界。主控复跑 workbench/UI 专项 `38 passed`、全量 `1143 passed, 1 skipped`、`compileall` 和 `git diff --check` 通过。P1/P2 后台任务、diagnostics/diff、多格式导出、导航和性能优化未实施。 |
+| 2026-09-22 | 前端 workbench P1/P2 导航 | Luna 完成分页、快捷筛选、多格式导出和当前页复核导航；主控返修并实现离线后台模式、任务持久化/重启失败收口、取消边界、diagnostics/baseline diff API、路径不外泄和筛选 `result_id` 稳定映射，并补充研判/脱敏/运维顶部锚点导航。新增回环 API、后台任务、诊断/diff、筛选 ID 和导航契约测试；全量 `1148 passed, 1 skipped`，Node 页面脚本语法、`compileall` 通过。P2 拖放、二次确认和 AI 运行摘要未实施。 |
+| 2026-09-22 | 前端 workbench P2 补齐与主控返修 | Luna 完成单文件拖放、结果字段摘要、运行摘要、安全多格式导出和敏感操作确认；主控补通 `provider_issues=true` 结果/导出筛选（error/disabled/failed/timeout/缺失来源，保留 `no_data` 语义），并为还原结果复制增加二次确认。同步更新优化说明、README 与更新日志；专项/回环 API `57 passed`、全量 `1151 passed, 1 skipped`、`compileall`、Node 页面脚本语法和 `git diff --check` 通过。未提交、未推送、未发布。 |
+| 2026-09-22 | 前端 workbench 移动端与增量渲染 | 结果表窄屏改为带字段标签的可点击卡片，保留鼠标/键盘解释交互；结果行按 24 行/帧使用 `DocumentFragment` 增量挂载，过时渲染可取消并标记 `aria-busy`。新增页面契约覆盖；专项 `tests/test_ui_workbench_contract.py tests/test_workbench_ui.py tests/test_ui_server.py` 共 44 passed，Node 页面脚本语法与 `git diff --check` 通过。未提交、未推送、未发布。 |
+| 2026-09-22 | 前端 workbench v2.8.0 发布准备 | 真实 Chromium 桌面与 390px 窄屏均通过导入、后台任务、结果加载、60 条分块挂载、移动端字段标签和明文复制二次确认；全量 Python `1153 passed, 1 skipped`，workbench/UI 专项 `44 passed`，`compileall`、Node 页面脚本语法与 `git diff --check` 全绿。 |
