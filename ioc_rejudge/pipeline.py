@@ -5,9 +5,10 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+from pathlib import Path
 from typing import Callable, Iterable
 
 from ioc_rejudge.adjudicator import (
@@ -25,7 +26,7 @@ from ioc_rejudge.evidence import (
 )
 from ioc_rejudge.inputs import InputBundle
 from ioc_rejudge.models import Conclusion, Evidence, IocDossier, Verdict
-from ioc_rejudge.normalize import merge_records, normalize_ioc
+from ioc_rejudge.normalize import merge_records, parse_ioc_value
 from ioc_rejudge.observations import (
     Freshness,
     IocTarget,
@@ -40,7 +41,12 @@ from ioc_rejudge.result_cache import AdjudicationResultCache
 
 
 DGA_PROVIDER_NAME = "k01_compromise"
-ADJUDICATION_CACHE_CONTRACT = 7
+# Contract 12: scheme-aware identity, per-target raw digests, temporal
+# valid_until from all material activity + future-event exclusivity +
+# provider freshness TTL bounds (raw caches and sidecar rows, including
+# future-fetch activation), sidecar content hash memoization and TTL in the
+# fingerprint, and no production provider-cache delete API.
+ADJUDICATION_CACHE_CONTRACT = 12
 REQUIRED_SAMPLE_PROVIDERS = ("ioc_info", "fdark")
 _COMPLETE_STATUSES = {ProviderStatus.SUCCESS, ProviderStatus.NO_DATA}
 _DISCOVERY_PROVIDER_NAMES = {DGA_PROVIDER_NAME, *REQUIRED_SAMPLE_PROVIDERS}
@@ -64,6 +70,8 @@ class ProviderDiagnostics:
 @dataclass
 class PipelineDiagnostics:
     input_errors: list[str] = field(default_factory=list)
+    parse_error_count: int = 0
+    nested_data_error_count: int = 0
     provider_errors: dict[str, list[str]] = field(default_factory=dict)
     providers: dict[str, ProviderDiagnostics] = field(default_factory=dict)
     routes: dict[str, str] = field(default_factory=dict)
@@ -409,6 +417,64 @@ def _apply_current_icp_state(
         dossier.current_icp_conflict = True
 
 
+def _whois_date_text(value: object) -> str:
+    """Render a WHOIS date fact as an ISO string for dossier whois fields."""
+    if isinstance(value, datetime):
+        normalized = normalize_datetime(value)
+        return normalized.isoformat(sep=" ") if normalized else ""
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _apply_fresh_whois_overlay(
+    dossier: IocDossier,
+    observations: list[Observation],
+) -> None:
+    """Overlay the newest fresh provider WHOIS record over merged snapshot state.
+
+    merge_records reads current-state WHOIS from the latest intel snapshot, so
+    a fresher provider fetch with a newer expiry date would lose to older
+    snapshot intel. The overlay applies provider facts by fetch time without
+    inventing intelligence times: snapshot updatetime stays authoritative for
+    intel/profile bookkeeping.
+    """
+    candidates = [
+        observation
+        for observation in observations
+        if observation.kind in {"whois", "whois_record"}
+        and observation.status == ProviderStatus.SUCCESS
+        and observation.freshness != Freshness.STALE
+    ]
+    if not candidates:
+        return
+
+    def _fetch_key(observation: Observation) -> datetime:
+        return normalize_datetime(observation.fetched_at) or datetime.min
+
+    newest = max(candidates, key=_fetch_key)
+    payload = newest.payload if isinstance(newest.payload, dict) else {}
+    whois = dict(dossier.whois) if isinstance(dossier.whois, dict) else {}
+    overlays = {
+        "createdDate": payload.get("created_at", payload.get("createdDate")),
+        "updatedDate": payload.get("updated_at", payload.get("updatedDate")),
+        "expiresDate": payload.get(
+            "expires_at",
+            payload.get("expiresDate", payload.get("expiration_date")),
+        ),
+    }
+    for field, value in overlays.items():
+        text = _whois_date_text(value)
+        if text:
+            whois[field] = text
+    dossier.whois = whois
+    updated = normalize_datetime(overlays["updatedDate"])
+    if updated is not None:
+        # The provider WHOIS record's own update time is genuine record
+        # metadata; it never replaces snapshot updatetime (intel time).
+        dossier.latest_profile_update_time = updated
+
+
 def _latest_observed_time(
     observations: list[Observation],
     kinds: set[str],
@@ -491,13 +557,16 @@ def _build_dga_facts(
 
 
 def _snapshot_records(bundle: InputBundle) -> dict[str, list[dict]]:
+    """Group snapshot rows by canonical target identity (scheme-aware for URLs)."""
     records_by_ioc: dict[str, list[dict]] = {}
     for row in bundle.snapshots:
         if not isinstance(row, dict):
             continue
         try:
-            normalized = normalize_ioc(str(row.get("ioc", "")))[0]
+            normalized = parse_ioc_value(str(row.get("ioc", "")))[0]
         except (TypeError, ValueError):
+            continue
+        if not normalized:
             continue
         records = row.get("data")
         if isinstance(records, list):
@@ -579,6 +648,12 @@ def _build_standard_dossier(
             ioc_type=target.ioc_type,
             ports=list(target.ports),
         )
+    # Target identity wins over any legacy scheme-stripped record keys so
+    # HTTP/HTTPS/domain scopes never collapse inside standard evidence paths.
+    dossier.ioc = target.normalized
+    dossier.ioc_type = target.ioc_type
+    dossier.ports = list(target.ports)
+    _apply_fresh_whois_overlay(dossier, observations)
     _apply_current_icp_state(dossier, observations, provider_statuses)
     return extract_evidence(dossier, config, now=now), len(records)
 
@@ -885,7 +960,13 @@ def _run_unified_pipeline_uncached(
         raise ValueError("provider names must be unique within one pipeline run")
     snapshots = _snapshot_records(bundle)
     dga_configured = any(provider.name == DGA_PROVIDER_NAME for provider in provider_list)
-    diagnostics = PipelineDiagnostics(input_errors=list(bundle.errors))
+    diagnostics = PipelineDiagnostics(
+        input_errors=list(bundle.errors),
+        parse_error_count=int(getattr(bundle, "parse_error_count", 0) or 0),
+        nested_data_error_count=int(
+            getattr(bundle, "nested_data_error_count", 0) or 0
+        ),
+    )
     if _uses_live_request_planning(provider_list):
         live_lifecycle = [
             provider
@@ -1053,10 +1134,97 @@ def _run_unified_pipeline_uncached(
     return UnifiedPipelineResult(verdicts, diagnostics, all_observations)
 
 
-def _provider_cache_state(provider: Provider) -> str:
+def _provider_cache_queries(
+    provider: Provider,
+    target: IocTarget,
+) -> list[tuple[str, dict]]:
+    """Return the exact raw-cache ``(ioc, params)`` lookups this provider uses."""
+    name = str(getattr(provider, "name", "") or "")
+    cache_params = getattr(provider, "cache_params", None)
+
+    if name in {"whois", "pdns"} and callable(cache_params):
+        try:
+            return [(target.host, dict(cache_params(target)))]
+        except TypeError:
+            return [(target.host, {})]
+
+    if name == "icp" and callable(cache_params):
+        try:
+            return [(target.host, dict(cache_params(target.host)))]
+        except TypeError:
+            return [(target.host, {})]
+
+    if name == "fdark" and callable(cache_params):
+        variants_fn = getattr(provider, "query_variants", None)
+        queries: list[tuple[str, dict]] = []
+        if callable(variants_fn):
+            try:
+                variants = list(variants_fn(target))
+            except TypeError:
+                variants = []
+            for item in variants:
+                if not isinstance(item, tuple) or len(item) != 2:
+                    continue
+                strategy, query = item
+                if not isinstance(query, dict):
+                    continue
+                try:
+                    params = dict(cache_params(target, strategy, query))
+                except TypeError:
+                    params = {
+                        "strategy": strategy,
+                        "query": dict(query),
+                        "request_ioc": target.original,
+                    }
+                queries.append((target.original, params))
+        if queries:
+            return queries
+        return [(target.original, {"request_ioc": target.original})]
+
+    if callable(cache_params):
+        try:
+            params = cache_params(target)
+            if isinstance(params, dict):
+                # Live sample/classification providers key by original spelling
+                # and isolate query shape via params (including request_ioc).
+                return [(target.original, dict(params))]
+        except TypeError:
+            pass
+
+    # Generic / test providers: cover common put keys without whole-shard scans.
+    seen: set[tuple[str, str]] = set()
+    queries = []
+    for ioc_key in (target.normalized, target.original, target.host):
+        if not ioc_key:
+            continue
+        marker = (ioc_key, "{}")
+        if marker in seen:
+            continue
+        seen.add(marker)
+        queries.append((ioc_key, {}))
+    return queries
+
+
+def _provider_dependency_state(provider: Provider, target: IocTarget) -> str:
+    """Per-target raw cache dependency digest (content + absence), never global mtime."""
     cache = getattr(provider, "cache", None)
     if cache is None:
         return "none"
+    dependency_digest = getattr(cache, "dependency_digest", None)
+    entry_dependency = getattr(cache, "entry_dependency", None)
+    queries = _provider_cache_queries(provider, target)
+    try:
+        if callable(dependency_digest):
+            return f"digest:{dependency_digest(queries)}"
+        if callable(entry_dependency):
+            parts = [entry_dependency(ioc, params) for ioc, params in queries]
+            encoded = json.dumps(
+                parts, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            return f"digest:{hashlib.sha256(encoded).hexdigest()}"
+    except OSError:
+        return "unavailable"
+    # Fallback for unexpected cache objects: presence only (legacy contract).
     provider_dir = getattr(cache, "provider_dir", None)
     legacy_path = getattr(cache, "legacy_path", None)
     try:
@@ -1069,12 +1237,43 @@ def _provider_cache_state(provider: Provider) -> str:
     return "missing"
 
 
-def _provider_result_cache_shape(provider: Provider) -> dict:
+def _sidecar_content_sha256(
+    path: Path,
+    *,
+    shape_memo: dict[tuple[str, int, int], str] | None = None,
+) -> str:
+    """Hash sidecar bytes once per (path, mtime_ns, size); refresh when file changes."""
+    try:
+        stat = path.stat()
+        memo_key = (str(path.resolve()), int(stat.st_mtime_ns), int(stat.st_size))
+    except OSError:
+        return hashlib.sha256(b"").hexdigest()
+    if shape_memo is not None and memo_key in shape_memo:
+        return shape_memo[memo_key]
+    try:
+        content = path.read_bytes()
+    except OSError:
+        content = b""
+    digest = hashlib.sha256(content).hexdigest()
+    if shape_memo is not None:
+        shape_memo[memo_key] = digest
+    return digest
+
+
+def _provider_result_cache_shape(
+    provider: Provider,
+    *,
+    target: IocTarget | None = None,
+    shape_memo: dict[tuple[str, int, int], str] | None = None,
+) -> dict:
     shape: dict[str, object] = {
         "name": str(provider.name),
         "class": f"{type(provider).__module__}.{type(provider).__qualname__}",
-        "cache_state": _provider_cache_state(provider),
     }
+    if target is not None:
+        shape["cache_dependency"] = _provider_dependency_state(provider, target)
+    else:
+        shape["cache_dependency"] = "none"
     settings = getattr(provider, "settings", None)
     public_dict = getattr(settings, "public_dict", None)
     if callable(public_dict):
@@ -1101,12 +1300,349 @@ def _provider_result_cache_shape(provider: Provider) -> dict:
             shape[name] = value
     sidecar_path = getattr(provider, "_path", None)
     if sidecar_path is not None:
-        try:
-            content = sidecar_path.read_bytes()
-        except OSError:
-            content = b""
-        shape["sidecar_sha256"] = hashlib.sha256(content).hexdigest()
+        shape["sidecar_sha256"] = _sidecar_content_sha256(
+            Path(sidecar_path), shape_memo=shape_memo
+        )
+    if getattr(provider, "cache", None) is None:
+        ttl = getattr(provider, "ttl", None)
+        if isinstance(ttl, timedelta):
+            # Sidecar freshness (and therefore verdict validity) depends on
+            # the configured TTL, so different TTLs cannot share cache rows.
+            shape["sidecar_ttl_seconds"] = ttl.total_seconds()
     return shape
+
+
+def _temporal_bound_from_event(
+    event: datetime | None,
+    *,
+    now: datetime,
+    window: timedelta,
+) -> datetime | None:
+    """Inclusive last reusable instant before a recent/not-recent flip for *event*.
+
+    Lookup treats ``valid_until`` as inclusive (``now <= valid_until`` stays a
+    hit). Future events activate at the event instant, so the last reusable
+    cached instant is one microsecond earlier. Past events inside the inclusive
+    recent window remain reusable through ``event + window``.
+    """
+    if event is None:
+        return None
+    normalized_event = normalize_datetime(event)
+    normalized_now = normalize_datetime(now)
+    if normalized_event is None or normalized_now is None:
+        return None
+    if normalized_event > normalized_now:
+        # Exclusive activation: cached pre-event verdict is invalid at event time.
+        return normalized_event - timedelta(microseconds=1)
+    age = normalized_now - normalized_event
+    if timedelta(0) <= age <= window:
+        # Inclusive recent window: first invalid moment is just after event+window.
+        return normalized_event + window
+    return None
+
+
+def _whois_date_valid_until(expires: datetime | None, now: datetime) -> datetime | None:
+    """WHOIS unexpired is date-based: valid through end of expires.date() UTC."""
+    normalized_expires = normalize_datetime(expires)
+    normalized_now = normalize_datetime(now)
+    if normalized_expires is None or normalized_now is None:
+        return None
+    if normalized_expires.date() >= normalized_now.date():
+        # First calendar day after expiry date (exclusive upper bound for hit).
+        next_day = normalized_expires.date() + timedelta(days=1)
+        return datetime(next_day.year, next_day.month, next_day.day)
+    return None
+
+
+def _all_observed_times(
+    observations: list[Observation],
+    kinds: set[str],
+    payload_keys: tuple[str, ...],
+    *,
+    include_observation_time: bool = True,
+) -> list[datetime]:
+    """Collect every usable event time for the given observation kinds."""
+    values: list[datetime] = []
+    for observation in observations:
+        if (
+            observation.kind not in kinds
+            or observation.status != ProviderStatus.SUCCESS
+            or observation.freshness == Freshness.STALE
+        ):
+            continue
+        if include_observation_time and observation.observed_at is not None:
+            normalized = normalize_datetime(observation.observed_at)
+            if normalized is not None:
+                values.append(normalized)
+        payload = observation.payload if isinstance(observation.payload, dict) else {}
+        for key in payload_keys:
+            value = _coerce_datetime(payload.get(key))
+            if value is not None:
+                values.append(value)
+    return values
+
+
+def _material_activity_times_from_dossier(
+    dossier: IocDossier,
+    config: Config,
+) -> list[datetime]:
+    """All standard-route material activity inputs that can flip evidence B."""
+    times: list[datetime] = []
+    for entry in dossier.hash_entries or []:
+        if not isinstance(entry, dict) or not _entry_is_malicious(entry, config):
+            continue
+        parsed = _entry_time(entry, None)
+        if parsed is not None:
+            times.append(parsed)
+    flint_last = _coerce_datetime((dossier.flint or {}).get("last_seen"))
+    if flint_last is not None:
+        times.append(flint_last)
+    access = dossier.access or {}
+    access_end = _coerce_datetime(access.get("end"))
+    if access_end is not None:
+        times.append(access_end)
+    for entry in dossier.dtree_entries or []:
+        if not isinstance(entry, dict):
+            continue
+        parsed = _coerce_datetime(entry.get("last"))
+        if parsed is not None:
+            times.append(parsed)
+    return times
+
+
+def _material_activity_times_from_records(
+    records: list[dict],
+    config: Config,
+) -> list[datetime]:
+    """Extract hash/flint/access/dtree activity times from raw snapshot records."""
+    times: list[datetime] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        hashes = record.get("hash", [])
+        if isinstance(hashes, dict):
+            hashes = [hashes]
+        if isinstance(hashes, list):
+            for entry in hashes:
+                if not isinstance(entry, dict) or not _entry_is_malicious(entry, config):
+                    continue
+                parsed = _entry_time(entry, None)
+                if parsed is not None:
+                    times.append(parsed)
+        flint = record.get("flint")
+        if isinstance(flint, dict):
+            parsed = _coerce_datetime(flint.get("last_seen"))
+            if parsed is not None:
+                times.append(parsed)
+        access = record.get("access")
+        if isinstance(access, dict):
+            parsed = _coerce_datetime(access.get("end"))
+            if parsed is not None:
+                times.append(parsed)
+        dtree = record.get("dtree", [])
+        if isinstance(dtree, dict):
+            dtree = [dtree]
+        if isinstance(dtree, list):
+            for entry in dtree:
+                if not isinstance(entry, dict):
+                    continue
+                parsed = _coerce_datetime(entry.get("last"))
+                if parsed is not None:
+                    times.append(parsed)
+    return times
+
+
+def _provider_ttl(provider: Provider) -> timedelta | None:
+    cache = getattr(provider, "cache", None)
+    ttl = getattr(cache, "ttl", None) if cache is not None else None
+    if isinstance(ttl, timedelta) and ttl >= timedelta(0):
+        return ttl
+    settings = getattr(provider, "settings", None)
+    ttl = getattr(settings, "ttl", None) if settings is not None else None
+    if isinstance(ttl, timedelta) and ttl >= timedelta(0):
+        return ttl
+    # Sidecar-style providers carry their own TTL without a raw cache.
+    if cache is None:
+        ttl = getattr(provider, "ttl", None)
+        if isinstance(ttl, timedelta) and ttl >= timedelta(0):
+            return ttl
+    return None
+
+
+def _provider_freshness_bounds(
+    providers: Iterable[Provider],
+    target: IocTarget,
+    now: datetime,
+    observations: list[Observation] | None = None,
+) -> list[datetime]:
+    """Inclusive fetched_at+TTL bounds for dependent provider freshness facts.
+
+    NO_DATA completeness rows are included: once the raw fact goes stale the
+    completed verdict must recompute (sample completeness / freshness flips).
+    Already-stale rows at put time do not contribute a future bound.
+    Future fetch timestamps activate at the fetch instant: the pre-activation
+    verdict stops being reusable one microsecond before that instant.
+    Cache-less providers with a TTL (sidecar) contribute bounds from their
+    collected observations, including explicit fresh NO_DATA completeness.
+    """
+    bounds: list[datetime] = []
+    current = normalize_datetime(now)
+    if current is None:
+        return bounds
+    for provider in providers:
+        cache = getattr(provider, "cache", None)
+        if cache is None:
+            # Sidecar-style provider: bounds come from the collected
+            # observations for this target.
+            ttl = _provider_ttl(provider)
+            if ttl is None or observations is None:
+                continue
+            for observation in observations:
+                if (
+                    observation.provider != provider.name
+                    or observation.ioc != target.normalized
+                ):
+                    continue
+                fetched = normalize_datetime(observation.fetched_at)
+                if fetched is None:
+                    continue
+                age = current - fetched
+                if age < timedelta(0):
+                    bounds.append(fetched - timedelta(microseconds=1))
+                    continue
+                expiry = fetched + ttl
+                if current <= expiry:
+                    bounds.append(expiry)
+            continue
+        get_entry = getattr(cache, "get", None)
+        if not callable(get_entry):
+            continue
+        ttl = _provider_ttl(provider)
+        if ttl is None:
+            continue
+        try:
+            queries = _provider_cache_queries(provider, target)
+        except Exception:
+            continue
+        for ioc_key, params in queries:
+            try:
+                entry = get_entry(ioc_key, params, now=current)
+            except (OSError, TypeError, ValueError):
+                continue
+            if entry is None:
+                continue
+            fetched = normalize_datetime(getattr(entry, "fetched_at", None))
+            if fetched is None:
+                continue
+            age = current - fetched
+            if age < timedelta(0):
+                bounds.append(fetched - timedelta(microseconds=1))
+                continue
+            expiry = fetched + ttl
+            # Inclusive is_fresh: reusable while age <= ttl, i.e. now <= expiry.
+            if current <= expiry:
+                bounds.append(expiry)
+    return bounds
+
+
+def compute_result_valid_until(
+    observations: list[Observation],
+    config: Config,
+    evaluation_time: datetime,
+    *,
+    dossier: IocDossier | None = None,
+    snapshot_records: list[dict] | None = None,
+    providers: Iterable[Provider] | None = None,
+    target: IocTarget | None = None,
+) -> datetime | None:
+    """Earliest inclusive upper bound after which a completed verdict must recompute.
+
+    Covers every evaluated material activity input (snapshot hash / flint /
+    access / dtree, IOC Info samples, pDNS), WHOIS date-based expiry, future
+    event activation (exclusive at the event instant), and dependent provider
+    raw-cache freshness TTLs including NO_DATA completeness facts. Returns
+    None when no time-sensitive evidence bounds the row (completed-result TTL
+    still applies). Equivalent timezone instants share the same bound after
+    UTC normalization.
+    """
+    now = normalize_datetime(evaluation_time)
+    if now is None:
+        raise TypeError("evaluation_time must be a valid datetime")
+    bounds: list[datetime] = []
+    pdns_window = timedelta(days=config.dga_pdns_recent_days)
+    activity_window = timedelta(days=config.activity_window_days)
+
+    # All pDNS activity events (not latest-only) so older-in-window + future
+    # combinations cannot hide an earlier flip.
+    for event in _all_observed_times(
+        observations,
+        {"pdns", "pdns_activity"},
+        ("time_last", "last_seen", "observed_at"),
+    ):
+        bound = _temporal_bound_from_event(event, now=now, window=pdns_window)
+        if bound is not None:
+            bounds.append(bound)
+
+    for event in _all_observed_times(
+        observations,
+        {"whois", "whois_record"},
+        ("expires_at", "expiresDate", "expiration_date"),
+        include_observation_time=False,
+    ):
+        whois_bound = _whois_date_valid_until(event, now)
+        if whois_bound is not None:
+            # Lookup uses now <= valid_until, so store last microsecond of expires day.
+            bounds.append(whois_bound - timedelta(microseconds=1))
+
+    for entry, fallback in _sample_entries(observations):
+        if not _entry_is_malicious(entry, config):
+            continue
+        sample_time = _entry_time(entry, fallback)
+        sample_bound = _temporal_bound_from_event(
+            sample_time, now=now, window=activity_window
+        )
+        if sample_bound is not None:
+            bounds.append(sample_bound)
+
+    material_times: list[datetime] = []
+    if dossier is not None:
+        material_times.extend(_material_activity_times_from_dossier(dossier, config))
+    if snapshot_records:
+        material_times.extend(
+            _material_activity_times_from_records(list(snapshot_records), config)
+        )
+    # IOC Info record payloads also carry hash/flint/access/dtree material times
+    # even when no dossier object is available at put time.
+    material_times.extend(
+        _material_activity_times_from_records(
+            [
+                _observation_payload_record(observation)
+                for observation in observations
+                if observation.status == ProviderStatus.SUCCESS
+                and observation.kind == "ioc_info_record"
+            ],
+            config,
+        )
+    )
+    seen_material: set[datetime] = set()
+    for event in material_times:
+        if event in seen_material:
+            continue
+        seen_material.add(event)
+        material_bound = _temporal_bound_from_event(
+            event, now=now, window=activity_window
+        )
+        if material_bound is not None:
+            bounds.append(material_bound)
+
+    if providers is not None and target is not None:
+        bounds.extend(
+            _provider_freshness_bounds(providers, target, now, observations=observations)
+        )
+
+    if not bounds:
+        return None
+    return min(bounds)
 
 
 def result_cache_fingerprint(
@@ -1115,8 +1651,16 @@ def result_cache_fingerprint(
     providers: Iterable[Provider],
     config: Config,
     evaluation_time: datetime | None = None,
+    *,
+    shape_memo: dict[tuple[str, int, int], str] | None = None,
 ) -> str:
-    """Hash every local input that can change a completed verdict row."""
+    """Hash every local input that can change a completed verdict row.
+
+    Includes scheme-aware target identity and per-target provider raw dependency
+    digests. Sidecar file hashes are memoized by path/mtime/size for the run.
+    Same-day time-sensitive flips use result-row ``valid_until`` rather than
+    hashing wall-clock ticks into this fingerprint.
+    """
     evaluation_day = ""
     if evaluation_time is not None:
         normalized_evaluation_time = normalize_datetime(evaluation_time)
@@ -1131,11 +1675,15 @@ def result_cache_fingerprint(
             "ioc_type": target.ioc_type,
             "host": target.host,
             "ports": list(target.ports),
+            "scheme": getattr(target, "scheme", "") or "",
         },
         "snapshot_records": snapshot_records,
         "config": asdict(config),
         "providers": [
-            _provider_result_cache_shape(provider) for provider in providers
+            _provider_result_cache_shape(
+                provider, target=target, shape_memo=shape_memo
+            )
+            for provider in providers
         ],
     }
     encoded = json.dumps(
@@ -1181,6 +1729,8 @@ def run_unified_pipeline(
     if effective_now is None:
         raise TypeError("now must be a valid datetime")
     snapshots = _snapshot_records(bundle)
+    # Sidecar content hashes memoized once per (path, mtime, size) for this run.
+    shape_memo: dict[tuple[str, int, int], str] = {}
     fingerprints = {
         target.normalized: result_cache_fingerprint(
             target,
@@ -1188,6 +1738,7 @@ def run_unified_pipeline(
             provider_list,
             config,
             evaluation_time=effective_now,
+            shape_memo=shape_memo,
         )
         for target in bundle.targets
     }
@@ -1218,6 +1769,10 @@ def run_unified_pipeline(
             targets=pending_targets,
             snapshots=bundle.snapshots,
             errors=bundle.errors,
+            parse_error_count=int(getattr(bundle, "parse_error_count", 0) or 0),
+            nested_data_error_count=int(
+                getattr(bundle, "nested_data_error_count", 0) or 0
+            ),
         )
         result = _run_unified_pipeline_uncached(
             pending_bundle,
@@ -1229,8 +1784,20 @@ def run_unified_pipeline(
         )
     else:
         result = UnifiedPipelineResult(
-            diagnostics=PipelineDiagnostics(input_errors=list(bundle.errors))
+            diagnostics=PipelineDiagnostics(
+                input_errors=list(bundle.errors),
+                parse_error_count=int(getattr(bundle, "parse_error_count", 0) or 0),
+                nested_data_error_count=int(
+                    getattr(bundle, "nested_data_error_count", 0) or 0
+                ),
+            )
         )
+
+    observations_by_ioc: dict[str, list[Observation]] = {
+        target.normalized: [] for target in pending_targets
+    }
+    for observation in result.observations:
+        observations_by_ioc.setdefault(observation.ioc, []).append(observation)
 
     computed_rows = {row["ioc"]: row for row in result.verdicts}
     for target in pending_targets:
@@ -1244,12 +1811,41 @@ def run_unified_pipeline(
                 provider_list,
                 config,
                 evaluation_time=effective_now,
+                shape_memo=shape_memo,
+            )
+            target_observations = observations_by_ioc.get(target.normalized, [])
+            target_snapshots = snapshots.get(target.normalized, [])
+            dossier_for_validity: IocDossier | None = None
+            if target_snapshots or any(
+                observation.kind == "ioc_info_record"
+                for observation in target_observations
+            ):
+                try:
+                    dossier_for_validity, _ = _build_standard_dossier(
+                        target,
+                        target_snapshots,
+                        target_observations,
+                        {},
+                        config,
+                        now=effective_now,
+                    )
+                except Exception:
+                    dossier_for_validity = None
+            valid_until = compute_result_valid_until(
+                target_observations,
+                config,
+                effective_now,
+                dossier=dossier_for_validity,
+                snapshot_records=target_snapshots,
+                providers=provider_list,
+                target=target,
             )
             result_cache.put(
                 target.normalized,
                 final_fingerprint,
                 row,
                 fetched_at=current,
+                valid_until=valid_until,
             )
         except (OSError, TypeError, ValueError) as exc:
             cache_errors.append(

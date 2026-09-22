@@ -18,12 +18,37 @@ from ioc_rejudge.providers.base import (
 )
 from ioc_rejudge.providers.cache import CacheEntry, JsonlProviderCache
 from ioc_rejudge.providers.go_transport import BatchRequest, GoBatchTransport
+from ioc_rejudge.providers.redaction import (
+    REDACTED,
+    redact_secret_values,
+    safe_text,
+    secret_values,
+)
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import RequestsTransport, TransportError
 
 
 _SUPPORTED_TYPES = {"domain", "url", "domain_port"}
-_REDACTED = "[REDACTED]"
+_AUTH_FAILURE_CODE = "3003"
+_AUTH_FAILURE_MESSAGE = "身份校验失败"
+
+
+def _unusable_icp_reason(response: object) -> str | None:
+    """Return an error when the payload is an authentication/business failure.
+
+    Empty rows after a usable query remain a typed negative. Credential
+    failures must not become current=false.
+    """
+    if not isinstance(response, dict):
+        return None
+    code = response.get("resultCode")
+    code_text = str(code).strip() if code is not None else ""
+    message = response.get("resultMsg")
+    message_text = message.strip() if isinstance(message, str) else ""
+    if code_text == _AUTH_FAILURE_CODE or _AUTH_FAILURE_MESSAGE in message_text:
+        detail = message_text or f"resultCode {code_text or _AUTH_FAILURE_CODE}"
+        return f"ICP authentication failed ({detail})"
+    return None
 
 
 def _is_non_ip_host(host: str) -> bool:
@@ -35,6 +60,9 @@ def _is_non_ip_host(host: str) -> bool:
 
 
 def _registration(response: object) -> tuple[str | None, str | None]:
+    unusable = _unusable_icp_reason(response)
+    if unusable:
+        return None, unusable
     if not isinstance(response, dict):
         return None, "ICP response must be an object"
     result_object = response.get("resultObject")
@@ -48,7 +76,7 @@ def _registration(response: object) -> tuple[str | None, str | None]:
         if not isinstance(value, str):
             return None, "ICP registration must be a string"
         normalized = value.strip()
-        if _REDACTED in normalized:
+        if REDACTED in normalized:
             return None, "ICP registration contains redacted data"
         return (normalized or None), None
 
@@ -69,24 +97,6 @@ def _registration(response: object) -> tuple[str | None, str | None]:
             if error or value is not None:
                 return value, error
     return "", None
-
-
-def _redact_secret_values(value: object, secrets: tuple[str, ...]) -> object:
-    if isinstance(value, str):
-        redacted = value
-        for secret in secrets:
-            redacted = redacted.replace(secret, _REDACTED)
-        return redacted
-    if isinstance(value, dict):
-        return {
-            _redact_secret_values(key, secrets): _redact_secret_values(item, secrets)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_secret_values(item, secrets) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_redact_secret_values(item, secrets) for item in value)
-    return value
 
 
 class _RateLimiter:
@@ -141,12 +151,14 @@ class ICPProvider:
             "dm": host,
         }
 
+    def _secret_values(self) -> tuple[str, ...]:
+        return secret_values(self.settings.secrets)
+
+    def _sanitize_response(self, response: object) -> object:
+        return redact_secret_values(response, self._secret_values())
+
     def _safe_error(self, message: object) -> str:
-        text = str(message)
-        for secret in self.settings.secrets.values():
-            if secret:
-                text = text.replace(str(secret), "[REDACTED]")
-        return text
+        return safe_text(message, self._secret_values())
 
     def _observation(
         self,
@@ -180,6 +192,7 @@ class ICPProvider:
         freshness: Freshness,
         raw_ref: str,
     ) -> tuple[ProviderStatus, Observation | None, str | None]:
+        response = self._sanitize_response(response)
         registration, error = _registration(response)
         if error:
             return ProviderStatus.ERROR, None, error
@@ -201,17 +214,13 @@ class ICPProvider:
         if self.cache is None:
             return f"live:{self.name}", None
         try:
-            secrets = tuple(sorted(
-                {
-                    str(secret)
-                    for secret in self.settings.secrets.values()
-                    if isinstance(secret, str) and secret
-                },
-                key=len,
-                reverse=True,
-            ))
-            persisted = _redact_secret_values(response, secrets)
-            entry = self.cache.put(host, persisted, self.cache_params(host), fetched_at=fetched_at)
+            entry = self.cache.put(
+                host,
+                response,
+                self.cache_params(host),
+                fetched_at=fetched_at,
+                secret_values=self._secret_values(),
+            )
         except (OSError, TypeError, ValueError) as exc:
             return "", f"cache write failed for {host}: {self._safe_error(exc)}"
         return f"cache:{self.name}:{entry.key}", None
@@ -292,10 +301,12 @@ class ICPProvider:
             host, host_targets, stale_entry = item
             try:
                 limiter.wait()
-                response = self.transport.get_json(
-                    self.settings.base_url,
-                    params=self.request_params(host),
-                    timeout=self.settings.timeout,
+                response = self._sanitize_response(
+                    self.transport.get_json(
+                        self.settings.base_url,
+                        params=self.request_params(host),
+                        timeout=self.settings.timeout,
+                    )
                 )
                 fetched_at = self.now_fn()
                 raw_ref, cache_error = self._store(host, response, fetched_at)
@@ -338,14 +349,15 @@ class ICPProvider:
                     error = self._safe_error(result.error)
                 else:
                     fetched_at = self.now_fn()
-                    raw_ref, cache_error = self._store(host, result.payload, fetched_at)
+                    response = self._sanitize_response(result.payload)
+                    raw_ref, cache_error = self._store(host, response, fetched_at)
                     if cache_error:
                         status = ProviderStatus.ERROR
                         observation = None
                         error = cache_error
                     else:
                         status, observation, error = self._consume(
-                            host_targets[0], result.payload, fetched_at=fetched_at,
+                            host_targets[0], response, fetched_at=fetched_at,
                             freshness=Freshness.FRESH, raw_ref=raw_ref,
                         )
                 for target in host_targets:

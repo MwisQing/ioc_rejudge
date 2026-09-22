@@ -65,7 +65,15 @@
   "authoritative_context_indicators": [
     "黑产",
     "扩展",
-    "扩线"
+    "扩线",
+    "仿冒网站",
+    "仿冒下载",
+    "phishingsite",
+    "openphish",
+    "phishtank",
+    "maltrail",
+    "hign-confidence-osint",
+    "high-confidence-osint"
   ],
   "context_comment_historical_indicators": [
     "historical",

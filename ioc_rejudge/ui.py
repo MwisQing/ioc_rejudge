@@ -5,8 +5,9 @@ create/restore/scan, plus an optional IOC Info lookup that reuses the same
 provider cache as the adjudication CLI.  It binds to loopback only, guards
 every request with a per-process session token plus Host/Origin checks, and
 keeps the key passphrase in process memory (also persisted next to the key
-file for auto-unlock on the next start until the user locks).  It never runs
-the adjudication pipeline; lookup talks only to the ``ioc_info`` provider.
+file for auto-unlock on the next start until the user locks).  The share flow
+never runs the adjudication pipeline; the default workbench backend runs only
+the local legacy snapshot pipeline. Lookup talks only to ``ioc_info``.
 The human copies sanitized text to a cloud AI and pastes the answer back.
 """
 
@@ -44,6 +45,13 @@ from ioc_rejudge.share import (
     restore_bundle,
     scan_bundle,
 )
+from ioc_rejudge.workbench import (
+    LocalWorkbenchAdapter,
+    WorkbenchAdapter,
+    WorkbenchError,
+    WorkbenchUnavailable,
+)
+from ioc_rejudge.workbench_backend import OfflineWorkbenchAdapter
 
 DEFAULT_PORT = 8731
 MAX_BUNDLES = 20
@@ -61,10 +69,12 @@ LOOKUP_MAX_ATTEMPTS = 1
 LOOKUP_CONNECT_TIMEOUT_SECONDS = 5
 LOOKUP_READ_TIMEOUT_SECONDS = 15
 _PARALLEL_API_PATHS = frozenset({"/api/status", "/api/lookup"})
+_WORKBENCH_API_PREFIX = "/api/workbench/"
 
 # Bundle directories are named by the 20-hex-char bundle id; the fullmatch
 # also keeps user-supplied ids from ever escaping the bundle directory.
 _BUNDLE_ID_RE = re.compile(r"[0-9a-f]{20}")
+_WORKBENCH_ID_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]{0,127}")
 _INVALID_IOC_RE = re.compile(r"^line (\d+): invalid IOC (.+)$")
 _PAGE_FILE = Path(__file__).with_name("ui.html")
 
@@ -363,7 +373,12 @@ def _manifest_path(bundle_dir: Path) -> Path:
     return bundle_dir / "share.jsonl.manifest.json"
 
 
-def _list_bundles(bundles_dir: Path) -> list[dict]:
+def _list_bundles(bundles_dir: Path, *, limit: int | None = None) -> list[dict]:
+    """List bundle manifests, newest first.
+
+    ``limit`` caps the *visible* recent-history window only. Bundle directories
+    themselves are retained so older restores keep matching after restart.
+    """
     entries = []
     for bundle_dir in _bundle_dirs(bundles_dir):
         data = _read_manifest(_manifest_path(bundle_dir))
@@ -377,18 +392,224 @@ def _list_bundles(bundles_dir: Path) -> list[dict]:
             }
         )
     entries.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    if limit is not None and limit >= 0:
+        return entries[:limit]
     return entries
 
 
-def _prune_bundles(bundles_dir: Path, max_bundles: int) -> None:
-    """Keep only the newest ``max_bundles`` bundle directories."""
-    entries = []
+def _count_bundles(bundles_dir: Path) -> int:
+    """Count bundle directories that still have a readable manifest."""
+    total = 0
     for bundle_dir in _bundle_dirs(bundles_dir):
-        data = _read_manifest(_manifest_path(bundle_dir))
-        entries.append((str((data or {}).get("created_at") or ""), bundle_dir))
-    entries.sort(key=lambda item: item[0], reverse=True)
-    for _, bundle_dir in entries[max_bundles:]:
-        shutil.rmtree(bundle_dir, ignore_errors=True)
+        if _read_manifest(_manifest_path(bundle_dir)) is not None:
+            total += 1
+    return total
+
+
+def _prune_bundles(bundles_dir: Path, max_bundles: int) -> None:
+    """History retention is a display limit; never delete restore metadata.
+
+    Older ``max_bundles`` configuration still bounds the recent-history list
+    returned by status APIs. Manifests, restored outputs, and cloud response
+    copies stay on disk indefinitely so auto-match restore keeps working after
+    overflow and after server restart. Regenerable share payloads are also
+    retained by default (disk is cheap relative to lost recovery context).
+    """
+    del bundles_dir, max_bundles
+
+
+_STAGING_FILE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _write_complete_file(path: Path, data: bytes) -> None:
+    """Write ``data`` fully to ``path`` via temp + replace; verify byte length."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_hex(6)
+    tmp = path.with_name(f".tmp-write-{path.name}-{token}")
+    try:
+        if tmp.exists() or tmp.is_symlink():
+            if tmp.is_dir() and not tmp.is_symlink():
+                raise ShareError(f"refusing to overwrite directory temp path: {tmp}")
+            tmp.unlink()
+        tmp.write_bytes(data)
+        written = tmp.stat().st_size
+        if written != len(data):
+            raise OSError(f"incomplete write for {path}: got {written} bytes, expected {len(data)}")
+        os.replace(tmp, path)
+        final = path.stat().st_size
+        if final != len(data):
+            raise OSError(f"incomplete write for {path}: got {final} bytes, expected {len(data)}")
+    finally:
+        if tmp.exists() or tmp.is_symlink():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+def _validate_staging_flat_files(staging: Path) -> list[Path]:
+    """Return sorted regular files in staging; reject dirs/symlinks/unsafe names."""
+    staging_resolved = staging.resolve()
+    items: list[Path] = []
+    for item in sorted(staging.iterdir(), key=lambda p: p.name):
+        name = item.name
+        if not _STAGING_FILE_NAME_RE.fullmatch(name):
+            raise ShareError(f"unsafe staging artifact name: {name!r}")
+        try:
+            resolved = item.resolve(strict=False)
+        except OSError as exc:
+            raise ShareError(f"cannot resolve staging artifact: {name}") from exc
+        if not resolved.is_relative_to(staging_resolved):
+            raise ShareError(f"staging artifact escapes staging directory: {name}")
+        if item.is_symlink():
+            raise ShareError(f"staging rejects symlinks: {name}")
+        if item.is_dir():
+            raise ShareError(f"staging rejects directories: {name}")
+        if not item.is_file():
+            raise ShareError(f"staging requires regular files: {name}")
+        items.append(item)
+    return items
+
+
+def _install_flat_file(src: Path, dest: Path) -> None:
+    """Install one regular file onto ``dest`` only after the full payload is present."""
+    if src.is_symlink() or not src.is_file():
+        raise ShareError(f"install source must be a regular file: {src.name}")
+    if dest.exists() and (dest.is_symlink() or dest.is_dir()):
+        raise ShareError(f"refusing to replace non-file target: {dest.name}")
+    data = src.read_bytes()
+    token = secrets.token_hex(6)
+    tmp = dest.with_name(f".tmp-install-{dest.name}-{token}")
+    try:
+        if tmp.exists() or tmp.is_symlink():
+            if tmp.is_dir() and not tmp.is_symlink():
+                raise ShareError(f"refusing to use directory as install temp: {tmp}")
+            tmp.unlink()
+        tmp.write_bytes(data)
+        if tmp.stat().st_size != len(data):
+            raise OSError(f"incomplete install payload for {dest.name}")
+        os.replace(tmp, dest)
+    finally:
+        if tmp.exists() or tmp.is_symlink():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+def _restore_flat_file(backup: Path, dest: Path) -> None:
+    """Atomically restore ``dest`` from a complete backup file (no pre-unlink)."""
+    if backup.is_symlink() or not backup.is_file():
+        raise OSError(f"complete backup missing or not a file: {backup}")
+    if dest.exists() and (dest.is_symlink() or dest.is_dir()):
+        raise OSError(f"cannot restore over non-file destination: {dest}")
+    data = backup.read_bytes()
+    token = secrets.token_hex(6)
+    tmp = dest.with_name(f".tmp-restore-{dest.name}-{token}")
+    try:
+        if tmp.exists() or tmp.is_symlink():
+            if tmp.is_dir() and not tmp.is_symlink():
+                raise OSError(f"restore temp path is a directory: {tmp}")
+            tmp.unlink()
+        tmp.write_bytes(data)
+        if tmp.stat().st_size != len(data):
+            raise OSError(f"incomplete restore payload for {dest.name}")
+        os.replace(tmp, dest)
+        if dest.stat().st_size != len(data):
+            raise OSError(f"restore size mismatch for {dest.name}")
+    finally:
+        if tmp.exists() or tmp.is_symlink():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+def _merge_bundle_dir(staging: Path, target: Path) -> None:
+    """Install staging artifacts into ``target`` without wiping recovery files.
+
+    Bounded flat-file transaction for generated share/manifest/input files:
+    validate staging, complete every backup before any install, commit only
+    successful installs, and on failure restore only those installs from
+    complete backups. Existing ``restored-*``, ``cloud-*``, and other
+    user-authored files are never touched.
+
+    A failed or partial backup never writes back into an untouched target.
+    If rollback itself fails, complete backups are retained and the error
+    names their path so operators can recover manually.
+    """
+    target.mkdir(parents=True, exist_ok=True)
+    staging_items = _validate_staging_flat_files(staging)
+    backup_root = target.parent / f".merge-backup-{target.name}-{secrets.token_hex(6)}"
+    phase = "validate"
+    complete_backups: dict[str, Path] = {}
+    # (name, existed_before_install) for successfully committed installs only.
+    installed: list[tuple[str, bool]] = []
+
+    try:
+        phase = "backup"
+        backup_root.mkdir(parents=True, exist_ok=False)
+        for item in staging_items:
+            dest = target / item.name
+            if dest.is_symlink() or dest.is_dir():
+                raise ShareError(f"refusing to replace non-file target: {item.name}")
+            if dest.is_file():
+                backup_path = backup_root / item.name
+                _write_complete_file(backup_path, dest.read_bytes())
+                complete_backups[item.name] = backup_path
+
+        phase = "commit"
+        for item in staging_items:
+            dest = target / item.name
+            existed = dest.is_file()
+            _install_flat_file(item, dest)
+            installed.append((item.name, existed))
+
+        phase = "cleanup"
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(backup_root, ignore_errors=True)
+    except Exception as exc:
+        if phase in {"validate", "backup"}:
+            # No target installs occurred. Drop incomplete backup material only.
+            if backup_root.exists():
+                shutil.rmtree(backup_root, ignore_errors=True)
+            raise
+
+        if phase == "commit":
+            rollback_errors: list[str] = []
+            for name, existed in reversed(installed):
+                dest = target / name
+                if not existed:
+                    try:
+                        if dest.is_file() or dest.is_symlink():
+                            dest.unlink()
+                    except OSError as rollback_exc:
+                        rollback_errors.append(f"{name}: remove created file failed: {rollback_exc}")
+                    continue
+                backup_path = complete_backups.get(name)
+                if backup_path is None or not backup_path.is_file():
+                    rollback_errors.append(f"{name}: complete backup missing")
+                    continue
+                try:
+                    _restore_flat_file(backup_path, dest)
+                except OSError as rollback_exc:
+                    rollback_errors.append(f"{name}: restore failed: {rollback_exc}")
+
+            if rollback_errors:
+                # Keep complete backups; never delete the only recovery copy.
+                detail = "; ".join(rollback_errors)
+                raise ShareError(
+                    "bundle merge install failed and rollback was incomplete; "
+                    f"complete backups retained at {backup_root} ({detail})"
+                ) from exc
+
+            # Full rollback succeeded — safe to drop known temps/backups.
+            if backup_root.exists():
+                shutil.rmtree(backup_root, ignore_errors=True)
+            raise
+
+        raise
 
 
 def _first_row_bundle_id(path: Path) -> str | None:
@@ -449,6 +670,7 @@ class UiState:
         credentials_path: Path | None = None,
         provider_env: dict[str, str] | None = None,
         transport_factory=None,
+        workbench_adapter: WorkbenchAdapter | None = None,
     ) -> None:
         if max_bundles < 1:
             raise ValueError("max_bundles must be at least 1")
@@ -467,6 +689,7 @@ class UiState:
         self.ioc_info_enabled = False
         self.lookup_provider = None
         self.lookup_offline = True
+        self.workbench_adapter = workbench_adapter
         # The passphrase (not the derived key) is kept, because the wrapped
         # share functions re-load and re-verify the key file per operation.
         self.passphrase: str | None = None
@@ -477,6 +700,12 @@ class UiState:
     @property
     def unlocked(self) -> bool:
         return self.passphrase is not None
+
+    @property
+    def workbench_dir(self) -> Path | None:
+        adapter = self.workbench_adapter
+        root = getattr(adapter, "workbench_dir", None)
+        return Path(root) if root is not None else None
 
 
 class _UiRequestHandler(BaseHTTPRequestHandler):
@@ -557,6 +786,12 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
         token = self._request_token()
         return bool(token) and secrets.compare_digest(token, self.ui_state.token)
 
+    @staticmethod
+    def _valid_workbench_id(value: str) -> bool:
+        return bool(value) and ".." not in value and bool(
+            _WORKBENCH_ID_RE.fullmatch(value)
+        )
+
     # -- routing ----------------------------------------------------------
 
     def _drain_request_body(self) -> None:
@@ -579,13 +814,37 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
                 pass
 
     def do_GET(self) -> None:
-        if urlsplit(self.path).path != "/":
+        path = urlsplit(self.path).path
+        if path != "/" and not path.startswith("/api/"):
             self._drain_request_body()
             self._send_json(404, {"error": "not found"})
             return
         if not self._authorized():
             self._drain_request_body()
             self._send_json(403, {"error": "forbidden"})
+            return
+        if path.startswith("/api/"):
+            if not path.startswith(_WORKBENCH_API_PREFIX):
+                self._drain_request_body()
+                self._send_json(404, {"error": "not found"})
+                return
+            try:
+                self._handle_workbench_get(path)
+            except WorkbenchUnavailable as exc:
+                self._send_json(
+                    501,
+                    {
+                        "error": str(exc),
+                        "capability": exc.capability,
+                        "available": False,
+                    },
+                )
+            except WorkbenchError as exc:
+                self._send_json(400, {"error": str(exc), "available": False})
+            except ShareError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except OSError as exc:
+                self._send_json(500, {"error": f"cannot read export: {exc}"})
             return
         try:
             page = self.page_path.read_bytes()
@@ -621,6 +880,13 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             "/api/restore": self._handle_restore,
             "/api/scan": self._handle_scan,
             "/api/lock": self._handle_lock,
+            "/api/workbench/import": self._handle_workbench_import,
+            "/api/workbench/task": self._handle_workbench_start,
+            "/api/workbench/cancel": self._handle_workbench_cancel,
+            "/api/workbench/results": self._handle_workbench_results,
+            "/api/workbench/explanation": self._handle_workbench_explanation,
+            "/api/workbench/review": self._handle_workbench_review,
+            "/api/workbench/export": self._handle_workbench_export,
         }
         handler = handlers.get(urlsplit(self.path).path)
         if handler is None:
@@ -639,10 +905,188 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
         except ShareError as exc:
             self._send_json(400, {"error": str(exc)})
             return
+        except WorkbenchUnavailable as exc:
+            self._send_json(
+                501,
+                {
+                    "error": str(exc),
+                    "capability": exc.capability,
+                    "available": False,
+                },
+            )
+            return
+        except WorkbenchError as exc:
+            self._send_json(400, {"error": str(exc), "available": False})
+            return
         except Exception as exc:  # surfaced to the page without a stack trace
             self._send_json(500, {"error": f"internal error: {exc}"})
             return
         self._send_json(200, result)
+
+    # -- workbench api handlers -------------------------------------------
+
+    def _handle_workbench_get(self, path: str) -> None:
+        parts = [part for part in path.split("/") if part]
+        state = self.ui_state
+        if len(parts) == 4 and parts[:3] == ["api", "workbench", "task"]:
+            task_id = parts[3]
+            if not self._valid_workbench_id(task_id):
+                raise WorkbenchError("task_id is invalid")
+            with state.lock:
+                result = state.workbench_adapter.task_status(task_id)
+            self._send_json(200, result)
+            return
+        if len(parts) == 5 and parts[:3] == ["api", "workbench", "export"]:
+            export_id = parts[3]
+            if parts[4] != "download" or not self._valid_workbench_id(export_id):
+                raise WorkbenchError("export_id is invalid")
+            with state.lock:
+                file_path = state.workbench_adapter.export_file(export_id)
+            self._send_controlled_file(file_path)
+            return
+        self._drain_request_body()
+        self._send_json(404, {"error": "unknown workbench endpoint"})
+
+    @staticmethod
+    def _optional_providers(body: dict) -> list[str] | None:
+        value = body.get("providers")
+        if value is None:
+            return None
+        if not isinstance(value, list) or not all(
+            isinstance(item, str) and item for item in value
+        ):
+            raise WorkbenchError("providers must be a list of non-empty strings")
+        return value
+
+    @staticmethod
+    def _filters(body: dict) -> tuple[list[str] | None, str | None]:
+        dispositions = body.get("dispositions")
+        if dispositions is not None:
+            if not isinstance(dispositions, list) or not all(
+                isinstance(item, str) and item for item in dispositions
+            ):
+                raise WorkbenchError("dispositions must be a list of non-empty strings")
+        query = body.get("query")
+        if query is not None and (not isinstance(query, str) or len(query) > 512):
+            raise WorkbenchError("query must be a string of at most 512 characters")
+        return dispositions, query
+
+    @staticmethod
+    def _valid_id(value: Any, field: str) -> str:
+        if (
+            not isinstance(value, str)
+            or not value
+            or ".." in value
+            or not _WORKBENCH_ID_RE.fullmatch(value)
+        ):
+            raise WorkbenchError(f"{field} is required")
+        return value
+
+    def _handle_workbench_import(self, body: dict) -> dict:
+        adapter = self.ui_state.workbench_adapter
+        return adapter.stage_input(body.get("filename"), body.get("content"))
+
+    def _handle_workbench_start(self, body: dict) -> dict:
+        adapter = self.ui_state.workbench_adapter
+        import_id = self._valid_id(body.get("import_id"), "import_id")
+        options = body.get("options")
+        if options is not None and not isinstance(options, dict):
+            raise WorkbenchError("options must be an object")
+        return adapter.start_task(
+            import_id,
+            providers=self._optional_providers(body),
+            options=options,
+        )
+
+    def _handle_workbench_cancel(self, body: dict) -> dict:
+        task_id = self._valid_id(body.get("task_id"), "task_id")
+        return self.ui_state.workbench_adapter.cancel_task(task_id)
+
+    def _handle_workbench_results(self, body: dict) -> dict:
+        task_id = self._valid_id(body.get("task_id"), "task_id")
+        dispositions, query = self._filters(body)
+        offset = body.get("offset", 0)
+        limit = body.get("limit", 100)
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise WorkbenchError("offset must be a non-negative integer")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise WorkbenchError("limit must be an integer between 1 and 500")
+        return self.ui_state.workbench_adapter.results(
+            task_id,
+            dispositions=dispositions,
+            query=query,
+            offset=offset,
+            limit=limit,
+        )
+
+    def _handle_workbench_explanation(self, body: dict) -> dict:
+        task_id = self._valid_id(body.get("task_id"), "task_id")
+        result_id = self._valid_id(body.get("result_id"), "result_id")
+        return self.ui_state.workbench_adapter.explanation(task_id, result_id)
+
+    def _handle_workbench_review(self, body: dict) -> dict:
+        task_id = self._valid_id(body.get("task_id"), "task_id")
+        result_id = self._valid_id(body.get("result_id"), "result_id")
+        decision = body.get("decision")
+        if not isinstance(decision, str) or not decision.strip():
+            raise WorkbenchError("decision is required")
+        reason = body.get("reason", "")
+        reviewer = body.get("reviewer", "")
+        if not isinstance(reason, str) or not isinstance(reviewer, str):
+            raise WorkbenchError("reason and reviewer must be strings")
+        return self.ui_state.workbench_adapter.submit_review(
+            task_id,
+            result_id,
+            decision=decision.strip(),
+            reason=reason,
+            reviewer=reviewer,
+        )
+
+    def _handle_workbench_export(self, body: dict) -> dict:
+        task_id = self._valid_id(body.get("task_id"), "task_id")
+        dispositions, query = self._filters(body)
+        export_format = body.get("format", "jsonl")
+        if export_format not in {"jsonl", "csv", "xlsx"}:
+            raise WorkbenchError("format must be jsonl, csv, or xlsx")
+        return self.ui_state.workbench_adapter.export(
+            task_id,
+            dispositions=dispositions,
+            query=query,
+            export_format=export_format,
+        )
+
+    def _send_controlled_file(self, path: Path) -> None:
+        state = self.ui_state
+        root = state.workbench_dir
+        if root is None:
+            raise WorkbenchUnavailable("export.download")
+        try:
+            resolved = path.resolve()
+            root_resolved = root.resolve()
+            resolved.relative_to(root_resolved)
+        except (OSError, ValueError) as exc:
+            raise WorkbenchError("export file is outside the workbench directory") from exc
+        if not resolved.is_file():
+            self._send_json(404, {"error": "export file not found"})
+            return
+        content_type = "application/octet-stream"
+        if resolved.suffix.lower() == ".jsonl":
+            content_type = "application/x-ndjson; charset=utf-8"
+        elif resolved.suffix.lower() == ".csv":
+            content_type = "text/csv; charset=utf-8"
+        elif resolved.suffix.lower() == ".xlsx":
+            content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        data = resolved.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header(
+            "Content-Disposition",
+            f'attachment; filename="{resolved.name}"',
+        )
+        self.end_headers()
+        self.wfile.write(data)
 
     # -- api handlers -----------------------------------------------------
 
@@ -655,7 +1099,14 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             "key_id": state.key_id,
             "passphrase_saved": _passphrase_path(state.key_path).is_file(),
             "ioc_info_enabled": state.ioc_info_enabled,
-            "bundles": _list_bundles(state.bundles_dir),
+            "bundles": _list_bundles(state.bundles_dir, limit=state.max_bundles),
+            "bundle_history_limit": state.max_bundles,
+            "bundle_total": _count_bundles(state.bundles_dir),
+            "workbench": {
+                "configured": state.workbench_adapter is not None,
+                "backend_available": type(state.workbench_adapter)
+                is not LocalWorkbenchAdapter,
+            },
         }
 
     def _handle_key(self, body: dict) -> dict:
@@ -727,10 +1178,11 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
                 raise ShareError("created bundle has an invalid bundle_id")
             target = state.bundles_dir / bundle_id
             if target.exists():
-                # Same content shared again: the fresh copy replaces the old
-                # bundle so the newest manifest and audit files win.
-                shutil.rmtree(target)
-            staging.rename(target)
+                # Same content shared again: refresh generated artifacts while
+                # preserving restored/cloud recovery files already on disk.
+                _merge_bundle_dir(staging, target)
+            else:
+                staging.rename(target)
         except Exception:
             shutil.rmtree(staging, ignore_errors=True)
             raise
@@ -928,12 +1380,20 @@ def build_server(
     credentials_path: str | Path | None = None,
     provider_env: dict[str, str] | None = None,
     transport_factory=None,
+    workbench_adapter: WorkbenchAdapter | None = None,
+    workbench_dir: str | Path | None = None,
 ) -> tuple[ThreadingHTTPServer, str]:
     """Create the loopback UI server and return it with its tokenized URL."""
     resolved_key = Path(key_path).expanduser()
     resolved_bundles = Path(bundles_dir).expanduser()
+    resolved_workbench = (
+        Path(workbench_dir).expanduser()
+        if workbench_dir is not None
+        else resolved_bundles.parent / ".workbench"
+    )
     resolved_key.parent.mkdir(parents=True, exist_ok=True)
     resolved_bundles.mkdir(parents=True, exist_ok=True)
+    resolved_workbench.mkdir(parents=True, exist_ok=True)
     session_token = token or secrets.token_urlsafe(24)
     resolved_cache = (
         Path(cache_dir).expanduser() if cache_dir is not None else DEFAULT_CACHE_DIR
@@ -954,6 +1414,11 @@ def build_server(
         credentials_path=resolved_credentials,
         provider_env=provider_env,
         transport_factory=transport_factory,
+        workbench_adapter=(
+            workbench_adapter
+            if workbench_adapter is not None
+            else OfflineWorkbenchAdapter(resolved_workbench)
+        ),
     )
     saved = _read_passphrase_file(resolved_key)
     if saved is not None and resolved_key.is_file():
@@ -1006,6 +1471,16 @@ def serve(server: ThreadingHTTPServer, *, url: str, open_browser: bool) -> None:
         server.server_close()
 
 
+def _positive_history_limit(value: str) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("history limit must be a positive integer") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("history limit must be a positive integer")
+    return parsed
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ioc_rejudge ui",
@@ -1026,6 +1501,15 @@ def main(argv: list[str] | None = None) -> int:
         "--bundle-dir",
         default=str(Path.home() / ".ioc-share" / "bundles"),
         help="directory holding share bundles (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--history-limit",
+        type=_positive_history_limit,
+        default=MAX_BUNDLES,
+        help=(
+            "recent bundle history display limit "
+            f"(default: {MAX_BUNDLES}; older bundles remain on disk for restore)"
+        ),
     )
     parser.add_argument(
         "--cache-dir",
@@ -1049,6 +1533,7 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.key_file).expanduser(),
         Path(args.bundle_dir).expanduser(),
         port=args.port,
+        max_bundles=args.history_limit,
         cache_dir=cache_dir,
         credentials_path=credentials_path,
     )

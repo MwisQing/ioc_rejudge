@@ -26,6 +26,7 @@ class ResultCacheEntry:
     fetched_at: datetime
     result: dict[str, Any]
     fresh: bool
+    valid_until: datetime | None = None
 
 
 class AdjudicationResultCache:
@@ -101,6 +102,7 @@ class AdjudicationResultCache:
         result: dict[str, Any],
         *,
         fetched_at: datetime | None = None,
+        valid_until: datetime | None = None,
     ) -> ResultCacheEntry:
         if not isinstance(result, dict):
             raise TypeError("cached adjudication result must be an object")
@@ -114,12 +116,18 @@ class AdjudicationResultCache:
         fetched = fetched_at if fetched_at is not None else datetime.now(timezone.utc)
         if not isinstance(fetched, datetime) or normalize_datetime(fetched) is None:
             raise TypeError("fetched_at must be a datetime")
+        bound: datetime | None = None
+        if valid_until is not None:
+            if not isinstance(valid_until, datetime) or normalize_datetime(valid_until) is None:
+                raise TypeError("valid_until must be a datetime")
+            bound = self._utc_naive(valid_until)
         row = {
             "key": self.key(normalized_ioc, normalized_fingerprint),
             "ioc": normalized_ioc,
             "fingerprint": normalized_fingerprint,
             "fetched_at": fetched.isoformat(),
             "result": stored_result,
+            "valid_until": bound.isoformat() if bound is not None else None,
         }
         path = self._path_for(fetched)
         line = json.dumps(
@@ -139,7 +147,12 @@ class AdjudicationResultCache:
                 self._cached_iocs.add(normalized_ioc)
                 self._index_signature = self._paths_signature(self._read_paths())
         return ResultCacheEntry(
-            normalized_ioc, normalized_fingerprint, fetched, stored_result, True
+            normalized_ioc,
+            normalized_fingerprint,
+            fetched,
+            stored_result,
+            True,
+            valid_until=bound,
         )
 
     def _ensure_index(self) -> None:
@@ -229,6 +242,13 @@ class AdjudicationResultCache:
         current = now or datetime.now(timezone.utc)
         if not isinstance(current, datetime):
             raise TypeError("now must be a datetime")
+        current_naive = self._utc_naive(current)
+        raw_bound = row.get("valid_until")
+        bound = self._parse_datetime(raw_bound) if raw_bound not in (None, "") else None
+        if bound is not None:
+            # Inclusive upper bound: verdict stays reusable while now <= valid_until.
+            if current_naive > self._utc_naive(bound):
+                return None, "temporal_expired"
         fresh = is_fresh(fetched, current, self.ttl)
         entry = ResultCacheEntry(
             normalized_ioc,
@@ -236,6 +256,7 @@ class AdjudicationResultCache:
             fetched,
             dict(result),
             fresh,
+            valid_until=self._utc_naive(bound) if bound is not None else None,
         )
         return entry, "hit" if fresh else "stale"
 

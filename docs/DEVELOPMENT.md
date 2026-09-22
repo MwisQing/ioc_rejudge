@@ -1,6 +1,6 @@
 # 开发与验证
 
-本文是 IOC Rejudge CLI `2.6.0` 的开发准入说明。发布脚本只可在用户明确授权后初始化、提交、打 tag 或推送。
+本文是 IOC Rejudge CLI `2.7.0` 的开发准入说明。发布脚本只可在用户明确授权后初始化、提交、打 tag 或推送。
 
 ## 1. 开发前阅读
 
@@ -14,7 +14,7 @@
 
 ## 2. 环境
 
-- 当前版本：`2.6.0`
+- 当前版本：`2.7.0`
 - 已验证 Python：3.12
 - 运行依赖：`openpyxl`、`requests`、`cryptography`
 - 开发依赖：pytest
@@ -37,7 +37,7 @@ python -c "import openpyxl, pytest, requests; print('dependencies ok')"
 
 ## 3. 当前基线
 
-截至 2026-09-10：
+截至 2026-09-22（路线能力集成与适配层验收）：
 
 ```powershell
 python -m pytest tests -q
@@ -46,7 +46,13 @@ python -m pytest tests -q
 结果：
 
 ```text
-866 passed, 1 skipped
+1140 passed, 1 skipped
+```
+
+专项：
+
+```powershell
+python -m pytest tests/test_review_fixes_task1.py tests/test_export.py tests/providers/test_factory.py -q
 ```
 
 其中包括：
@@ -56,6 +62,7 @@ python -m pytest tests -q
 - legacy/ISO-8601 aware/naive 时间归一化、recent/fresh 精确边界、未来/无效/负 Unix 时间防护和固定评估时刻传递。
 - 中性上下文与同记录历史样本、非有限数值、APT 记录主体与报告 URL、可信业务网站关联、当前 ICP 冲突及两条路由的输入顺序一致性。
 - 六个默认 live provider、按 IOC/证据需要分流的生命周期查询、sidecar、分接口日期缓存、transport、factory 和分阶段并发 pipeline。
+- Go HTTP worker 按块隔离失败、按物理内存封顶并发，以及不驻留 raw 的 provider 缓存索引。
 - 完整研判结果默认 7 天缓存、配置指纹失效、partial hit、refresh 绕过、坏行恢复和离线复用。
 - online mock 到无凭据 offline exact replay。
 - JSONL、CSV、六表 Excel、diagnostics 和凭据残留扫描。
@@ -65,6 +72,8 @@ python -m pytest tests -q
 - Excel 评审 sheet 判定原因/评审建议/缺失必要来源列。
 - 本地 share bundle 的 AES-SIV token、口令包裹 key、manifest 认证、bundle 归属、严格残留扫描和错误 key fail-closed。
 - 本地 share 助手 UI 的会话令牌/Host/Origin 安全门、短口令与记住口令自动解锁、IOC Info lookup（cache hit/miss、无凭据只读缓存、拒绝行、lookup 结果可 create）、create/restore/scan 端到端回环、manifest 双路匹配、严格失败清理、bundle 保留上限和占用端口回退。
+- 离线路线 CLI 的 job 生命周期、review label/reopen、explain、health、cache inspect/cleanup、CSV/XLSX import-table 和 export-bundle；本地 workbench 的 task/results/diagnostics/review/export 持久化以及 provider 参数拒绝。
+- 表格适配器的引号换行、物理行号、defang、公式风险、XLSX 资源关闭和重复报告；cache admin 的 provider/result schema 分离、整 shard dry-run/apply 和变更指纹校验。
 
 ## 4. 变更流程
 
@@ -128,6 +137,16 @@ python -m pytest tests/test_ui_server.py -q
 专项使用真实回环 HTTP 服务与 urllib/http.client 客户端，覆盖安全门、key 生命周期（含短口令与 passphrase 文件自动解锁）、IOC Info lookup（注入 FakeTransport 的 cache hit/miss、无凭据只读缓存、拒绝行、lookup JSONL 可 create、live 失败回退陈旧缓存、查询不阻塞 status）、可折叠 JSON 文案、「脱敏并复制」、create/restore/scan 回环与 bundle 存储策略；页面断言零外部资源引用。
 
 修改共享模型或跨模块契约时，专项测试不能替代全量测试。
+
+### 离线路线与 workbench
+
+```powershell
+python -m pytest tests/test_roadmap_integration.py tests/test_job_lifecycle.py tests/test_explanations_review.py tests/test_health.py tests/test_ops_adapters.py tests/test_workbench_ui.py -q
+python -m ioc_rejudge health --providers ioc_info --offline
+python -m ioc_rejudge roadmap --help
+```
+
+这些检查不读取真实凭据、不调用真实 provider 网络；workbench 仅运行已有 legacy snapshot pipeline，`cache cleanup` 默认 dry-run。
 
 ## 6. 高风险模块
 

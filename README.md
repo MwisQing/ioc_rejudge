@@ -1,19 +1,19 @@
 # IOC Rejudge CLI
 
-IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.6.0` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。
+IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.7.0` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。新增的离线路线命令、CSV/XLSX 适配、结果 bundle 导出和本地 workbench 让批处理与人工复核可以在无网络环境完成。
 
 ## 当前状态
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.6.0` |
+| 版本 | `2.7.0` |
 | Python | 已用 Python 3.12 验证 |
 | 输入 | 旧 JSONL 快照、裸 IOC 文件、重复 `--ioc` |
 | IOC 类型 | domain、URL、domain:port、IP、IP:port |
 | 结论 | `存活有效`、`失活有效`、`灰`、`误报`、`待复核` |
 | live provider | K01、IOC Info、F-Dark、WHOIS、pDNS、ICP；按 IOC 类型和研判需要分流 |
 | 本地 provider | 任意 JSONL sidecar；可用于 ICP Observation 回放 |
-| 当前测试 | `866 passed, 1 skipped`（2026-09-10） |
+| 当前测试 | `1140 passed, 1 skipped`（2026-09-22） |
 
 ICP provider 已按固定响应契约实现并通过 mock/cache 验收；真实 endpoint、认证和生产响应仍需在具备授权凭据的环境中单独确认。
 
@@ -68,9 +68,27 @@ python -m ioc_rejudge ui
 4. 把剪贴板里的脱敏 JSON 发给云端 AI；如需对方改完再还原，让返回行带上页面上的 `bundle_id`，且不要改 `ss1:` token。
 5. “还原 AI 返回”：粘贴云端返回的 JSONL，自动匹配本地 bundle 并还原。已有研判 JSONL 时仍可用“生成脱敏包”面板。
 
-另有“残留扫描”面板可对任意 JSONL 做外发前检查。安全边界：服务只监听 `127.0.0.1`，所有请求需会话令牌并通过 Host/Origin 校验；记住的口令只在本机 key 目录，页面 `no-store`，不把口令或凭据回显到页面；bundle 保存在 `~\.ioc-share\bundles`（按 `bundle_id` 命名，最多保留 20 个），manifest 自动匹配无需手工管理。UI 不执行研判、不提供关闭严格模式的入口；除“查询 IOC Info”只访问 IOC Info 外，create/restore/scan 不发起网络请求。
+另有“残留扫描”面板可对任意 JSONL 做外发前检查。安全边界：服务只监听 `127.0.0.1`，所有请求需会话令牌并通过 Host/Origin 校验；记住的口令只在本机 key 目录，页面 `no-store`，不把口令或凭据回显到页面；bundle 保存在 `~\.ioc-share\bundles`，manifest 自动匹配无需手工管理。历史展示上限 `--history-limit N`（默认 20）只是列表展示上限，超过上限不会删除旧 bundle 的 manifest 与还原/云端回复产物；同 id 重建采用“先完整备份、再提交”的事务，保留已有还原文件，更早任务仍可按 `bundle_id` 自动还原。磁盘会随历史增长，需要清理时请人工管理 bundle 目录（UI 不提供删除）。UI 不执行研判、不提供关闭严格模式的入口；除“查询 IOC Info”只访问 IOC Info 外，create/restore/scan 不发起网络请求。
 
 确定性 token 会有意保留值类型、相等关系和 JSON 结构，同一 key 在不同 bundle 中也可被云端关联；普通文本和时间只有命中规则后才会替换。若不同案件不应被交叉关联，应为每个案件或信任边界生成独立 key。残留扫描是发送前的强制防线，但不能证明任意自然语言都不含身份线索；上传前仍需维护人员字段和 `names.txt`。
+
+## 离线工作台与运维命令
+
+路线能力提供机器可读 JSON 的离线入口，适合批处理、审阅和本地工作台联调：
+
+```powershell
+python -m ioc_rejudge job start --input .\snapshot.jsonl --job-dir .\jobs --offline
+python -m ioc_rejudge review list --input .\results.jsonl --queue .\reviews.jsonl
+python -m ioc_rejudge explain --input .\results.jsonl --ioc example.invalid
+python -m ioc_rejudge history list --history-dir .\runs
+python -m ioc_rejudge health --providers ioc_info,whois --offline
+python -m ioc_rejudge cache inspect --cache-dir .\provider-cache
+python -m ioc_rejudge cache cleanup --cache-dir .\provider-cache --before 2026-01-01
+python -m ioc_rejudge import-table --input .\report.csv --column indicator --output .\input.jsonl
+python -m ioc_rejudge export-bundle --input .\results.jsonl --output-dir .\bundle
+```
+
+也可以使用 `roadmap` 包装入口。`import-table` 支持 CSV/XLSX 的物理行号、defang 恢复、公式风险拦截和重复报告；`export-bundle` 会预检路径冲突并原子写出 JSONL、CSV、XLSX 及可选 diagnostics/diff。`cache cleanup` 默认只生成计划，只有加 `--apply` 才删除完整旧 shard。UI 默认使用本地离线 workbench，持久化任务、结果和 diagnostics；它拒绝 live provider 参数，不读取真实凭据，也不发起网络请求。
 
 ## 安装
 
@@ -110,7 +128,11 @@ CSV 输出：
 python -m ioc_rejudge -i .\snapshot.jsonl -c .\result.csv --diagnostics .\diagnostics.json
 ```
 
-如果不指定 `-j` 或 `-c`，默认生成 `<输入名>_result.xlsx` 和 `<输入名>_diagnostics.json`。坏行或端口越界的 URL 会按行跳过并记录到 diagnostics，不会中断整批任务，也不会降级成 domain 继续研判。
+如果不指定 `-j` 或 `-c`，默认生成 `<输入名>_result.xlsx` 和 `<输入名>_diagnostics.json`。指定 `-j` 或 `-c` 时也会自动写诊断文件到主输出旁的 `<主输出名>_diagnostics.json`（仍可用 `--diagnostics` 覆盖路径）。坏行、非对象 JSON 行、嵌套非对象 `data` 条目或端口越界的 URL 会按行隔离并记入 diagnostics，不会中断整批任务，也不会降级成 domain 继续研判。裸 IOC 文件里的非法值报错使用物理行号（注释和空行不重新编号）；`--ioc` 内联值使用 `inline IOC N` 定位。
+
+输出路径在请求任何 provider 之前做冲突与可写性预检：结果 JSONL/CSV/Excel、diagnostics、diff 不得覆盖输入、diff 基线、rules、provider-config、credentials 或 sidecar 文件，输出之间也不能互相撞路径；嵌套输出目录会自动创建。写入使用临时文件再替换，失败时尽量保留上一份有效输出；Excel 被占用时给出可操作提示。
+
+默认退出码在仍有可用结果时保持 0（部分输入被拒绝也兼容旧行为）。自动化可用 `--strict`：仍会写出可用结果和 diagnostics，但在存在拒绝输入、provider 错误、处理错误或缺失必要来源时以非 0 退出；普通业务「待复核」结论本身不算失败。
 
 ### 裸 IOC 离线研判
 
@@ -216,7 +238,7 @@ python -m ioc_rejudge `
 
 `--credentials-file` 只接受表中的固定凭据字段；未知字段、非字符串值和坏 JSON 会在请求前报错。指定该参数后，本次运行只从这个文件读取凭据，不回退读取进程或系统环境变量。`credentials.local.json` 已加入 `.gitignore`，并被发布 allow-list 排除。
 
-`--provider-config` 只允许非密钥设置，例如 endpoint、启用状态、超时、查询参数和 TTL。包含 secret、token、password 或 authorization 类字段的配置会被拒绝。缺少某个 provider 的凭据只会把该 provider 标记为 `disabled`，不会中止其他来源。未使用 `--credentials-file` 时，原有环境变量凭据方式继续兼容。可直接复制发布包内的缓存配置示例：
+`--provider-config` 只允许非密钥设置，例如 endpoint、启用状态、超时、查询参数和 TTL。包含 secret、token、password 或 authorization 类字段的配置会被拒绝。`enabled` 以及 K01 的 `ignore_port`/`ignore_url`/`ignore_top`、F-Dark 的 `include_slow_variants`/`include_url_param` 必须是 JSON 布尔值，字符串 `"false"` 或 `0`/`1` 会被拒绝；`max_attempts`、`retry_delay` 等数值同样做类型与有限性校验（`retry_delay` 允许 0）。错误信息指出 provider/选项名，不回显凭据。缺少某个 provider 的凭据只会把该 provider 标记为 `disabled`，不会中止其他来源。未使用 `--credentials-file` 时，原有环境变量凭据方式继续兼容。可直接复制发布包内的缓存配置示例：
 
 ```powershell
 Copy-Item .\provider-config.example.json .\provider-config.json
@@ -227,7 +249,7 @@ K01、IOC Info、F-Dark、WHOIS、pDNS 默认缓存 7 天，ICP 默认缓存 30 
 
 每个接口使用独立目录和日期分片：`.cache_<provider>/cache_YYYY-MM-DD.jsonl`。读取时会跨日期分片选择同一 query key 的最新记录，并兼容旧版根目录 `<provider>.jsonl`；因此缓存不会继续无限堆在一个文件里。
 
-完整研判结果也默认缓存 7 天，写入 `.cache_adjudication_results/cache_YYYY-MM-DD.jsonl`。缓存行同时保存规范化 IOC、输入/规则/provider 配置指纹、provider 原始缓存状态、研判时间和完整输出对象；重复研判同一规范化 IOC 时，只有快照内容、规则阈值、provider 选择、影响查询的公开配置及原始缓存状态均一致才会复用，命中后直接跳过 provider 请求。删除或清空某个 provider 原始缓存后，相关完整结果会因 `fingerprint_mismatch` 重新采集。可在 `provider-config.json` 顶层配置：
+完整研判结果也默认缓存 7 天，写入 `.cache_adjudication_results/cache_YYYY-MM-DD.jsonl`。缓存行同时保存规范化 IOC（URL 保留 scheme，故裸域名与 http/https 互不合并）、输入/规则/provider 配置指纹、**该目标依赖的** provider 原始响应摘要、可选 `valid_until`（全部实质活动输入、pDNS/WHOIS 边界、未来事件激活前 1µs、依赖 provider 的 `fetched_at+TTL`）、研判时间和完整输出对象；重复研判同一规范化 IOC 时，只有快照、规则、provider 选择、公开查询配置及该目标原始依赖均一致，且评估时刻未越过 `valid_until`，才会复用。同一目标的原始响应更新或删除会使该目标 `fingerprint_mismatch`；无关 IOC 不受影响。同一天内越过时间敏感边界时以 `temporal_expired` 重算。可在 `provider-config.json` 顶层配置：
 
 ```json
 "result_cache": {
@@ -238,13 +260,17 @@ K01、IOC Info、F-Dark、WHOIS、pDNS 默认缓存 7 天，ICP 默认缓存 30 
 
 结果缓存 TTL 也支持 `ttl_hours` 或 `ttl_seconds`。过期、坏行或指纹不一致时重新研判；provider `error` 或必要来源缺失的未完成结果不写入缓存，下一次继续重试；`--refresh` 会同时绕过 provider 缓存和研判结果缓存。离线运行可以复用兼容的研判结果缓存。
 
-本轮规则修复会使旧研判结果缓存自动失效；已有 provider 原始响应仍按各自缓存策略复用，重新计算结论。
+研判结果缓存契约升级会自动使旧结论失效并重新计算；provider 原始响应缓存文件不做迁移，仍按各自缓存策略复用（原始响应只用于重新取证，不携带旧结论）。provider 原始缓存是 append-only JSONL，生产代码没有删除 API；某条响应真正消失（例如手工清理临时分片）时，依赖该响应的已完成结果会因缺席摘要而失效重算。
 
 请求规划先调用 K01、IOC Info、F-Dark 完成分类与恶意样本发现，再按规则调用生命周期接口：domain/URL/domain:port 进行当前 ICP 验证；只有 DGA 路由再请求 WHOIS 和 pDNS，普通路由仅在历史 URL/钓鱼证据可能进入过期域名灰分支时请求 WHOIS；IP/IP:port 跳过 ICP、WHOIS 和 pDNS。
 
 ICP 查询按 host 去重，凭据来自显式凭证文件或兼容环境变量，不读取 `token_icp.txt`。缺凭据在线运行和无缓存 offline miss 都产生零 live ICP 请求。响应写入 cache 或 `run_dir/raw` 前会按当前 ICP 凭据值再次脱敏，避免服务端回显认证值。
 
+所有在线 provider 的响应在消费与持久化边界统一按「配置的凭据值 + 敏感字段名」脱敏：即使服务端把认证值回显到普通字段（`message`、`details` 等），原始缓存、`run_dir/raw`、观测载荷和错误文案也不会保留凭据原文；请求认证仍使用内存中的真实凭据。
+
 ICP 默认使用 8 workers 和 8 requests/second。本地 provider 配置可以调整这两个正数；如果接口返回限流、超时或业务错误，可降为 4/4。当前尚未定义或强制产品级硬上限，生产使用时仍应保持在接口所有者批准的范围内。
+
+统一模式会检测本机物理内存，避免几千条 IOC 把 4 GiB 机器打进换页。约 4 GiB 及以下自动把 HTTP workers、跨 provider 并发和每个 Go 查询进程的任务数封顶；约 8 GiB 使用中间档；更大内存保持原默认（K01 等 10 workers，ICP 8）。Go HTTP worker 按块拉起进程，一块崩溃只影响该块，不会把整路接口打成 `error`。启动时打印 `Memory:` 行。可用环境变量 `IOC_REJUDGE_MEMORY_PROFILE=full` 关闭封顶，或 `=low` 强制按 4 GiB 档运行。
 
 `--refresh` 绕过已有 provider cache 和研判结果 cache；它与 `--offline` 互斥。
 
@@ -281,7 +307,7 @@ python -m ioc_rejudge `
   -j .\result.jsonl
 ```
 
-报告默认写入 `<输出名>_diff.json`，可用 `--diff-output` 指定其他路径；内容包含 `transitions`、`changed`、`black_to_white`、`white_to_black`、`to_gray`、`to_review` 与成员变化（`only_before`/`only_after`），控制台同步打印各组计数。baseline 文件缺失、坏 JSON 或缺少 `ioc`/`conclusion` 字段会在研判开始前直接报错，不会浪费一次完整运行。该参数同样适用于旧快照兼容模式。
+报告默认写入 `<输出名>_diff.json`，可用 `--diff-output` 指定其他路径；内容包含 `operations`（本次实际对比的 verdict 行数）、`transitions`、`changed`、`black_to_white`、`white_to_black`、`to_gray`、`to_review`、同结论下的 `operational_changes`（disposition、scope_actions、retained_urls、review_suggestion、missing_required_providers、classification_unknown 的 before/after 值；无序集合仅顺序或重复项变化不计为变更）与成员变化（`only_before`/`only_after`），控制台同步打印 `operations=N changed=…` 等各组计数。baseline 文件缺失、坏 JSON 或缺少 `ioc`/`conclusion` 字段会在研判开始前直接报错，不会浪费一次完整运行。该参数同样适用于旧快照兼容模式。
 
 ## 研判语义
 
@@ -306,7 +332,8 @@ DGA 只有在可靠 K01 分类精确为 DGA-only 时进入专用路由：
 普通 IOC 规则包括：
 
 - 非 DGA domain 的 clue-group 证据无条件 standard block；其他 operator malicious context 必须由达到恶意等级门槛的同一条记录承载，且仅在当前 ICP 冲突已解决时 block。
-- 低于恶意等级门槛的 domain 不因 `manual`、强来源或上下文恶意词自动升黑；若仍有达到 URL 门槛的具体恶意 URL，则 domain 输出 `灰` 并保留 path 级 URL。
+- 低于恶意等级门槛的 domain 不因 `manual`、强来源或上下文恶意词自动升黑；若仍有达到 URL 门槛的具体恶意 URL，则 domain 输出 `灰` 并保留 path 级 URL。该门槛看最新记录的 level，不取历史最大值；同一套证据下 URL 类型 IOC 仍可判黑。
+- 「仿冒网站」「仿冒下载」、`family=phishingsite` 以及公开钓鱼源（openphish / phishtank / maltrail）与「黑产/扩展/扩线」一样直接判黑。`钓鱼站点` 或仅 `family=phish` 不会因此自动变黑或变白。
 - 达到 40/50/60/70 等级只表示进入黑证据裁判；当强正常业务闭环、明确结构化资产变化和无威胁残留同时成立时，仍可判 `误报`。
 - DNS 查询、HTTP 连接、sample 等中性描述不再单独建立历史恶意闭环；C 级样本闭环必须由达到等级门槛且关联当前 IOC 的同一条记录提供合格恶意样本。
 - 可信商业身份要求配置中的字段齐全，并有网站 host 与目标一致（允许仅相差 `www.`）；无关官网、单独备案号或标题不能形成强业务身份闭环。
@@ -323,7 +350,8 @@ JSONL 保留嵌套结构；CSV 和 Excel 对列表/对象使用稳定 JSON 序�
 - `conclusion`、`reason`、`route`、`disposition`
 - `scope_actions`、`retained_urls`
 - `provider_statuses`、`evidence_origins`
-- `missing_required_providers`、`classification_unknown`
+- `missing_required_providers`
+- `classification_unknown`（JSONL 为布尔；CSV 为 `true`/`false` 文本；旧兼容行缺省为 `false`）
 
 Excel 固定包含六个 sheet：
 
@@ -337,6 +365,10 @@ Excel 固定包含六个 sheet：
 `待复核` 不计入 `判黑`。
 
 评审 sheet 在结论列后紧跟 `判定原因` 和 `评审建议`（必看/抽检/不看），末尾包含 `缺失必要来源`；`待复核` 行无需交叉查 JSONL 即可看到裁判依据和缺失来源。
+
+### 复核队列
+
+内置复核队列（`review_queue.py`）按「需要人工处理」建模，并由 `python -m ioc_rejudge review list|label|reopen` 暴露本地 JSONL 闭环。默认队列（`pending_only=True`）包含：`disposition=review` 的行、结论为「待复核」的行，以及 `review_suggestion=必看` 的行（含仍为 block 的黑结论）；普通 `block + 无需复核` 不进入默认队列；`pending_only=False` 返回全部带 IOC 的行。人工 label/reopen 以 overlay 追加，只保存意见，不覆盖系统结论；队列入队不等于判黑 Excel 表——总表/判黑表本就包含必看黑结论。
 
 ## 数据与安全
 

@@ -338,7 +338,7 @@ def test_diagnostics_parse_error_samples_are_bounded():
     os.unlink(f.name)
 
 
-def test_diagnostics_json_structure():
+def test_diagnostics_json_structure(tmp_path):
     """Diagnostics JSON should have required fields."""
     from ioc_rejudge.cli import Diagnostics, export_diagnostics
     diag = Diagnostics(
@@ -351,17 +351,16 @@ def test_diagnostics_json_structure():
         no_ioc_count=1,
         skipped_total=4,
     )
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
-        export_diagnostics(diag, f.name)
-        with open(f.name, encoding="utf-8") as rf:
-            data = json.load(rf)
-        assert data["input_path"] == "test.jsonl"
-        assert data["processed_count"] == 10
-        assert data["parse_error_count"] == 1
-        assert data["skipped_total"] == 4
-        assert "parse_error_samples" in data
-        assert "skipped_row_samples" in data
-    os.unlink(f.name)
+    path = tmp_path / "diagnostics.json"
+    export_diagnostics(diag, str(path))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["input_path"] == "test.jsonl"
+    assert data["processed_count"] == 10
+    assert data["parse_error_count"] == 1
+    assert data["skipped_total"] == 4
+    assert "parse_error_samples" in data
+    assert "skipped_row_samples" in data
+    assert "nested_data_error_count" in data
 
 
 # --- Fix weak test: hash-without-IOC A evidence ---

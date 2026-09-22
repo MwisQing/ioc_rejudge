@@ -178,6 +178,41 @@ def test_bad_shapes_are_error_not_negative(tmp_path, response):
     assert result.observations == []
 
 
+@pytest.mark.parametrize("response", [
+    {"resultCode": 3003, "resultMsg": "身份校验失败", "rows": []},
+    {"resultCode": "3003", "resultMsg": "身份校验失败", "rows": []},
+    {"resultMsg": "身份校验失败", "rows": []},
+    {
+        "resultCode": 3003,
+        "resultMsg": "身份校验失败",
+        "rows": [{"website_icp_num": "ICP-UNTRUSTED"}],
+    },
+])
+def test_authentication_failure_is_error_not_negative(tmp_path, response):
+    provider, _ = _provider(tmp_path, [response])
+    target = _targets("auth.invalid")[0]
+    result = provider.collect([target], ProviderContext())
+    assert result.statuses[target.normalized] == ProviderStatus.ERROR
+    assert result.observations == []
+    assert any("authentication failed" in item for item in result.errors)
+
+
+def test_cached_authentication_failure_is_error_without_live_retry(tmp_path):
+    provider, transport = _provider(tmp_path, [])
+    target = _targets("auth-cached.invalid")[0]
+    provider.cache.put(
+        target.host,
+        {"resultCode": 3003, "resultMsg": "身份校验失败", "rows": []},
+        provider.cache_params(target.host),
+        fetched_at=NOW,
+    )
+    result = provider.collect([target], ProviderContext())
+    assert transport.calls == []
+    assert result.statuses[target.normalized] == ProviderStatus.ERROR
+    assert result.observations == []
+    assert result.cache_hits == 1
+
+
 def test_domain_url_and_domain_port_share_one_host_request(tmp_path):
     provider, transport = _provider(tmp_path, [{"resultObject": {"icp": "ICP-HOST"}}])
     targets = _targets("example.invalid", "https://example.invalid/path", "example.invalid:443")

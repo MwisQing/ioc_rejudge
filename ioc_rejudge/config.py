@@ -1,6 +1,34 @@
 """Configuration parameters for IOC rejudgement."""
 from dataclasses import dataclass, field
+from datetime import timedelta
+from math import isfinite
+
 from ioc_rejudge.rules import RuleConfig, load_rules, _build_defaults
+
+
+def _require_non_negative_int(name: str, value: object) -> int:
+    """Accept only real integers (reject bool, float, NaN/Inf, negatives)."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    try:
+        as_float = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{name} must be finite") from exc
+    if not isfinite(as_float):
+        raise ValueError(f"{name} must be finite")
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return value
+
+
+def _require_day_window(name: str, value: object) -> int:
+    """Non-negative day count that fits in a timedelta without overflow."""
+    days = _require_non_negative_int(name, value)
+    try:
+        timedelta(days=days)
+    except OverflowError as exc:
+        raise ValueError(f"{name} is too large") from exc
+    return days
 
 
 @dataclass
@@ -16,6 +44,24 @@ class Config:
     rules: RuleConfig = field(default_factory=_build_defaults)
 
     def __post_init__(self) -> None:
+        self.activity_window_days = _require_day_window(
+            "activity_window_days", self.activity_window_days
+        )
+        self.hash_malicious_level = _require_non_negative_int(
+            "hash_malicious_level", self.hash_malicious_level
+        )
+        self.relate_url_malicious_level = _require_non_negative_int(
+            "relate_url_malicious_level", self.relate_url_malicious_level
+        )
+        self.historical_malicious_level = _require_non_negative_int(
+            "historical_malicious_level", self.historical_malicious_level
+        )
+        self.high_level_no_a_threshold = _require_non_negative_int(
+            "high_level_no_a_threshold", self.high_level_no_a_threshold
+        )
+        self.dga_pdns_recent_days = _require_day_window(
+            "dga_pdns_recent_days", self.dga_pdns_recent_days
+        )
         if isinstance(self.provider_workers, bool) or not isinstance(
             self.provider_workers, int
         ):

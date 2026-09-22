@@ -3,20 +3,74 @@
 Reads observations from a JSONL file keyed by normalized IOC.  Rows that do
 not match a requested target are silently skipped; every requested target
 receives an explicit ProviderStatus.
+
+Freshness is derived from ``fetched_at``, the evaluation clock
+(``ProviderContext.now`` or wall clock), and the configured TTL.  A row's
+claimed ``freshness`` field is never trusted.  Missing, invalid, or future
+``fetched_at`` values stay ``unknown``; ages beyond TTL become ``stale``.
 """
 
+from __future__ import annotations
+
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from ioc_rejudge.normalize import normalize_ioc
+from ioc_rejudge.normalize import parse_ioc_value
 from ioc_rejudge.observations import (
     Freshness,
     IocTarget,
     Observation,
     ProviderStatus,
 )
-from ioc_rejudge.parser import parse_time
+from ioc_rejudge.parser import is_fresh, normalize_datetime, parse_time
 from ioc_rejudge.providers.base import ProviderContext, ProviderResult
+
+# Match live factory defaults: ICP 30 days, other sources 7 days.
+_DEFAULT_TTL = timedelta(days=7)
+_ICP_TTL = timedelta(days=30)
+
+
+def _default_ttl_for_name(name: str) -> timedelta:
+    if name == "icp":
+        return _ICP_TTL
+    return _DEFAULT_TTL
+
+
+def derive_sidecar_freshness(
+    fetched_at: datetime | None,
+    now: datetime,
+    ttl: timedelta,
+) -> Freshness:
+    """Map fetch time + TTL onto Freshness without trusting row claims.
+
+    - fresh: valid fetched_at within inclusive TTL window
+    - stale: valid fetched_at older than TTL
+    - unknown: missing, invalid, or future fetched_at
+    """
+    if not isinstance(ttl, timedelta) or ttl < timedelta(0):
+        return Freshness.UNKNOWN
+    normalized_now = normalize_datetime(now)
+    normalized_fetched = normalize_datetime(fetched_at)
+    if normalized_now is None or normalized_fetched is None:
+        return Freshness.UNKNOWN
+    if normalized_fetched > normalized_now:
+        return Freshness.UNKNOWN
+    if is_fresh(normalized_fetched, normalized_now, ttl):
+        return Freshness.FRESH
+    return Freshness.STALE
+
+
+def _aggregate_target_freshness(values: list[Freshness]) -> Freshness | None:
+    if not values:
+        return None
+    if any(value == Freshness.STALE for value in values):
+        return Freshness.STALE
+    if any(value == Freshness.UNKNOWN for value in values):
+        return Freshness.UNKNOWN
+    if all(value == Freshness.FRESH for value in values):
+        return Freshness.FRESH
+    return Freshness.UNKNOWN
 
 
 class SidecarProvider:
@@ -26,11 +80,22 @@ class SidecarProvider:
     ``status``, ``fetched_at``, ``observed_at``, and ``payload``.
     Optional fields: ``scope`` (defaults to *kind*), ``strength``
     (defaults to ``"normal"``), ``raw_ref`` (defaults to ``""``).
+    A claimed ``freshness`` field on the row is ignored.
+
+    ``ttl`` defaults to the live-provider TTL for the same name (ICP 30 days,
+    others 7 days). Tests and CLI callers may inject an explicit TTL.
     """
 
-    def __init__(self, name: str, path: Path):
+    def __init__(
+        self,
+        name: str,
+        path: Path,
+        *,
+        ttl: timedelta | None = None,
+    ):
         self._name = name
         self._path = path
+        self.ttl = _default_ttl_for_name(name) if ttl is None else ttl
 
     @property
     def name(self) -> str:
@@ -55,10 +120,16 @@ class SidecarProvider:
         statuses: dict[str, ProviderStatus] = {
             t.normalized: ProviderStatus.NO_DATA for t in targets
         }
+        freshness_values: dict[str, list[Freshness]] = {
+            t.normalized: [] for t in targets
+        }
         errors: list[str] = []
         target_by_norm: dict[str, IocTarget] = {
             t.normalized: t for t in targets
         }
+        eval_now = normalize_datetime(context.now) if context.now is not None else None
+        if eval_now is None:
+            eval_now = datetime.now(timezone.utc)
 
         if not self._path.exists():
             for t in targets:
@@ -101,10 +172,12 @@ class SidecarProvider:
                     statuses[t.normalized] = ProviderStatus.ERROR
                 continue
 
-            # normalize_ioc may raise ValueError for malformed URLs
+            # parse_ioc_value may raise ValueError for malformed URLs
             # (e.g. out-of-range port via urllib.parse).  Treat as ERROR.
+            # Canonical identity keeps URL scheme so bare domain / http / https
+            # rows never cross-match.
             try:
-                normalized_ioc = normalize_ioc(ioc_value)[0]
+                normalized_ioc = parse_ioc_value(ioc_value)[0]
             except ValueError as exc:
                 errors.append(
                     f"line {line_no}: cannot normalize IOC {ioc_value!r} — {exc}"
@@ -131,6 +204,7 @@ class SidecarProvider:
             # Parse timestamps via the project-wide parse_time helper.
             fetched_at = parse_time(row.get("fetched_at"))
             observed_at = parse_time(row.get("observed_at"))
+            freshness = derive_sidecar_freshness(fetched_at, eval_now, self.ttl)
 
             # Apply status to the aggregate mapping.
             current = statuses[target.normalized]
@@ -143,6 +217,9 @@ class SidecarProvider:
                 elif status == ProviderStatus.SUCCESS:
                     if current not in (ProviderStatus.ERROR, ProviderStatus.DISABLED):
                         statuses[target.normalized] = ProviderStatus.SUCCESS
+                elif status == ProviderStatus.NO_DATA:
+                    if current == ProviderStatus.NO_DATA:
+                        statuses[target.normalized] = ProviderStatus.NO_DATA
 
             scope = str(row.get("scope", kind))
             strength = str(row.get("strength", "normal"))
@@ -159,13 +236,21 @@ class SidecarProvider:
                 status=status,
                 fetched_at=fetched_at,
                 observed_at=observed_at,
-                freshness=Freshness.UNKNOWN,
+                freshness=freshness,
                 strength=strength,
                 payload=payload,
                 raw_ref=raw_ref,
             ))
+            freshness_values[target.normalized].append(freshness)
 
         observations = [
             obs for t in targets for obs in observations_by_target[t.normalized]
         ]
-        return ProviderResult(self._name, observations, statuses, errors, 0)
+        freshnesses: dict[str, Freshness] = {}
+        for key, values in freshness_values.items():
+            aggregate = _aggregate_target_freshness(values)
+            if aggregate is not None:
+                freshnesses[key] = aggregate
+        return ProviderResult(
+            self._name, observations, statuses, errors, 0, freshnesses=freshnesses
+        )

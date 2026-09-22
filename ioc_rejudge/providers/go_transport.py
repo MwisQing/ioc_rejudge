@@ -40,12 +40,26 @@ def default_executable() -> Path:
 
 
 class GoBatchTransport:
-    def __init__(self, executable: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        executable: str | Path | None = None,
+        *,
+        jobs_per_process: int | None = None,
+    ) -> None:
         self.executable = Path(executable) if executable is not None else default_executable()
+        if jobs_per_process is not None:
+            if isinstance(jobs_per_process, bool) or jobs_per_process <= 0:
+                raise ValueError("jobs_per_process must be a positive integer")
+        self.jobs_per_process = jobs_per_process
 
     @property
     def available(self) -> bool:
         return self.executable.is_file()
+
+    def _chunk_size(self, workers: int) -> int:
+        if self.jobs_per_process is not None:
+            return max(1, int(self.jobs_per_process))
+        return max(int(workers) * 2, 8)
 
     def iter_batch(
         self,
@@ -56,6 +70,39 @@ class GoBatchTransport:
     ) -> Iterator[BatchResult]:
         if not self.available:
             raise RuntimeError(f"Go HTTP worker not found: {self.executable}")
+        jobs = list(requests)
+        if not jobs:
+            return
+        worker_count = max(1, int(workers))
+        rate = max(1, int(rate_per_second))
+        size = self._chunk_size(worker_count)
+        for start in range(0, len(jobs), size):
+            chunk = jobs[start : start + size]
+            received: set[str] = set()
+            try:
+                for result in self._iter_chunk(
+                    chunk, workers=worker_count, rate_per_second=rate
+                ):
+                    received.add(result.id)
+                    yield result
+            except Exception as exc:
+                message = str(exc).strip() or type(exc).__name__
+                if "Go HTTP worker" not in message:
+                    message = f"Go HTTP worker failed: {message}"
+                for job in chunk:
+                    if job.id not in received:
+                        yield BatchResult(
+                            job.id,
+                            error=TransportError("connection", message),
+                        )
+
+    def _iter_chunk(
+        self,
+        requests: list[BatchRequest],
+        *,
+        workers: int,
+        rate_per_second: int,
+    ) -> Iterator[BatchResult]:
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
         process = subprocess.Popen(
             [

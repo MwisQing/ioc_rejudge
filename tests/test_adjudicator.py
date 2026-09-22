@@ -149,6 +149,13 @@ def test_clue_group_overrides_current_icp_and_is_black():
         ("comment", "黑产"),
         ("context", "扩展"),
         ("comment", "扩线"),
+        ("context", "仿冒网站"),
+        ("comment", "仿冒下载"),
+        ("comment", "openphish"),
+        ("comment", "phishtank"),
+        ("comment", "maltrail"),
+        ("comment", "hign-confidence-osint"),
+        ("comment", "high-confidence-osint"),
     ],
 )
 def test_authoritative_context_keyword_directly_blocks(field, keyword):
@@ -298,6 +305,165 @@ def test_historical_context_keyword_does_not_override_latest_clean_remark():
         for evidence in dossier.evidence_a
     )
     assert verdict.disposition != "block"
+
+
+def test_phishingsite_family_without_impersonation_text_still_blocks():
+    dossier = extract_evidence(merge_records([build_record(
+        "feed-phish.invalid",
+        level=50,
+        context="Reference: https://feeds.example.invalid/report/1",
+        comment="Reference: https://feeds.example.invalid/report/1",
+        family=["phishingsite", "PhishingSite"],
+        attck=["T1071", "T1132"],
+        block=True,
+        alert_score=90,
+        topdomain={"rank": 192305604, "sld": "feed-phish.invalid"},
+    )]), Config())
+
+    verdict = adjudicate(dossier, Config())
+
+    assert verdict.conclusion == Conclusion.INACTIVE_VALID
+    assert verdict.disposition == "block"
+    assert any(
+        evidence.field == "authoritative_context_keyword"
+        and "phishingsite" in evidence.detail
+        for evidence in dossier.evidence_a
+    )
+
+
+def test_phish_family_with_ip_comment_does_not_auto_block_or_clear():
+    """Mis-filed IP:port phishing on a domain stays 待复核; not 仿冒/phishingsite."""
+    dossier = extract_evidence(merge_records([build_record(
+        "collateral-host.invalid",
+        level=70,
+        context="  钓鱼站点",
+        comment="203.0.113.81:81  钓鱼站点",
+        family=["phish"],
+        attck=["T1071", "T1132"],
+        block=True,
+        alert_score=80,
+        topdomain={"rank": 217076333, "sld": "collateral-host.invalid"},
+        relate_ip_domain=[{"key": "203.0.113.81", "level": 40, "count": 10}],
+        whois={"createdDate": "2023-06-05 00:00:00", "expiresDate": "2024-06-05 00:00:00"},
+    )]), Config())
+
+    verdict = adjudicate(dossier, Config())
+
+    assert not any(
+        evidence.field == "authoritative_context_keyword"
+        for evidence in dossier.evidence_a
+    )
+    assert verdict.conclusion == Conclusion.PENDING_REVIEW
+    assert verdict.disposition == "review"
+
+
+def test_adware_hash_with_zero_confidence_is_not_authoritative_black():
+    dossier = extract_evidence(merge_records([build_record(
+        "adware-host.invalid",
+        level=70,
+        context="md5: abc TYPE: ADWARE FAMILY: scrinject",
+        comment="malicious level: 70",
+        family=["generic trojan", "scrinject"],
+        hash_entries=[{
+            "md5": "abc",
+            "level": 70,
+            "confidence": 0,
+            "family": "scrinject",
+            "type": "ADWARE",
+        }],
+        attck=["T1071", "T1132"],
+        block=True,
+        alert_score=85,
+        topdomain={"rank": 148870379, "sld": "adware-host.invalid"},
+    )]), Config())
+
+    verdict = adjudicate(dossier, Config())
+
+    assert not any(
+        evidence.field == "authoritative_context_keyword"
+        for evidence in dossier.evidence_a
+    )
+    assert verdict.conclusion == Conclusion.PENDING_REVIEW
+
+
+def test_impersonation_keyword_blocks_despite_weak_normalization_and_residue():
+    dossier = extract_evidence(merge_records([build_record(
+        "fake-brand.invalid",
+        level=40,
+        context="仿冒网站",
+        comment="来源：operator@example.invalid",
+        family=["phishingsite"],
+        attck=["T1071", "T1132"],
+        block=True,
+        alert_score=95,
+        flint={"last_seen": _days_ago(2), "records": 60},
+        topdomain={"rank": 470607273, "sld": "fake-brand.invalid"},
+        whois={"createdDate": "2023-11-12 00:00:00", "expiresDate": "2024-11-12 00:00:00"},
+    )]), Config())
+
+    verdict = adjudicate(dossier, Config())
+
+    assert verdict.conclusion == Conclusion.ALIVE_VALID
+    assert verdict.disposition == "block"
+    assert "仿冒网站" in verdict.reason
+
+
+def test_domain_url_scope_uses_latest_level_not_max_across_records():
+    retained = "https://path-only.invalid/download/payload.exe"
+    dossier = extract_evidence(merge_records([
+        build_record(
+            "path-only.invalid",
+            level=40,
+            category="TPD",
+            updatetime="2025-10-19 05:57:55",
+            context="older tpd snapshot",
+        ),
+        build_record(
+            "path-only.invalid",
+            level=30,
+            category="DOMAIN_PORT",
+            updatetime="2026-06-21 12:06:43",
+            context="md5:abc SAMPLE_DOWNLOAD_URL:https://path-only.invalid/download/payload.exe",
+            family=["delf", "darkcomet"],
+            attck=["T1071", "T1132"],
+            block=True,
+            alert_score=75,
+            hash_entries=[{
+                "md5": "abc",
+                "level": 70,
+                "confidence": 0,
+                "family": "delf",
+            }],
+            relate_url=[{"url": retained, "level": 70}],
+            flint={"last_seen": _days_ago(10), "records": 100},
+            topdomain={"rank": 33763510, "sld": "path-only.invalid"},
+            whois={"createdDate": "2024-06-24 00:00:00", "expiresDate": "2027-06-24 00:00:00"},
+        ),
+    ]), Config())
+
+    verdict = adjudicate(dossier, Config())
+
+    assert dossier.level == 40.0
+    assert dossier.ioc_type == "domain"
+    assert verdict.conclusion == Conclusion.GRAY
+    assert verdict.disposition == "gray"
+    assert retained in verdict.retained_urls
+
+
+def test_url_ioc_with_matching_relate_url_is_black():
+    url = "https://url-target.invalid/payload.exe"
+    dossier = extract_evidence(merge_records([build_record(
+        url,
+        level=70,
+        relate_url=[{"url": url, "level": 70}],
+        flint={"last_seen": _days_ago(3), "records": 10},
+    )]), Config())
+
+    verdict = adjudicate(dossier, Config())
+
+    assert dossier.ioc_type == "url"
+    assert verdict.conclusion == Conclusion.ALIVE_VALID
+    assert verdict.disposition == "block"
 
 
 def test_latest_context_keyword_overrides_older_clean_remark():

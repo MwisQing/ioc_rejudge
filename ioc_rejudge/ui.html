@@ -118,6 +118,28 @@
   .compact-source label { color: var(--muted); font-size: 12px; }
   .compact-source textarea { min-height: 64px; font-size: 12px; }
   .bundle-meta { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .table-wrap {
+    overflow-x: auto; border: 1px solid var(--line); border-radius: 6px;
+    margin-top: 8px; background: #fbfcfd;
+  }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; }
+  th, td {
+    text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line);
+    font-size: 13px; vertical-align: top; white-space: nowrap;
+  }
+  th { background: #f2f4f7; font-weight: 600; }
+  td.wrap { white-space: normal; word-break: break-word; min-width: 180px; }
+  tbody tr:hover { background: #f7f9fc; cursor: pointer; }
+  .unavailable {
+    background: #fff1f2; border: 1px solid #f4b7bc; color: #991b1b;
+    border-radius: 6px; padding: 8px 10px; margin: 8px 0 0;
+  }
+  .review-grid {
+    display: grid; grid-template-columns: 1fr; gap: 0;
+  }
+  @media (min-width: 720px) {
+    .review-grid { grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  }
 </style>
 </head>
 <body>
@@ -127,7 +149,7 @@
     <span id="status-key">正在加载…</span>
     <span class="badge" id="status-unlocked">未解锁</span>
     <span style="margin-left: auto;"></span>
-    <ul class="bundles" id="status-bundles"></ul>
+    <ul class="bundles" id="status-bundles" title="仅展示最近任务；更早的任务仍保存在本机，粘贴对应云端回复仍可自动还原"></ul>
     <button class="secondary" type="button" id="lock-btn">清除口令</button>
     <span class="flash" id="lock-flash" hidden></span>
   </div>
@@ -227,7 +249,7 @@
 
   <section class="panel needs-key" id="restore-panel">
     <h2>还原 AI 返回</h2>
-    <p class="hint">粘贴云端 AI 返回的 JSONL（每行需带 bundle_id），自动匹配本地 bundle 并还原真实值；原样粘回脱敏包内容也可以验证还原。</p>
+    <p class="hint">粘贴云端 AI 返回的 JSONL（每行需带 bundle_id），自动匹配本地 bundle 并还原真实值；原样粘回脱敏包内容也可以验证还原。顶部仅展示最近任务，更早任务的清单与还原记录仍保留在本机，只要粘贴对应回复即可再次匹配。</p>
     <div class="row">
       <label><input type="radio" name="restore-src" value="paste" checked> 粘贴文本</label>
       <label><input type="radio" name="restore-src" value="path"> 本机文件路径</label>
@@ -280,6 +302,75 @@
       <div class="stats" id="scan-stats"></div>
     </div>
   </section>
+
+  <section class="panel" id="workbench-panel">
+    <h2>研判工作台</h2>
+    <p class="hint">导入受控 staging 后启动研判任务；任务、解释、复核和导出由本机后端 adapter 提供。后端能力未合并时，页面会明确显示 unavailable，不会伪造成功。</p>
+    <div class="unavailable" id="workbench-status" hidden></div>
+
+    <label for="workbench-file">研判输入 JSONL</label>
+    <input type="file" id="workbench-file" accept=".jsonl,.json,application/json,text/plain">
+    <div class="actions">
+      <button type="button" id="workbench-import">导入 staging</button>
+      <button class="secondary" type="button" id="workbench-start" disabled>启动任务</button>
+      <button class="secondary" type="button" id="workbench-refresh" disabled>刷新状态</button>
+      <button class="secondary" type="button" id="workbench-cancel" disabled>取消任务</button>
+    </div>
+
+    <div class="result" id="workbench-task-result" hidden>
+      <div class="stats" id="workbench-task-stats"></div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="workbench-dispositions">结论筛选（逗号分隔，可空）</label>
+        <input type="text" id="workbench-dispositions" placeholder="black,gray,pending_review">
+      </div>
+      <div>
+        <label for="workbench-query">关键字</label>
+        <input type="text" id="workbench-query" placeholder="IOC / 证据关键字">
+      </div>
+    </div>
+    <div class="actions">
+      <button class="secondary" type="button" id="workbench-results" disabled>加载结果</button>
+      <button class="secondary" type="button" id="workbench-export" disabled>导出 JSONL</button>
+    </div>
+
+    <div class="result" id="workbench-results-result" hidden>
+      <div class="stats" id="workbench-results-stats"></div>
+      <div class="table-wrap">
+        <table aria-live="polite">
+          <thead><tr><th>result_id</th><th>IOC</th><th>结论</th><th>置信度</th><th>摘要</th></tr></thead>
+          <tbody id="workbench-results-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="result" id="workbench-detail-result" hidden>
+      <h3>解释详情</h3>
+      <div class="json-viewer" id="workbench-detail-viewer"></div>
+      <div class="review-grid">
+        <div>
+          <label for="workbench-decision">复核结论</label>
+          <select id="workbench-decision">
+            <option value="approved">approved</option>
+            <option value="rejected">rejected</option>
+            <option value="pending">pending</option>
+          </select>
+        </div>
+        <div>
+          <label for="workbench-reviewer">复核人</label>
+          <input type="text" id="workbench-reviewer" autocomplete="off">
+        </div>
+      </div>
+      <label for="workbench-reason">复核理由</label>
+      <textarea id="workbench-reason" rows="3"></textarea>
+      <div class="actions">
+        <button type="button" id="workbench-review" disabled>提交复核</button>
+        <span class="flash" id="workbench-flash" hidden></span>
+      </div>
+    </div>
+  </section>
 </main>
 <script>
 'use strict';
@@ -313,7 +404,36 @@ async function api(path, payload, timeoutMs) {
     if (response.status === 403) {
       throw new Error('会话令牌无效或请求被拒绝：请从启动命令打印的 URL 重新打开本页面。');
     }
-    throw new Error(data && data.error ? data.error : ('HTTP ' + response.status));
+    const err = new Error(data && data.error ? data.error : ('HTTP ' + response.status));
+    err.unavailable = response.status === 501;
+    throw err;
+  }
+  return data;
+}
+
+async function apiGet(path, timeoutMs) {
+  const limit = timeoutMs == null ? 45000 : timeoutMs;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), limit);
+  let response;
+  try {
+    response = await fetch(path + '?token=' + encodeURIComponent(TOKEN), {
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+      throw new Error('查询超时（' + Math.round(limit / 1000) + ' 秒）');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+  let data = null;
+  try { data = await response.json(); } catch (err) { data = null; }
+  if (!response.ok) {
+    const err = new Error(data && data.error ? data.error : ('HTTP ' + response.status));
+    err.unavailable = response.status === 501;
+    throw err;
   }
   return data;
 }
@@ -574,12 +694,19 @@ async function refreshStatus() {
   if (credNote) credNote.hidden = !!status.ioc_info_enabled;
   const list = $('status-bundles');
   list.textContent = '';
-  const bundles = (status.bundles || []).slice(0, 5);
+  const historyLimit = status.bundle_history_limit == null ? 5 : status.bundle_history_limit;
+  const bundles = (status.bundles || []).slice(0, Math.min(5, historyLimit));
+  const total = status.bundle_total == null ? bundles.length : status.bundle_total;
   if (bundles.length) {
     for (const bundle of bundles) {
       const li = document.createElement('li');
       li.textContent = (bundle.bundle_id || '?') + ' · ' + (bundle.rows == null ? '?' : bundle.rows) + ' 行';
       list.appendChild(li);
+    }
+    if (total > bundles.length) {
+      const more = document.createElement('li');
+      more.textContent = '另有 ' + (total - bundles.length) + ' 个更早任务仍可还原（本机保留）';
+      list.appendChild(more);
     }
   }
 }

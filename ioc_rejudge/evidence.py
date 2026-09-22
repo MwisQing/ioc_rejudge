@@ -8,9 +8,37 @@ from ioc_rejudge.business_identity import trusted_business_identity
 from ioc_rejudge.config import Config
 from ioc_rejudge.inputs import is_valid_host, is_valid_port
 from ioc_rejudge.models import Evidence, EvidenceLevel, EvidenceStrength, IocDossier
-from ioc_rejudge.normalize import coerce_level, latest_record, normalize_ioc
+from ioc_rejudge.normalize import coerce_level, latest_record, normalize_ioc, parse_ioc_value
 from ioc_rejudge.parser import is_recent, normalize_datetime
 from ioc_rejudge.profile import extract_profile
+
+
+def _canonical_target_identity(value: str, port: str = "0") -> tuple[str, str]:
+    """Return ``(normalized, ioc_type)`` with URL scheme preserved."""
+    normalized, ioc_type, _ports, _scheme = parse_ioc_value(value, port)
+    return normalized, ioc_type
+
+
+def _same_url_identity(dossier_ioc: str, url: str) -> bool:
+    """True when *url* is the same URL target as *dossier_ioc*.
+
+    Scheme-aware identities (``http://…`` / ``https://…``) must match exactly,
+    including scheme. Legacy scheme-less URL dossier keys (``host/path``) keep
+    the historical normalize_ioc comparison so old snapshots still resolve.
+    """
+    if not dossier_ioc or not url:
+        return False
+    dossier_id, _ = _canonical_target_identity(dossier_ioc)
+    url_id, url_type = _canonical_target_identity(url)
+    if "://" in dossier_ioc:
+        return dossier_id == url_id
+    # Legacy scheme-less URL key on the dossier.
+    if url_type != "url":
+        return False
+    try:
+        return normalize_ioc(dossier_ioc)[0] == normalize_ioc(url)[0]
+    except (TypeError, ValueError):
+        return False
 
 
 def _is_ip(value: str) -> bool:
@@ -174,6 +202,25 @@ def _record_context(record: dict) -> str:
     )
 
 
+def _record_family_text(record: dict) -> str:
+    raw = record.get("family", [])
+    values = raw if isinstance(raw, (list, tuple, set)) else [raw]
+    return " ".join(str(value).strip() for value in values if str(value).strip())
+
+
+def _authoritative_haystack(record: dict) -> str:
+    """Latest-record text that can force a black keyword hit.
+
+    Family is included so phishingsite labels still match when context is
+    only a public-feed Reference URL. Tag is excluded so names like
+    SilverFox cannot become an unconfirmed black keyword.
+    """
+    return "\n".join(
+        part for part in (_record_context(record), _record_family_text(record))
+        if part
+    )
+
+
 def has_authoritative_clue(records: list[dict], config: Config) -> bool:
     record = latest_record(records)
     return bool(record) and any(
@@ -185,11 +232,15 @@ def has_authoritative_clue(records: list[dict], config: Config) -> bool:
 def authoritative_context_matches(
     records: list[dict], config: Config
 ) -> list[str]:
-    """Return configured context/comment keywords that force a black verdict."""
+    """Return configured keywords that force a black verdict.
+
+    Scans latest-record context, comment, and family. Bare `phish` /
+    `钓鱼站点` are not default keywords and must not match `phishingsite`.
+    """
     record = latest_record(records)
     if not record:
         return []
-    text = _record_context(record).lower()
+    text = _authoritative_haystack(record).lower()
     return [
         indicator
         for indicator in config.rules.authoritative_context_indicators
@@ -206,7 +257,7 @@ def _extract_operator_evidence(dossier: IocDossier, config: Config) -> None:
             level=EvidenceLevel.A,
             field="authoritative_context_keyword",
             detail=(
-                "comment/context 命中直接判黑关键词: "
+                "comment/context/family 命中直接判黑关键词: "
                 + ", ".join(keyword_matches)
             ),
             strength=EvidenceStrength.STRONG,
@@ -450,37 +501,34 @@ def _extract_a(dossier: IocDossier, config: Config):
             ))
 
     # Collect qualifying relate_url entries into retained_urls.
+    # Domain targets: host-scoped paths. URL targets: same-scheme identity only
+    # so http/https never cross-retain.
     for url_entry in dossier.relate_url_entries:
         url = str(url_entry.get("url", ""))
-        if (
-            not _is_valid_retained_url(url)
-            or not _url_matches_domain_scope(dossier, url)
-        ):
+        if not _is_valid_retained_url(url):
             continue
-        try:
-            url_level = float(url_entry.get("level", 0))
-        except (ValueError, TypeError):
+        if dossier.ioc_type == "url":
+            if not _same_url_identity(dossier.ioc, url):
+                continue
+        elif not _url_matches_domain_scope(dossier, url):
             continue
-        if url_level >= config.relate_url_malicious_level:
-            if url not in dossier.retained_urls:
-                dossier.retained_urls.append(url)
+        url_level = coerce_level(url_entry.get("level"), default=float("nan"))
+        if not isfinite(url_level) or url_level < config.relate_url_malicious_level:
+            continue
+        if url not in dossier.retained_urls:
+            dossier.retained_urls.append(url)
 
-    # For URL IOC targets: exact normalized match with a relate_url entry
-    # produces direct evidence.  Domain targets never get A from relate_url.
+    # For URL IOC targets: exact scheme-aware identity match with a relate_url
+    # entry produces direct evidence. Domain targets never get A from relate_url.
     if dossier.ioc_type == "url":
-        ioc_normalized = normalize_ioc(dossier.ioc)[0]
         for url_entry in dossier.relate_url_entries:
             url = str(url_entry.get("url", ""))
             if not _is_valid_retained_url(url):
                 continue
-            try:
-                url_level = float(url_entry.get("level", 0))
-            except (ValueError, TypeError):
+            url_level = coerce_level(url_entry.get("level"), default=float("nan"))
+            if not isfinite(url_level) or url_level < config.relate_url_malicious_level:
                 continue
-            if url_level < config.relate_url_malicious_level:
-                continue
-            url_normalized = normalize_ioc(url)[0]
-            if url_normalized == ioc_normalized:
+            if _same_url_identity(dossier.ioc, url):
                 dossier.evidence_a.append(Evidence(
                     level=EvidenceLevel.A,
                     field=f"relate_url[{url}]",
@@ -834,12 +882,27 @@ def _extract_structured_public_apt(dossier: IocDossier, config: Config):
         if not isinstance(subject, str):
             continue
         try:
-            normalized, subject_type, _ = normalize_ioc(
+            normalized, subject_type = _canonical_target_identity(
                 subject, str(raw.get("port", "0"))
             )
         except (TypeError, ValueError):
             continue
-        if normalized != dossier.ioc or subject_type != dossier.ioc_type:
+        # Prefer scheme-aware equality; fall back to legacy strip only when the
+        # dossier identity itself is scheme-less (old snapshots).
+        if normalized == dossier.ioc and subject_type == dossier.ioc_type:
+            pass
+        elif "://" not in dossier.ioc:
+            try:
+                legacy_subject = normalize_ioc(subject, str(raw.get("port", "0")))
+                legacy_dossier = normalize_ioc(dossier.ioc)
+            except (TypeError, ValueError):
+                continue
+            if (
+                legacy_subject[0] != legacy_dossier[0]
+                or legacy_subject[1] != dossier.ioc_type
+            ):
+                continue
+        else:
             continue
         mt = raw.get("malicious_type")
         if isinstance(mt, str):

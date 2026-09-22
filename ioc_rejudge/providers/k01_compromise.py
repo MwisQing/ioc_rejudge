@@ -19,6 +19,11 @@ from ioc_rejudge.providers.base import (
 )
 from ioc_rejudge.providers.cache import CacheEntry, JsonlProviderCache
 from ioc_rejudge.providers.go_transport import BatchRequest, GoBatchTransport
+from ioc_rejudge.providers.redaction import (
+    redact_secret_values,
+    safe_text,
+    secret_values,
+)
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import RequestsTransport, TransportError
 
@@ -132,12 +137,14 @@ class K01CompromiseProvider:
     def _cache_ref(self, entry: CacheEntry) -> str:
         return f"cache:{self.name}:{entry.key}"
 
+    def _secret_values(self) -> tuple[str, ...]:
+        return secret_values(self.settings.secrets)
+
+    def _sanitize_response(self, response: object) -> object:
+        return redact_secret_values(response, self._secret_values())
+
     def _safe_error(self, value: object) -> str:
-        message = str(value).strip()
-        for secret in self.settings.secrets.values():
-            if secret:
-                message = message.replace(secret, "[REDACTED]")
-        return message
+        return safe_text(value, self._secret_values()).strip()
 
     def _response_data(self, response: object) -> tuple[dict | None, str | None]:
         if not isinstance(response, dict):
@@ -168,6 +175,7 @@ class K01CompromiseProvider:
         freshness: Freshness,
         raw_ref: str,
     ) -> tuple[ProviderStatus, Observation | None, str | None]:
+        response = self._sanitize_response(response)
         data, response_error = self._response_data(response)
         if response_error:
             return ProviderStatus.ERROR, None, response_error
@@ -239,9 +247,13 @@ class K01CompromiseProvider:
                 _scope_response_to_target(response, target),
                 self.cache_params(target),
                 fetched_at=fetched_at,
+                secret_values=self._secret_values(),
             )
         except (OSError, TypeError, ValueError) as exc:
-            return "", f"cache write failed for {target.normalized}: {exc}"
+            return (
+                "",
+                f"cache write failed for {target.normalized}: {self._safe_error(exc)}",
+            )
         return self._cache_ref(entry), None
 
     def _consume_batch(
@@ -263,12 +275,13 @@ class K01CompromiseProvider:
             for target in batch:
                 statuses[target.normalized] = ProviderStatus.ERROR
                 done += 1
-                report_progress(context, self.name, done, total)
+            report_progress(context, self.name, done, total)
             return done
 
+        response = self._sanitize_response(response)
         _, response_error = self._response_data(response)
         if response_error:
-            errors.append(f"batch {batch_number}: {response_error}")
+            errors.append(f"batch {batch_number}: {self._safe_error(response_error)}")
             for target in batch:
                 statuses[target.normalized] = ProviderStatus.ERROR
                 done += 1
@@ -293,7 +306,9 @@ class K01CompromiseProvider:
                 if observation is not None:
                     observations.append(observation)
                 if parse_error:
-                    errors.append(f"{target.normalized}: {parse_error}")
+                    errors.append(
+                        f"{target.normalized}: {self._safe_error(parse_error)}"
+                    )
             done += 1
             report_progress(context, self.name, done, total)
         return done
@@ -327,7 +342,10 @@ class K01CompromiseProvider:
                     self.cache_params(target),
                     now=self.now_fn(),
                 )
-                errors.extend(f"cache: {message}" for message in self.cache.diagnostics)
+                errors.extend(
+                    f"cache: {self._safe_error(message)}"
+                    for message in self.cache.diagnostics
+                )
             if entry is None or (not entry.fresh and not context.offline):
                 pending.append(target)
                 continue
@@ -343,7 +361,9 @@ class K01CompromiseProvider:
             if observation is not None:
                 observations.append(observation)
             if parse_error:
-                errors.append(f"{target.normalized}: {parse_error}")
+                errors.append(
+                    f"{target.normalized}: {self._safe_error(parse_error)}"
+                )
             cache_hits += 1
 
         done = cache_hits

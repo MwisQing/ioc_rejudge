@@ -1,6 +1,7 @@
 """Provider protocol, context, and result types."""
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Protocol, runtime_checkable
 
@@ -32,12 +33,16 @@ class ProviderContext:
     on_progress: optional sink that receives per-provider ProgressEvent
         updates as targets are processed; progress reporting must never
         affect collection results.
+    now: optional evaluation instant for freshness/TTL derivation; the
+        pipeline injects the same clock used for adjudication and result
+        cache validity so sidecar and live providers share one timeline.
     """
 
     offline: bool = False
     refresh: bool = False
     run_dir: Path | None = None
     on_progress: Callable[[ProgressEvent], None] | None = None
+    now: datetime | None = None
 
 
 def report_progress(

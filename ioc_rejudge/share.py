@@ -75,7 +75,9 @@ _DOMAIN_RE = re.compile(
     r"(?:xn--[A-Za-z0-9-]{1,59}|[A-Za-z]{2,63})\b"
 )
 _WINDOWS_PATH_RE = re.compile(r"(?i)(?:[A-Z]:\\|\\\\)[^\s\"']+")
-_UNIX_PATH_RE = re.compile(r"(?<!https:)(?<!http:)(?<![A-Za-z0-9])/(?:[^\s\"']+/)+[^\s\"']*")
+# Final segment must be non-empty: leftover "/lib/" after a tokenized
+# package or *.so domain is not a filesystem location.
+_UNIX_PATH_RE = re.compile(r"(?<!https:)(?<!http:)(?<![A-Za-z0-9])/(?:[^\s\"']+/)+[^\s\"']+")
 _URL_USERINFO_RE = re.compile(r"(?i)\A(https?://)[^/?#\s@]+@")
 _INLINE_SECRET_RE = re.compile(
     r"\b(?:authorization|api[-_]?key|access[-_]?key|token|secret|password)"

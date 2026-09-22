@@ -110,13 +110,30 @@ def _is_gray_domain_candidate(
     return _has_historical_or_phishing_url_evidence(dossier)
 
 
+def _latest_record_level(dossier: IocDossier) -> float:
+    """Use the latest snapshot's level for URL-scope gates, not max-across-history."""
+    snapshots = dossier.record_snapshots
+    if isinstance(snapshots, (list, tuple)) and snapshots:
+        raw = getattr(snapshots[-1], "raw", None)
+        if isinstance(raw, dict) and "level" in raw:
+            return coerce_level(raw.get("level"))
+    return coerce_level(dossier.level)
+
+
 def _is_low_level_url_scope_candidate(
     dossier: IocDossier, config: Config
 ) -> bool:
-    """Keep real URL-level abuse without escalating a low-level domain."""
+    """Keep URL-level abuse on a domain IOC without escalating the domain.
+
+    Domain vs URL is the split: a URL IOC can still black from relate_url.
+    Compare the latest record's level so an older higher-level TPD snapshot
+    cannot block this gray exit. Domain-direct A already decided black.
+    """
     if dossier.ioc_type != "domain":
         return False
-    if dossier.level >= config.historical_malicious_level:
+    if dossier.evidence_a:
+        return False
+    if _latest_record_level(dossier) >= config.historical_malicious_level:
         return False
     if not dossier.retained_urls:
         return False
@@ -517,7 +534,7 @@ def adjudicate(
         return _gray_url_scope_verdict(
             dossier,
             reason=(
-                "判定为灰：domain情报等级未达到恶意准入门槛，"
+                "判定为灰：当前 IOC 是 domain，最新记录未达到域名恶意准入门槛，"
                 "但仍存在需要保留的具体恶意URL；domain不继续拦截且不加入白名单。"
             ),
             review_suggestion="抽检",

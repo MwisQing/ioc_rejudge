@@ -1,10 +1,14 @@
 """Export verdicts to JSONL, CSV, and Excel formats."""
-import json
 import csv
+import json
+import os
 from urllib.parse import urlparse
+
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill, Font
+from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
+
+from ioc_rejudge.files import atomic_write_via
 
 
 _OUTPUT_FIELDS = [
@@ -46,6 +50,7 @@ _OUTPUT_FIELDS = [
     "provider_statuses",
     "evidence_origins",
     "missing_required_providers",
+    "classification_unknown",
 ]
 
 _STRUCTURED_DEFAULTS = {
@@ -54,6 +59,10 @@ _STRUCTURED_DEFAULTS = {
     "provider_statuses": {},
     "evidence_origins": [],
     "missing_required_providers": [],
+}
+
+_BOOLEAN_DEFAULTS = {
+    "classification_unknown": False,
 }
 
 _EXCEL_REVIEW_FIELDS = [
@@ -110,21 +119,40 @@ _FILL_CONCLUSION = {
 }
 
 def export_jsonl(verdicts: list[dict], filepath: str):
-    with open(filepath, "w", encoding="utf-8") as f:
-        for v in verdicts:
-            row = {field: _jsonl_value(v, field) for field in _OUTPUT_FIELDS}
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    """Stream one JSON object per line into an atomic sibling temp file."""
+
+    def _write(temp_path):
+        with open(temp_path, "w", encoding="utf-8", newline="\n") as handle:
+            for verdict in verdicts:
+                row = {
+                    field: _jsonl_value(verdict, field) for field in _OUTPUT_FIELDS
+                }
+                handle.write(json.dumps(row, ensure_ascii=False))
+                handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    try:
+        atomic_write_via(filepath, _write)
+    except OSError as exc:
+        raise OSError(f"failed to write JSONL output {filepath}: {exc}") from exc
 
 
 def export_csv(verdicts: list[dict], filepath: str):
-    with open(filepath, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=_OUTPUT_FIELDS, extrasaction="ignore")
-        writer.writeheader()
-        for v in verdicts:
-            writer.writerow({
-                field: _neutralize_formula(_safe_value(v, field))
-                for field in _OUTPUT_FIELDS
-            })
+    def _write(temp_path):
+        with open(temp_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=_OUTPUT_FIELDS, extrasaction="ignore")
+            writer.writeheader()
+            for v in verdicts:
+                writer.writerow({
+                    field: _neutralize_formula(_safe_value(v, field))
+                    for field in _OUTPUT_FIELDS
+                })
+
+    try:
+        atomic_write_via(filepath, _write)
+    except OSError as exc:
+        raise OSError(f"failed to write CSV output {filepath}: {exc}") from exc
 
 
 def _raw_value(v, key: str, default=None):
@@ -149,6 +177,11 @@ def _sanitize_json_value(value):
 
 
 def _jsonl_value(v, key: str):
+    if key in _BOOLEAN_DEFAULTS:
+        value = _raw_value(v, key, _BOOLEAN_DEFAULTS[key])
+        if value is None:
+            return _BOOLEAN_DEFAULTS[key]
+        return bool(value)
     if key in _STRUCTURED_DEFAULTS:
         value = _raw_value(v, key, _STRUCTURED_DEFAULTS[key])
         if value is None:
@@ -159,6 +192,11 @@ def _jsonl_value(v, key: str):
 
 def _safe_value(v, key: str, default: str = ""):
     """Extract a string value from a verdict, whether it's a dict or dataclass."""
+    if key in _BOOLEAN_DEFAULTS:
+        value = _raw_value(v, key, _BOOLEAN_DEFAULTS[key])
+        if value is None:
+            value = _BOOLEAN_DEFAULTS[key]
+        return "true" if bool(value) else "false"
     structured = key in _STRUCTURED_DEFAULTS
     fallback = _STRUCTURED_DEFAULTS[key] if structured else default
     val = _raw_value(v, key, fallback)
@@ -320,6 +358,7 @@ def _add_stats_sheet(wb: Workbook, verdicts: list[dict], diagnostics: dict | Non
         ws[f"A{ws.max_row}"].font = Font(bold=True)
         diag_fields = [
             ("Parse Errors", "parse_error_count"),
+            ("Nested Data Errors", "nested_data_error_count"),
             ("Missing Data", "missing_data_count"),
             ("Empty Data", "empty_data_count"),
             ("Non-list Data", "non_list_data_count"),
@@ -385,17 +424,38 @@ def export_excel(
         filepath: Output .xlsx path.
         diagnostics: Optional diagnostics dict for statistics sheet.
     """
-    wb = Workbook()
-    default_sheet = wb.active
-    wb.remove(default_sheet)
+    def _write(temp_path):
+        wb = Workbook()
+        default_sheet = wb.active
+        wb.remove(default_sheet)
 
-    _add_stats_sheet(wb, verdicts, diagnostics)
-    _add_review_sheet(wb, "总", verdicts)
-    _add_review_sheet(
-        wb,
-        "判黑",
-        [v for v in verdicts if _safe_value(v, "conclusion") in _BLACK_CONCLUSIONS],
-    )
+        _add_stats_sheet(wb, verdicts, diagnostics)
+        _add_review_sheet(wb, "总", verdicts)
+        _add_review_sheet(
+            wb,
+            "判黑",
+            [v for v in verdicts if _safe_value(v, "conclusion") in _BLACK_CONCLUSIONS],
+        )
+        _add_review_sheet_excel_tail(wb, verdicts)
+        try:
+            wb.save(str(temp_path))
+        except PermissionError as exc:
+            raise OSError(
+                f"failed to write Excel output {filepath}: file may be open "
+                f"in Excel or another program: {exc}"
+            ) from exc
+        except OSError as exc:
+            raise OSError(f"failed to write Excel output {filepath}: {exc}") from exc
+
+    try:
+        atomic_write_via(filepath, _write)
+    except OSError:
+        raise
+    except Exception as exc:
+        raise OSError(f"failed to write Excel output {filepath}: {exc}") from exc
+
+
+def _add_review_sheet_excel_tail(wb: Workbook, verdicts: list[dict]) -> None:
     _add_review_sheet(
         wb,
         "灰",
@@ -411,5 +471,3 @@ def export_excel(
         "待复核",
         [v for v in verdicts if _safe_value(v, "conclusion") == "待复核"],
     )
-
-    wb.save(filepath)

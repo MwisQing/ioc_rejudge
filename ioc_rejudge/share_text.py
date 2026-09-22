@@ -65,7 +65,7 @@ _DOMAIN_GLUED_RE = re.compile(
 )
 _WINDOWS_PATH_RE = re.compile(r"(?i)(?:[A-Z]:\\|\\\\)[^\s\"'|<>]+")
 _UNIX_PATH_RE = re.compile(
-    r"(?<!https:)(?<!http:)(?<![A-Za-z0-9])/(?:[^\s\"'|<>/]+/){1,}[^\s\"'|<>]*"
+    r"(?<!https:)(?<!http:)(?<![A-Za-z0-9])/(?:[^\s\"'|<>/]+/){1,}[^\s\"'|<>]+"
 )
 _BANG_PATH_RE = re.compile(r"[A-Za-z]:(?:![^!\s\"'<>|;,。\r\n]+)+")
 _IPV4_TRUNC_RE = re.compile(r"(?<![0-9.])((?:\d{1,3}\.){2}\d{1,3})(\.{2,}|…)")

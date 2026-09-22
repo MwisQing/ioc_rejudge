@@ -1,5 +1,34 @@
 # 更新日志
 
+## 2.7.0 - 2026-09-22
+
+- 新增：离线路线命令入口，支持 `job` 生命周期、`review` 人工标签/重开、`explain` 解释、`history` 查询、`health --offline` 配置检查、`cache inspect/cleanup`、`import-table` 和 `export-bundle`；成功输出机器可读 JSON，缓存清理默认 dry-run，provider 参数在本地后端中 fail-closed。
+- 新增：本地 workbench 后端接入 UI。导入的 legacy snapshot 在本机离线执行并持久化 task 状态、results、diagnostics、人工 review overlay 和 JSONL/CSV/XLSX 导出；不调用真实 provider 网络，也不覆盖系统结论。
+- 新增：CSV/XLSX IOC 导入适配与结果 bundle 导出。支持引号换行、物理行号、defang 恢复、公式风险拦截、重复报告、输出冲突预检和原子写入；cache admin 可分别统计 provider/result cache，并按完整日期 shard 安全清理。
+- 修复：`cache_type=all` 清理时按 shard 所属目录使用正确的 provider/result 行结构校验，避免结果缓存被误判为坏行而漏清理。
+- 修复：配置的 API 凭据值即使被上游在普通 JSON 字段（`message`、`details` 等）回显，也不会进入原始缓存、run 审计副本、观测载荷或错误文案。共享脱敏助手 `providers/redaction.py` 提供值级替换与 secret-safe 错误渲染；六个在线 provider（K01、IOC Info、F-Dark、WHOIS、pDNS、ICP）在响应消费与缓存写入边界统一接入，`JsonlProviderCache.put` 新增 keyword-only `secret_values=()`：缓存 key 仍按原始 IOC/params 计算，落盘 params/raw、run 审计副本和返回的 entry 字段同时执行敏感字段名与配置值脱敏；`get` 仍用原始 params 查询。并发写入使用不同合成哨兵验证落盘字节。
+- 修复：普通路由合并快照与 WHOIS Observation 时，新鲜的 provider WHOIS 记录按 fetch 时间覆盖快照里较旧的到期日，输入顺序不影响结果；覆盖不发明情报时间，快照 `updatetime` 仍是 intel 记录时间。F-Dark 适配器保留样本 hash 类型（MD5/SHA1/SHA256）、confidence/family/level、真实样本观察时间（lseen/fseen）与 provenance；缺失、无效或未来样本时间，低 level、零 confidence 与 `not-a-virus` 不会成为当前恶意活动。
+- 修复：DGA 路由只接受可靠、fresh、目标匹配的 `dga_classification`；error/stale/unknown/错目标事实保持保守。sidecar freshness 一律由 `fetched_at` + 来源 TTL + 评估时刻推导，显式 fresh 的 NO_DATA 行可作为完整性事实；未来/过期 fetched_at 有明确边界。
+- 修复：完整结果缓存的 `valid_until` 纳入依赖 sidecar 行的 `fetched_at+TTL`（含显式 fresh NO_DATA）与未来 fetched_at 激活边界（激活时刻前 1µs 截止）；配置指纹纳入 sidecar TTL。缓存契约升级为 `12`，旧结论自动重算；历史 provider 缓存文件不做迁移。
+- 修复：统一目标身份保留 URL scheme。`case.invalid`、`http://case.invalid`、`https://case.invalid` 为三个独立研判目标（与输入顺序无关）；http/https 同 path 不合并；host 大小写与尾点仍去重。快照匹配、sidecar、dossier merge、relate_url 直接证据、retained_urls、结果缓存与导出共用同一 scheme-aware 身份；HTTP 目标不会因 HTTPS `relate_url` 建立 A 证据。`normalize_ioc()` 仍返回历史 scheme-less 形态供记录分组与 provider 原始缓存 IOC 字段兼容。
+- 修复：完整结果缓存支持同一天内的时间敏感失效。缓存行可带 `valid_until`：覆盖全部实质活动输入（快照 hash/flint/access/dtree 与 IOC Info 样本，非 latest-only）、pDNS 窗口、WHOIS 日期、未来事件在激活时刻前 1µs 截止，以及依赖 provider 原始缓存 `fetched_at+TTL`（含 NO_DATA 完整性事实）。越过边界时 `temporal_expired` 重算且与无缓存结论一致；无时间敏感证据时 30 秒内重复运行仍 hit。
+- 修复：完整结果指纹改为按目标关联 provider 原始响应摘要（内容/fetch 时间/params/absence，含 FDark 多变体与 host 作用域查询），同一目标 raw 更新或真正消失只使该目标 miss；无关 IOC 保持 hit。生产 provider 原始缓存没有删除 API，历史缓存文件也不迁移；真正缺席（如临时分片被移除）通过依赖摘要使相关结果失效。sidecar 内容哈希按 path+mtime+size 在单次 run 内只读一次。
+- 修复：必看黑结论（block + review_suggestion=必看）进入默认复核队列；普通无需复核的 block 仍排除。队列入队不等于判黑 Excel 表：总表/判黑表本就包含必看黑结论。
+- 修复：同结论下处置范围/保留 URL/复核义务变化出现在 diff 的 `operational_changes`（`disposition`/`scope_actions`/`retained_urls`/`review_suggestion`/`missing_required_providers`/`classification_unknown`，无序集合仅顺序或重复变化不计），避免只看 `changed=[]` 漏掉运维变更；CLI diff 摘要新增 `operations=N`（本次实际对比的 verdict 行数）。
+- 修复：Share UI 超过历史展示上限（`max_bundles`，UI CLI `--history-limit N`）时不再删除旧 bundle 的 manifest 与还原产物；同 id 重建保留 restored/cloud 文件并采用先备份后提交的事务。列表仅返回最近 N 条，更早任务仍可按 bundle_id 还原；磁盘增长需人工清理。
+- 修复：JSONL 输入隔离非对象行（`[]`/`null`/数字/字符串）与嵌套非对象 `data` 条目；嵌套拒绝有无界 `nested_data_error_count`（样例仍有界），legacy/unified diagnostics 与 `--strict` 均计入，同时继续导出合法条目；快照非法 IOC 位置使用物理文件行号。
+- 修复：输出路径在 provider 采集前做冲突与可写性预检（已存在输出也探测同目录 sibling 临时文件），禁止覆盖输入/基线/规则/配置/凭据/sidecar，并拒绝输出路径互撞；JSONL/CSV/Excel/diagnostics/diff 仅经 sibling 临时文件 + `os.replace` 写入，`PermissionError`/写失败时保留原字节，不做截断或复制回落。
+- 变更：始终写出 diagnostics（`-j`/`-c` 时默认写到主输出旁的 `*_diagnostics.json`）；JSONL 按行流式写入 atomic sibling temp；JSONL/CSV 导出 `classification_unknown`（JSONL 布尔，CSV `true`/`false`，旧行默认 `false`）；新增可选 `--strict`，在拒绝输入、嵌套/解析错误、provider/处理错误或缺失必要来源时非 0 退出，业务待复核本身不算失败。
+- 修复：本地 `upgrade.py` 选择 release zip 时严格匹配 `pack.py` 包名语法 `ioc_rejudge_vX.Y.Z_YYYYMMDD-HHMMSS.zip` 并校验真实日历时间戳；按语义版本再按时间戳排序，拒绝负版本/残缺版本/畸形时间戳。
+- 修复：provider 配置中 `enabled` 与布尔查询选项必须是 JSON boolean，拒绝字符串 `"false"` 与 `0`/`1` 静默转真；`max_attempts`/`retry_delay`/TTL 等数值拒绝 NaN/Inf 与 timedelta 溢出，错误以字段级 ValueError 返回而非 OverflowError 回溯；CLI 活动窗口与等级阈值拒绝非法/非有限/过大 day 窗口。
+- 修复：ICP 接口返回 `resultCode=3003` 或 `身份校验失败` 时记为 `error`，不再当成「已查询且无备案」的成功负结果。这类失败不会清空 IOC Info 上的备案号，也不会单独证明当前无备案。研判结果缓存契约升级为 `9`。既有失败缓存仍可复用为 error，默认不因此全量重打 ICP；要拿到真实当前备案需凭证有效后 `--refresh` 或清除 `.cache_icp`。
+- 变更：普通路由把「仿冒网站」「仿冒下载」、`family=phishingsite` 以及公开钓鱼源（openphish / phishtank / maltrail / high-confidence-osint，含接口常见拼写 `hign-confidence-osint`）与「黑产/扩展/扩线」同级直接判黑。`钓鱼站点` 和 `family=phish` 不因此打黑或打白。域名 IOC 的 URL 作用范围灰出口改看最新记录等级，不再被历史更高 level 挡住；URL IOC 仍可因匹配的 `relate_url` 判黑。
+- 修复：share 严格扫描不再把包名或 `*.so` 被 token 化后剩下的 `/lib/` 当成 Unix 路径。助手「脱敏并复制」不会因此失败；`/home/.../file` 这类带文件名的路径仍会脱敏。
+- 修复：Go HTTP worker 按块拉起进程。一块崩溃、非 JSON 输出或非零退出时，只把该块未返回的请求记为 `error`，后续块继续；不再把整路 K01/IOC Info 打成 `failed after` 并全员待复核。
+- 变更：统一模式按本机物理内存封顶并发。约 4 GiB 使用 HTTP workers 2、跨 provider 并发 2、每进程 4 个 HTTP 任务；约 8 GiB 为 4/3/8；更大内存保持原默认。启动打印 `Memory:`。`IOC_REJUDGE_MEMORY_PROFILE=full` 关闭封顶，`low` 强制低内存档。
+- 变更：provider 原始缓存内存索引不再驻留整份 `raw` 响应，只保留文件偏移；物理 JSONL 格式不变。
+- 验证：Python 全量测试 `1140 passed, 1 skipped`；Go 测试通过；`python pack.py --check` 检查 144 个发布文件；`python -m compileall -q ioc_rejudge` 通过。发布包内容、manifest、禁入项和 SHA-256 在打包后复核。
+
 ## 2.6.0 - 2026-09-10
 
 - 修复：统一时间边界。legacy/ISO-8601 时间在比较前归一化为 UTC，aware/naive 可安全混用；`recent`/`fresh` 精确端点包含，未来、无效和负 Unix 时间不能满足近期或缓存新鲜条件；一次 pipeline 使用同一评估时刻完成证据、裁判和结果序列化。

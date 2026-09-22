@@ -19,6 +19,9 @@ class JsonlReadResult:
     records: list[dict]
     skipped: int = 0
     parse_error_samples: list[str] = field(default_factory=list)
+    nested_data_error_count: int = 0
+    # Physical 1-based file line number for each accepted record (parallel list).
+    record_line_numbers: list[int] = field(default_factory=list)
 
 
 def parse_time(value: object) -> datetime | None:
@@ -160,6 +163,51 @@ def is_unexpired(value: object, now: object) -> bool:
     )
 
 
+def _accept_snapshot_object(
+    parsed: object,
+    *,
+    line_no: int,
+    raw_preview: str,
+    sample_limit: int,
+    parse_error_samples: list[str],
+) -> tuple[dict | None, int]:
+    """Accept a top-level snapshot object and sanitize nested data entries.
+
+    Returns ``(row_or_none, nested_dropped_count)``. Non-object JSON values are
+    rejected as malformed rows. Nested non-object ``data`` entries are dropped
+    so one bad entry cannot abort the batch; the dropped count is unbounded
+    while diagnostic samples remain bounded.
+    """
+    if not isinstance(parsed, dict):
+        if len(parse_error_samples) < sample_limit:
+            kind = type(parsed).__name__ if parsed is not None else "null"
+            parse_error_samples.append(
+                f"line {line_no}: expected JSON object, got {kind}: {raw_preview[:200]}"
+            )
+        return None, 0
+
+    row = dict(parsed)
+    nested_dropped = 0
+    if "data" in row:
+        data = row["data"]
+        if isinstance(data, list):
+            cleaned: list[dict] = []
+            for entry in data:
+                if isinstance(entry, dict):
+                    cleaned.append(entry)
+                else:
+                    nested_dropped += 1
+            row["data"] = cleaned
+            if nested_dropped and len(parse_error_samples) < sample_limit:
+                ioc_name = row.get("ioc", "unknown")
+                parse_error_samples.append(
+                    f"line {line_no}: dropped {nested_dropped} non-object data "
+                    f"entr{'y' if nested_dropped == 1 else 'ies'} for {ioc_name!r}"
+                )
+        # Non-list data is left for pipeline diagnostics (non_list_data_count).
+    return row, nested_dropped
+
+
 def read_jsonl_snapshot_with_diagnostics(filepath: str, sample_limit: int = 20) -> JsonlReadResult:
     """Read JSONL snapshot file with bounded parse error samples."""
     path = Path(filepath)
@@ -176,31 +224,50 @@ def read_jsonl_snapshot_with_diagnostics(filepath: str, sample_limit: int = 20) 
         raise ValueError(f"Cannot decode file with UTF-8 or GBK: {filepath}")
 
     results = []
+    record_line_numbers: list[int] = []
     skipped = 0
+    nested_data_error_count = 0
     parse_error_samples = []
     for line_no, line in enumerate(text.splitlines(), 1):
         line = line.strip()
         if not line:
             continue
+        parsed = None
         try:
             parsed = json.loads(line)
-            results.append(parsed)
-            continue
         except json.JSONDecodeError:
-            pass
-        match = re.search(r'\{.*\}', line, re.DOTALL)
-        if match:
-            try:
-                parsed = json.loads(match.group())
-                results.append(parsed)
-                continue
-            except json.JSONDecodeError:
-                pass
-        skipped += 1
-        if len(parse_error_samples) < sample_limit:
-            parse_error_samples.append(f"line {line_no}: {line[:200]}")
+            match = re.search(r'\{.*\}', line, re.DOTALL)
+            if match:
+                try:
+                    parsed = json.loads(match.group())
+                except json.JSONDecodeError:
+                    parsed = None
+        if parsed is None:
+            skipped += 1
+            if len(parse_error_samples) < sample_limit:
+                parse_error_samples.append(f"line {line_no}: {line[:200]}")
+            continue
+        accepted, nested_dropped = _accept_snapshot_object(
+            parsed,
+            line_no=line_no,
+            raw_preview=line,
+            sample_limit=sample_limit,
+            parse_error_samples=parse_error_samples,
+        )
+        nested_data_error_count += nested_dropped
+        if accepted is None:
+            skipped += 1
+            continue
+        results.append(accepted)
+        record_line_numbers.append(line_no)
 
-    return JsonlReadResult(results, skipped, parse_error_samples)
+    return JsonlReadResult(
+        results,
+        skipped,
+        parse_error_samples,
+        nested_data_error_count=nested_data_error_count,
+        record_line_numbers=record_line_numbers,
+    )
 
 
 def read_jsonl_snapshot(filepath: str) -> tuple[list[dict], int]:

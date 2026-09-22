@@ -14,7 +14,7 @@ def test_reads_bare_ioc_file_and_preserves_order(tmp_path):
     bundle = read_input_bundle(str(path), inline_iocs=["10.0.0.1:443"])
     assert bundle.kind == InputKind.IOC_LIST
     assert [target.normalized for target in bundle.targets] == [
-        "example.invalid", "example.invalid/a", "10.0.0.1:443",
+        "example.invalid", "https://example.invalid/a", "10.0.0.1:443",
     ]
 
 
@@ -74,7 +74,39 @@ def test_domain_and_url_are_different_targets(tmp_path):
     bundle = read_input_bundle(str(path))
     assert len(bundle.targets) == 2
     assert bundle.targets[0].normalized == "example.invalid"
-    assert bundle.targets[1].normalized == "example.invalid/path"
+    assert bundle.targets[1].normalized == "https://example.invalid/path"
+    assert bundle.targets[1].scheme == "https"
+
+
+def test_bare_domain_http_and_https_are_three_targets():
+    forward = read_input_bundle(
+        None, ["case.invalid", "http://case.invalid", "https://case.invalid"]
+    )
+    reverse = read_input_bundle(
+        None, ["https://case.invalid", "http://case.invalid", "case.invalid"]
+    )
+    assert [t.normalized for t in forward.targets] == [
+        "case.invalid",
+        "http://case.invalid",
+        "https://case.invalid",
+    ]
+    assert [t.ioc_type for t in forward.targets] == ["domain", "url", "url"]
+    assert {t.normalized for t in reverse.targets} == {
+        "case.invalid",
+        "http://case.invalid",
+        "https://case.invalid",
+    }
+    assert len(reverse.targets) == 3
+
+
+def test_http_and_https_same_path_remain_distinct():
+    bundle = read_input_bundle(
+        None, ["http://case.invalid/a", "https://case.invalid/a"]
+    )
+    assert [t.normalized for t in bundle.targets] == [
+        "http://case.invalid/a",
+        "https://case.invalid/a",
+    ]
 
 
 def test_ip_and_ip_port_are_different_targets(tmp_path):

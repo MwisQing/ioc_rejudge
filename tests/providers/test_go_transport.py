@@ -11,6 +11,7 @@ import pytest
 
 from ioc_rejudge.providers.go_transport import (
     BatchRequest,
+    BatchResult,
     GoBatchTransport,
     default_executable,
 )
@@ -95,6 +96,41 @@ def test_default_executable_is_bundled_binary():
     path = default_executable()
     assert path.name in {"provider_http", "provider_http.exe"}
     assert path.parent.name == "bin"
+
+
+def test_jobs_per_process_must_be_positive():
+    with pytest.raises(ValueError, match="positive integer"):
+        GoBatchTransport(jobs_per_process=0)
+
+
+def test_chunk_failure_keeps_later_chunks(tmp_path, monkeypatch):
+    transport = GoBatchTransport(tmp_path / "unused.exe", jobs_per_process=2)
+    monkeypatch.setattr(GoBatchTransport, "available", True)
+    chunks: list[list[str]] = []
+
+    def fake_chunk(self, requests, *, workers, rate_per_second):
+        del workers, rate_per_second
+        chunks.append([job.id for job in requests])
+        if requests[0].id == "0":
+            raise RuntimeError("Go HTTP worker failed: exit code 2")
+        for job in requests:
+            yield BatchResult(job.id, payload={"id": job.id})
+
+    monkeypatch.setattr(GoBatchTransport, "_iter_chunk", fake_chunk)
+    jobs = [
+        BatchRequest(str(index), "GET", "http://example.invalid")
+        for index in range(5)
+    ]
+    results = list(transport.iter_batch(jobs, workers=2, rate_per_second=10))
+    by_id = {result.id: result for result in results}
+
+    assert chunks == [["0", "1"], ["2", "3"], ["4"]]
+    assert by_id["0"].error is not None
+    assert by_id["1"].error is not None
+    assert "exit code 2" in str(by_id["0"].error)
+    assert by_id["2"].payload == {"id": "2"}
+    assert by_id["3"].payload == {"id": "3"}
+    assert by_id["4"].payload == {"id": "4"}
 
 
 def test_missing_worker_fails_before_spawning(tmp_path):

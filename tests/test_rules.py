@@ -19,7 +19,19 @@ def test_load_rules_default():
     assert "dns" not in rules.strong_malicious_indicators
     assert "sample" not in rules.strong_malicious_indicators
     assert rules.authoritative_clue_indicators == ["线索群"]
-    assert rules.authoritative_context_indicators == ["黑产", "扩展", "扩线"]
+    assert rules.authoritative_context_indicators == [
+        "黑产",
+        "扩展",
+        "扩线",
+        "仿冒网站",
+        "仿冒下载",
+        "phishingsite",
+        "openphish",
+        "phishtank",
+        "maltrail",
+        "hign-confidence-osint",
+        "high-confidence-osint",
+    ]
     assert "恶意" in rules.context_comment_malicious_indicators
     assert rules.operator_sources == ["manual", "alliocs_tpd"]
 
@@ -27,7 +39,19 @@ def test_load_rules_default():
 def test_load_rules_deployment_defaults_match_builtin():
     rules = load_rules("rules/default_rules.json")
     assert rules.authoritative_clue_indicators == ["线索群"]
-    assert rules.authoritative_context_indicators == ["黑产", "扩展", "扩线"]
+    assert rules.authoritative_context_indicators == [
+        "黑产",
+        "扩展",
+        "扩线",
+        "仿冒网站",
+        "仿冒下载",
+        "phishingsite",
+        "openphish",
+        "phishtank",
+        "maltrail",
+        "hign-confidence-osint",
+        "high-confidence-osint",
+    ]
     assert "恶意" in rules.context_comment_malicious_indicators
     assert rules.operator_sources == ["manual", "alliocs_tpd"]
 

@@ -25,6 +25,11 @@ from ioc_rejudge.providers.base import (
 )
 from ioc_rejudge.providers.cache import CacheEntry, JsonlProviderCache
 from ioc_rejudge.providers.go_transport import BatchRequest, GoBatchTransport
+from ioc_rejudge.providers.redaction import (
+    redact_secret_values,
+    safe_text,
+    secret_values,
+)
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import RequestsTransport, TransportError
 
@@ -205,6 +210,15 @@ class IOCInfoProvider:
     def _cache_ref(self, entry: CacheEntry) -> str:
         return f"cache:{self.name}:{entry.key}"
 
+    def _secret_values(self) -> tuple[str, ...]:
+        return secret_values(self.settings.secrets)
+
+    def _sanitize_response(self, response: object) -> object:
+        return redact_secret_values(response, self._secret_values())
+
+    def _safe_error(self, message: object) -> str:
+        return safe_text(message, self._secret_values())
+
     def _observations(
         self,
         target: IocTarget,
@@ -236,7 +250,8 @@ class IOCInfoProvider:
         target: IocTarget,
         entry: CacheEntry,
     ) -> tuple[ProviderStatus, list[Observation]]:
-        records = normalize_payload([target.original], entry.raw)[target.original]
+        raw = self._sanitize_response(entry.raw)
+        records = normalize_payload([target.original], raw)[target.original]
         status = ProviderStatus.SUCCESS if records else ProviderStatus.NO_DATA
         freshness = Freshness.FRESH if entry.fresh else Freshness.STALE
         observations = self._observations(
@@ -262,9 +277,13 @@ class IOCInfoProvider:
                 response,
                 self.cache_params(target),
                 fetched_at=fetched_at,
+                secret_values=self._secret_values(),
             )
         except (OSError, TypeError, ValueError) as exc:
-            return "", f"cache write failed for {target.normalized}: {exc}"
+            return (
+                "",
+                f"cache write failed for {target.normalized}: {self._safe_error(exc)}",
+            )
         return self._cache_ref(entry), None
 
     def collect(
@@ -299,7 +318,10 @@ class IOCInfoProvider:
                     self.cache_params(target),
                     now=self.now_fn(),
                 )
-                errors.extend(f"cache: {message}" for message in self.cache.diagnostics)
+                errors.extend(
+                    f"cache: {self._safe_error(message)}"
+                    for message in self.cache.diagnostics
+                )
             if entry is not None and (entry.fresh or context.offline):
                 status, cached_observations = self._consume_cache(target, entry)
                 statuses[target.normalized] = status
@@ -356,11 +378,12 @@ class IOCInfoProvider:
                             statuses[target.normalized] = ProviderStatus.ERROR
                             done += 1
                             report_progress(context, self.name, done, total)
-                        errors.append(str(result.error))
+                        errors.append(self._safe_error(result.error))
                         continue
                     fetched_at = self.now_fn()
                     requested = [target.original for target in group]
-                    normalized = normalize_payload(requested, result.payload)
+                    response = self._sanitize_response(result.payload)
+                    normalized = normalize_payload(requested, response)
                     empty: list[IocTarget] = []
                     for target in group:
                         records = normalized[target.original]
@@ -368,7 +391,7 @@ class IOCInfoProvider:
                             empty.append(target)
                             continue
                         raw_ref, cache_error = self._store_response(
-                            target, result.payload, fetched_at
+                            target, response, fetched_at
                         )
                         if cache_error:
                             statuses[target.normalized] = ProviderStatus.ERROR
@@ -406,16 +429,18 @@ class IOCInfoProvider:
                 attempt += 1
                 requested = [target.original for target in retry_targets]
                 try:
-                    response = self.transport.post_json(
-                        self.settings.base_url,
-                        headers=dict(self.settings.secrets),
-                        body=build_payload(retry_targets),
-                        timeout=self.settings.timeout,
+                    response = self._sanitize_response(
+                        self.transport.post_json(
+                            self.settings.base_url,
+                            headers=dict(self.settings.secrets),
+                            body=build_payload(retry_targets),
+                            timeout=self.settings.timeout,
+                        )
                     )
                 except TransportError as exc:
                     for target in retry_targets:
                         statuses[target.normalized] = ProviderStatus.ERROR
-                    errors.append(str(exc))
+                    errors.append(self._safe_error(exc))
                     retry_targets = []
                     break
 

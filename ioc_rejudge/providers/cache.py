@@ -9,7 +9,9 @@ import json
 from pathlib import Path
 import re
 from threading import Lock
-from typing import Any
+from typing import Any, Sequence
+
+from ioc_rejudge.providers.redaction import REDACTED, redact_secret_values
 
 from ioc_rejudge.normalize import normalize_ioc
 from ioc_rejudge.parser import is_fresh, normalize_datetime, parse_time
@@ -44,6 +46,13 @@ class CacheEntry:
         return not self.fresh
 
 
+@dataclass(frozen=True)
+class _IndexHit:
+    path: str
+    offset: int
+    fetched_at: datetime
+
+
 class JsonlProviderCache:
     """Append raw provider responses and retrieve the newest matching row."""
 
@@ -73,7 +82,7 @@ class JsonlProviderCache:
         self.diagnostics: list[str] = []
         self._index_lock = Lock()
         self._index_signature: tuple[tuple[str, int, int], ...] | None = None
-        self._index: dict[str, tuple[dict, datetime]] = {}
+        self._index: dict[str, _IndexHit] = {}
         self._index_diagnostics: list[str] = []
 
     @property
@@ -137,19 +146,21 @@ class JsonlProviderCache:
         return any(part in lowered for part in _SENSITIVE_KEY_PARTS)
 
     @classmethod
-    def _redact(cls, value: Any) -> Any:
+    def _redact(cls, value: Any, secret_values: Sequence[str] = ()) -> Any:
         if isinstance(value, dict):
             return {
-                str(key): (
-                    "[REDACTED]" if cls._is_sensitive_key(key) else cls._redact(item)
+                str(redact_secret_values(key, secret_values)): (
+                    REDACTED
+                    if cls._is_sensitive_key(key)
+                    else cls._redact(item, secret_values)
                 )
                 for key, item in value.items()
             }
         if isinstance(value, list):
-            return [cls._redact(item) for item in value]
+            return [cls._redact(item, secret_values) for item in value]
         if isinstance(value, tuple):
-            return [cls._redact(item) for item in value]
-        return value
+            return [cls._redact(item, secret_values) for item in value]
+        return redact_secret_values(value, secret_values)
 
     def key(self, ioc: str, params: dict | None = None) -> str:
         shape = {
@@ -165,6 +176,8 @@ class JsonlProviderCache:
         raw: Any,
         params: dict | None = None,
         fetched_at: datetime | None = None,
+        *,
+        secret_values: Sequence[str] = (),
     ) -> CacheEntry:
         normalized = self._normalize_ioc(ioc)
         query_params = dict(params or {})
@@ -172,34 +185,39 @@ class JsonlProviderCache:
         if not isinstance(fetched, datetime) or normalize_datetime(fetched) is None:
             raise TypeError("fetched_at must be a datetime")
         cache_key = self.key(normalized, query_params)
-        stored_params = self._redact(query_params)
-        stored_raw = self._redact(raw)
+        # Key material uses the original IOC/params; persisted/returned
+        # surfaces are sanitized with sensitive-key and configured-value
+        # redaction only.
+        stored_params = self._redact(query_params, secret_values)
+        stored_raw = self._redact(raw, secret_values)
+        stored_ioc = str(self._redact(normalized, secret_values))
         row = {
             "key": cache_key,
-            "ioc": normalized,
+            "ioc": stored_ioc,
             "params": stored_params,
             "fetched_at": fetched.isoformat(),
             "raw": stored_raw,
         }
-        line = self._stable_json(row) + "\n"
+        encoded = (self._stable_json(row) + "\n").encode("utf-8")
         path = self._path_for(fetched)
         lock = self._lock_for(path)
         with lock:
-            with path.open("a", encoding="utf-8", newline="") as handle:
-                handle.write(line)
+            offset = path.stat().st_size if path.is_file() else 0
+            with path.open("ab") as handle:
+                handle.write(encoded)
                 handle.flush()
         with self._index_lock:
             if self._index_signature is not None:
                 latest = self._index.get(cache_key)
                 if latest is None or self._utc_naive(fetched) >= self._utc_naive(
-                    latest[1]
+                    latest.fetched_at
                 ):
-                    self._index[cache_key] = (row, fetched)
+                    self._index[cache_key] = _IndexHit(str(path), offset, fetched)
                 self._index_signature = self._paths_signature(self._read_paths())
         self.path = path
         return CacheEntry(
             key=cache_key,
-            ioc=normalized,
+            ioc=stored_ioc,
             params=stored_params,
             fetched_at=fetched,
             raw=stored_raw,
@@ -220,6 +238,23 @@ class JsonlProviderCache:
     def _is_fresh(self, fetched_at: datetime, now: datetime) -> bool:
         return is_fresh(fetched_at, now, self.ttl)
 
+    def _read_shard_bytes(self, path: Path) -> bytes:
+        with self._lock_for(path):
+            return path.read_bytes()
+
+    def _read_row_at(self, path: Path, offset: int) -> dict | None:
+        with self._lock_for(path):
+            with path.open("rb") as handle:
+                handle.seek(offset)
+                raw_line = handle.readline()
+        if not raw_line.strip():
+            return None
+        try:
+            row = json.loads(raw_line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        return row if isinstance(row, dict) else None
+
     def _ensure_index(self) -> None:
         paths = self._read_paths()
         signature = self._paths_signature(paths)
@@ -232,24 +267,42 @@ class JsonlProviderCache:
             if self._index_signature == signature:
                 self.diagnostics = list(self._index_diagnostics)
                 return
-            index: dict[str, tuple[dict, datetime]] = {}
+            index: dict[str, _IndexHit] = {}
             diagnostics: list[str] = []
             required = {"key", "ioc", "params", "fetched_at", "raw"}
             for path in paths:
                 try:
-                    with self._lock_for(path):
-                        lines = path.read_text(encoding="utf-8").splitlines()
-                except (OSError, UnicodeDecodeError) as exc:
+                    data = self._read_shard_bytes(path)
+                except OSError as exc:
                     diagnostics.append(f"{path.name}: cache read failed: {exc}")
                     continue
-                for line_no, line in enumerate(lines, 1):
-                    if not line.strip():
+                offset = 0
+                line_no = 0
+                while offset < len(data):
+                    newline = data.find(b"\n", offset)
+                    if newline == -1:
+                        chunk = data[offset:]
+                        next_offset = len(data)
+                    else:
+                        chunk = data[offset:newline]
+                        next_offset = newline + 1
+                    line_no += 1
+                    line_offset = offset
+                    offset = next_offset
+                    if chunk.endswith(b"\r"):
+                        chunk = chunk[:-1]
+                    if not chunk.strip():
                         continue
                     try:
-                        row = json.loads(line)
-                    except json.JSONDecodeError as exc:
+                        row = json.loads(chunk.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        message = (
+                            exc.msg
+                            if isinstance(exc, json.JSONDecodeError)
+                            else str(exc)
+                        )
                         diagnostics.append(
-                            f"{path.name}: line {line_no}: bad JSON: {exc.msg}"
+                            f"{path.name}: line {line_no}: bad JSON: {message}"
                         )
                         continue
                     if not isinstance(row, dict) or not required.issubset(row):
@@ -266,9 +319,9 @@ class JsonlProviderCache:
                     key = str(row.get("key", ""))
                     latest = index.get(key)
                     if latest is None or self._utc_naive(fetched) >= self._utc_naive(
-                        latest[1]
+                        latest.fetched_at
                     ):
-                        index[key] = (row, fetched)
+                        index[key] = _IndexHit(str(path), line_offset, fetched)
             self._index = index
             self._index_diagnostics = diagnostics
             self._index_signature = signature
@@ -288,7 +341,13 @@ class JsonlProviderCache:
         latest = self._index.get(expected_key)
         if latest is None:
             return None
-        row, fetched = latest
+        row = self._read_row_at(Path(latest.path), latest.offset)
+        if row is None:
+            self.diagnostics = [
+                *self.diagnostics,
+                f"cache row missing for {expected_key}",
+            ]
+            return None
         current = now or datetime.now(timezone.utc)
         if not isinstance(current, datetime):
             raise TypeError("now must be a datetime")
@@ -296,7 +355,51 @@ class JsonlProviderCache:
             key=str(row["key"]),
             ioc=str(row["ioc"]),
             params=dict(row["params"]) if isinstance(row["params"], dict) else {},
-            fetched_at=fetched,
+            fetched_at=latest.fetched_at,
             raw=row["raw"],
-            fresh=self._is_fresh(fetched, current),
+            fresh=self._is_fresh(latest.fetched_at, current),
         )
+
+    def entry_dependency(self, ioc: str, params: dict | None = None) -> str:
+        """Stable digest of the latest row for one query key, or an absence marker.
+
+        Reads only the indexed row for this key so fingerprinting many targets
+        does not re-parse whole shards. Absence is part of the digest so
+        genuinely vanished shard rows invalidate completed results that
+        depended on them.
+        """
+        query_params = dict(params or {})
+        try:
+            normalized = self._normalize_ioc(ioc)
+        except ValueError:
+            return "invalid-ioc"
+        expected_key = self.key(normalized, query_params)
+        self._ensure_index()
+        latest = self._index.get(expected_key)
+        if latest is None:
+            return f"absent:{expected_key}"
+        row = self._read_row_at(Path(latest.path), latest.offset)
+        if row is None:
+            return f"missing-row:{expected_key}"
+        shape = {
+            "key": expected_key,
+            "ioc": str(row.get("ioc", "")),
+            "params": row.get("params"),
+            "fetched_at": self._utc_naive(latest.fetched_at).isoformat(),
+            "raw": row.get("raw"),
+        }
+        return hashlib.sha256(self._stable_json(shape).encode("utf-8")).hexdigest()
+
+    def dependency_digest(
+        self,
+        queries: list[tuple[str, dict]] | None = None,
+    ) -> str:
+        """Combine digests for multiple ``(ioc, params)`` queries in stable order."""
+        if not queries:
+            return "no-queries"
+        parts = [
+            self.entry_dependency(ioc, params)
+            for ioc, params in queries
+        ]
+        encoded = self._stable_json(parts).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()

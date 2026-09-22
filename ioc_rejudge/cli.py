@@ -19,6 +19,12 @@ if __package__ in (None, ""):
 
 from ioc_rejudge.config import Config, load_config
 from ioc_rejudge.diff import compare_verdicts
+from ioc_rejudge.files import (
+    assert_path_writable,
+    atomic_write_text,
+    path_in_set,
+    resolve_path,
+)
 from ioc_rejudge.inputs import InputKind, read_input_bundle
 from ioc_rejudge.models import Evidence, IocDossier
 from ioc_rejudge.parser import read_jsonl_snapshot_with_diagnostics
@@ -35,6 +41,11 @@ from ioc_rejudge.providers.factory import (
     load_result_cache_settings,
     parse_provider_names,
 )
+from ioc_rejudge.providers.memory import (
+    MemoryLimits,
+    cap_positive_int,
+    detect_memory_limits,
+)
 from ioc_rejudge.providers.sidecar import SidecarProvider
 from ioc_rejudge.result_cache import AdjudicationResultCache
 
@@ -47,6 +58,7 @@ class Diagnostics:
     input_path: str = ""
     processed_count: int = 0
     parse_error_count: int = 0
+    nested_data_error_count: int = 0
     missing_data_count: int = 0
     empty_data_count: int = 0
     non_list_data_count: int = 0
@@ -240,6 +252,7 @@ def run_pipeline_with_diagnostics(input_path: str, config: Config) -> PipelineRe
     data = read_result.records
     parse_skipped = read_result.skipped
     diag.parse_error_count = parse_skipped
+    diag.nested_data_error_count = read_result.nested_data_error_count
     diag.parse_error_samples = read_result.parse_error_samples
 
     if not data and parse_skipped > 0:
@@ -254,6 +267,19 @@ def run_pipeline_with_diagnostics(input_path: str, config: Config) -> PipelineRe
     verdicts = []
 
     for row in data:
+        if not isinstance(row, dict):
+            diag.parse_error_count += 1
+            if len(diag.parse_error_samples) < _SAMPLE_LIMIT:
+                kind = type(row).__name__ if row is not None else "null"
+                diag.parse_error_samples.append(
+                    f"expected JSON object row, got {kind}"
+                )
+            print(
+                f"WARNING: skipping non-object snapshot row ({type(row).__name__})",
+                file=sys.stderr,
+            )
+            continue
+
         records = row.get("data")
         ioc_name = row.get("ioc", "unknown")
 
@@ -269,6 +295,22 @@ def run_pipeline_with_diagnostics(input_path: str, config: Config) -> PipelineRe
                 diag.skipped_row_samples.append(f"data not list: {ioc_name}")
             print(f"WARNING: row '{ioc_name}' 'data' is not a list", file=sys.stderr)
             continue
+        # Nested non-dict entries should already be filtered at parse time;
+        # keep a defensive filter so one bad entry never aborts the batch.
+        cleaned_records = []
+        nested_dropped = 0
+        for entry in records:
+            if isinstance(entry, dict):
+                cleaned_records.append(entry)
+            else:
+                nested_dropped += 1
+        if nested_dropped:
+            diag.nested_data_error_count += nested_dropped
+            if len(diag.parse_error_samples) < _SAMPLE_LIMIT:
+                diag.parse_error_samples.append(
+                    f"dropped {nested_dropped} non-object data entries for {ioc_name!r}"
+                )
+        records = cleaned_records
         if not records:
             diag.empty_data_count += 1
             if len(diag.skipped_row_samples) < _SAMPLE_LIMIT:
@@ -352,6 +394,7 @@ def run_pipeline_with_diagnostics(input_path: str, config: Config) -> PipelineRe
             "hit_evidence": verdict.hit_evidence,
             "forbidden_labels": verdict.forbidden_labels,
             "reason": verdict.reason,
+            "classification_unknown": False,
         })
 
     diag.processed_count = len(verdicts)
@@ -385,6 +428,7 @@ def _diagnostics_data(diag: Diagnostics | PipelineDiagnostics) -> dict:
         "input_path": diag.input_path,
         "processed_count": diag.processed_count,
         "parse_error_count": diag.parse_error_count,
+        "nested_data_error_count": diag.nested_data_error_count,
         "missing_data_count": diag.missing_data_count,
         "empty_data_count": diag.empty_data_count,
         "non_list_data_count": diag.non_list_data_count,
@@ -398,12 +442,33 @@ def _diagnostics_data(diag: Diagnostics | PipelineDiagnostics) -> dict:
 
 def export_diagnostics(diag: Diagnostics | PipelineDiagnostics, filepath: str):
     """Export diagnostics to JSON file."""
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(_diagnostics_data(diag), f, ensure_ascii=False, indent=2)
+    payload = json.dumps(_diagnostics_data(diag), ensure_ascii=False, indent=2)
+    try:
+        atomic_write_text(filepath, payload + "\n", encoding="utf-8")
+    except OSError as exc:
+        raise OSError(f"failed to write diagnostics {filepath}: {exc}") from exc
 
 
 def _default_diagnostics_path(input_path: str) -> str:
     return os.path.splitext(input_path)[0] + "_diagnostics.json"
+
+
+def _primary_output_base(args: argparse.Namespace) -> str:
+    if args.jsonl:
+        return os.path.splitext(args.jsonl)[0]
+    if args.csv:
+        return os.path.splitext(args.csv)[0]
+    return os.path.splitext(args.input or "ioc_rejudge")[0] + "_result"
+
+
+def _resolve_diagnostics_path(args: argparse.Namespace) -> str:
+    """Always produce a diagnostics path; prefer explicit --diagnostics."""
+    if args.diagnostics:
+        return args.diagnostics
+    if args.jsonl or args.csv:
+        return _primary_output_base(args) + "_diagnostics.json"
+    # Preserve historical Excel-mode naming next to the input snapshot/list.
+    return _default_diagnostics_path(args.input or "ioc_rejudge")
 
 
 def _maybe_export_diagnostics(
@@ -479,6 +544,22 @@ def _format_ttl(seconds: float) -> str:
     return f"{seconds:g}s"
 
 
+def _print_memory_startup(limits: MemoryLimits) -> None:
+    if limits.total_bytes and limits.total_bytes > 0:
+        ram = f"{limits.total_bytes / (1024 ** 3):.1f} GiB"
+    else:
+        ram = "unknown"
+    caps = []
+    if limits.http_workers:
+        caps.append(f"HTTP workers<={limits.http_workers}")
+    if limits.provider_workers:
+        caps.append(f"provider workers<={limits.provider_workers}")
+    if limits.go_jobs_per_process:
+        caps.append(f"Go jobs/process={limits.go_jobs_per_process}")
+    suffix = ", ".join(caps) if caps else "no concurrency cap"
+    print(f"Memory: {ram}; {suffix}")
+
+
 def _print_cache_startup(
     cache_path: Path,
     *,
@@ -541,23 +622,27 @@ def _load_diff_baseline(
 
 
 def _default_diff_path(args: argparse.Namespace) -> str:
-    if args.jsonl:
-        base = os.path.splitext(args.jsonl)[0]
-    elif args.csv:
-        base = os.path.splitext(args.csv)[0]
-    else:
-        base = os.path.splitext(args.input or "ioc_rejudge")[0] + "_result"
-    return base + "_diff.json"
+    return _primary_output_base(args) + "_diff.json"
 
 
-def _export_diff_report(baseline: list[dict], verdicts: list[dict], args) -> None:
+def _export_diff_report(
+    baseline: list[dict],
+    verdicts: list[dict],
+    args,
+    *,
+    diff_path: str | None = None,
+) -> None:
     report = compare_verdicts(baseline, verdicts)
-    diff_path = args.diff_output or _default_diff_path(args)
-    with open(diff_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
-    print(f"Diff report written to {diff_path}")
+    target = diff_path or args.diff_output or _default_diff_path(args)
+    payload = json.dumps(report, ensure_ascii=False, indent=2)
+    try:
+        atomic_write_text(target, payload + "\n", encoding="utf-8")
+    except OSError as exc:
+        raise OSError(f"failed to write diff report {target}: {exc}") from exc
+    print(f"Diff report written to {target}")
     print(
         "Diff vs baseline: "
+        f"operations={report['operations']} "
         f"changed={len(report['changed'])} "
         f"black_to_white={len(report['black_to_white'])} "
         f"white_to_black={len(report['white_to_black'])} "
@@ -566,6 +651,134 @@ def _export_diff_report(baseline: list[dict], verdicts: list[dict], args) -> Non
         f"only_before={len(report['only_before'])} "
         f"only_after={len(report['only_after'])}"
     )
+
+
+def _collect_reference_paths(args: argparse.Namespace) -> list[str]:
+    paths: list[str] = []
+    for value in (
+        args.input,
+        args.diff_baseline,
+        args.rules,
+        args.provider_config,
+        args.credentials_file,
+    ):
+        if value:
+            paths.append(value)
+    for value in args.provider_data or []:
+        if "=" in value:
+            _, raw_path = value.split("=", 1)
+            raw_path = raw_path.strip()
+            if raw_path:
+                paths.append(raw_path)
+    return paths
+
+
+def _planned_output_paths(args: argparse.Namespace) -> dict[str, str]:
+    """Resolve every output destination before provider collection starts."""
+    outputs: dict[str, str] = {}
+    if args.jsonl:
+        outputs["jsonl"] = args.jsonl
+    if args.csv:
+        outputs["csv"] = args.csv
+    if not args.jsonl and not args.csv:
+        base = os.path.splitext(args.input or "ioc_rejudge")[0]
+        outputs["excel"] = base + "_result.xlsx"
+    outputs["diagnostics"] = _resolve_diagnostics_path(args)
+    if args.diff_baseline:
+        outputs["diff"] = args.diff_output or _default_diff_path(args)
+    return outputs
+
+
+def _preflight_output_paths(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> dict[str, str]:
+    """Reject input/output collisions and ensure destinations are writable."""
+    outputs = _planned_output_paths(args)
+    references = _collect_reference_paths(args)
+
+    # Output-output collisions.
+    seen: dict[str, str] = {}
+    for label, path in outputs.items():
+        try:
+            key = str(resolve_path(path))
+        except OSError as exc:
+            parser.error(f"invalid {label} output path {path}: {exc}")
+        if key in seen:
+            parser.error(
+                f"output path collision: {label} and {seen[key]} both resolve "
+                f"to {path}"
+            )
+        seen[key] = label
+
+    # Never overwrite inputs, baselines, rules, configs, credentials, or sidecars.
+    for label, path in outputs.items():
+        hit = path_in_set(path, references)
+        if hit is not None:
+            parser.error(
+                f"{label} output path must not overwrite input/reference file: "
+                f"{path}"
+            )
+
+    for label, path in outputs.items():
+        try:
+            assert_path_writable(path)
+        except OSError as exc:
+            parser.error(str(exc))
+    return outputs
+
+
+def _strict_failure_reasons(diag: Diagnostics | PipelineDiagnostics) -> list[str]:
+    """Return transport/processing failure reasons for --strict exit status.
+
+    Ordinary business pending-review conclusions are not treated as failures.
+    """
+    reasons: list[str] = []
+    input_errors = getattr(diag, "input_errors", None) or []
+    invalid_ioc_errors = [
+        item for item in input_errors if "invalid IOC" in str(item)
+    ]
+    if invalid_ioc_errors:
+        reasons.append(f"rejected input lines: {len(invalid_ioc_errors)}")
+    elif input_errors and not getattr(diag, "parse_error_count", 0) and not getattr(
+        diag, "nested_data_error_count", 0
+    ):
+        # Unified diagnostics may only carry sample strings for other rejects.
+        reasons.append(f"rejected input lines: {len(input_errors)}")
+
+    parse_errors = int(getattr(diag, "parse_error_count", 0) or 0)
+    if parse_errors:
+        reasons.append(f"parse errors: {parse_errors}")
+
+    nested_errors = int(getattr(diag, "nested_data_error_count", 0) or 0)
+    if nested_errors:
+        reasons.append(f"nested data errors: {nested_errors}")
+
+    skipped = int(getattr(diag, "skipped_total", 0) or 0)
+    data_issues = skipped - parse_errors
+    if data_issues > 0:
+        reasons.append(f"skipped snapshot rows: {data_issues}")
+
+    provider_errors = getattr(diag, "provider_errors", None) or {}
+    if provider_errors:
+        total = sum(len(items) for items in provider_errors.values())
+        reasons.append(f"provider errors: {total}")
+    providers = getattr(diag, "providers", None) or {}
+    error_metric_total = 0
+    for metric in providers.values():
+        error_metric_total += int(getattr(metric, "error", 0) or 0)
+    if error_metric_total and not provider_errors:
+        reasons.append(f"provider error statuses: {error_metric_total}")
+
+    processing_errors = getattr(diag, "processing_errors", None) or {}
+    if processing_errors:
+        reasons.append(f"processing errors: {len(processing_errors)}")
+
+    missing = getattr(diag, "missing_required_providers", None) or {}
+    missing_count = sum(len(items) for items in missing.values()) if isinstance(missing, dict) else 0
+    if missing_count:
+        reasons.append(f"missing required providers: {missing_count}")
+    return reasons
 
 
 _PROVIDER_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -628,7 +841,13 @@ def main():
     parser.add_argument("--jsonl", "-j", help="Output JSONL file path")
     parser.add_argument("--csv", "-c", help="Output CSV file path")
     parser.add_argument("--rules", help="Path to JSON rule configuration file")
-    parser.add_argument("--diagnostics", help="Output diagnostics JSON file path")
+    parser.add_argument(
+        "--diagnostics",
+        help=(
+            "Output diagnostics JSON file path (default: sibling of the primary "
+            "output, or <input>_diagnostics.json for default Excel mode)"
+        ),
+    )
     parser.add_argument(
         "--diff-baseline",
         metavar="PATH",
@@ -638,6 +857,16 @@ def main():
         "--diff-output",
         metavar="PATH",
         help="Diff report JSON path (default: derived from the primary output)",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Exit nonzero when any input rows are rejected, providers error, "
+            "processing fails, or required providers are missing; usable "
+            "results and diagnostics are still written. Ordinary pending-review "
+            "conclusions alone do not fail the run"
+        ),
     )
     parser.add_argument("--activity-window", type=int, default=None, help=f"Activity window in days (default: {Config().activity_window_days})")
     parser.add_argument("--hash-malicious-level", type=int, default=None, help=f"Minimum hash level for malicious (default: {Config().hash_malicious_level})")
@@ -655,20 +884,25 @@ def main():
         parser.error("--diff-output requires --diff-baseline")
 
     start_time = time.perf_counter()
+    # Resolve and preflight every output path before any provider work.
+    output_paths = _preflight_output_paths(args, parser)
     baseline_verdicts = (
         _load_diff_baseline(args.diff_baseline, parser) if args.diff_baseline else None
     )
 
     sidecar_providers = _parse_provider_data(args.provider_data, parser)
 
-    config = load_config(
-        activity_window_days=args.activity_window,
-        hash_malicious_level=args.hash_malicious_level,
-        relate_url_malicious_level=args.relate_url_malicious_level,
-        historical_malicious_level=args.historical_malicious_level,
-        high_level_no_a_threshold=args.high_level_no_a_threshold,
-        rules_path=args.rules,
-    )
+    try:
+        config = load_config(
+            activity_window_days=args.activity_window,
+            hash_malicious_level=args.hash_malicious_level,
+            relate_url_malicious_level=args.relate_url_malicious_level,
+            historical_malicious_level=args.historical_malicious_level,
+            high_level_no_a_threshold=args.high_level_no_a_threshold,
+            rules_path=args.rules,
+        )
+    except (TypeError, ValueError) as exc:
+        parser.error(str(exc))
 
     new_mode_requested = bool(
         args.ioc
@@ -718,6 +952,10 @@ def main():
                 result_cache_settings = load_result_cache_settings(
                     Path(args.provider_config) if args.provider_config else None
                 )
+                memory_limits = detect_memory_limits()
+                config.provider_workers = cap_positive_int(
+                    config.provider_workers, memory_limits.provider_workers
+                )
                 live_providers = build_providers(
                     live_names,
                     credentials_path=(
@@ -728,6 +966,7 @@ def main():
                     run_dir=Path(args.run_dir) if args.run_dir else None,
                     adjudication_config=config,
                     offline=args.offline,
+                    memory_limits=memory_limits,
                 )
             except (OSError, TypeError, ValueError) as exc:
                 parser.error(str(exc))
@@ -740,6 +979,7 @@ def main():
                 result_cache_settings=result_cache_settings,
                 providers=providers,
             )
+            _print_memory_startup(memory_limits)
             result_cache = (
                 AdjudicationResultCache(
                     cache_path, ttl=result_cache_settings.ttl
@@ -778,41 +1018,48 @@ def main():
     diag = result.diagnostics
     _warn_input_errors(diag)
 
-    diag_path = args.diagnostics
-    if not diag_path and not args.jsonl and not args.csv:
-        # Auto-generate diagnostics path when Excel would be produced.
-        diag_path = _default_diagnostics_path(args.input or "ioc_rejudge")
+    diag_path = output_paths["diagnostics"]
 
     if not verdicts:
-        _maybe_export_diagnostics(diag, diag_path)
+        try:
+            _maybe_export_diagnostics(diag, diag_path)
+        except OSError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
         print(
-            "ERROR: no valid IOC rows were processed; output files were not generated. "
-            "Check the diagnostics JSON and ensure each JSONL line is "
+            "ERROR: no valid IOC rows were processed; result output files were not "
+            "generated. Check the diagnostics JSON and ensure each JSONL line is "
             "{\"ioc\": \"...\", \"data\": [...]}",
             file=sys.stderr,
         )
         sys.exit(2)
 
-    if args.jsonl:
-        export_jsonl(verdicts, args.jsonl)
-        print(f"JSONL output written to {args.jsonl}")
+    try:
+        if args.jsonl:
+            export_jsonl(verdicts, output_paths["jsonl"])
+            print(f"JSONL output written to {output_paths['jsonl']}")
 
-    if args.csv:
-        export_csv(verdicts, args.csv)
-        print(f"CSV output written to {args.csv}")
-    elif not args.jsonl:
-        # Default: export Excel when neither -c nor -j specified
-        base = os.path.splitext(args.input or "ioc_rejudge")[0]
-        xlsx_path = base + "_result.xlsx"
-        diag_data = _diagnostics_data(diag)
-        export_excel(verdicts, xlsx_path, diagnostics=diag_data)
-        print(f"Excel output written to {xlsx_path}")
+        if args.csv:
+            export_csv(verdicts, output_paths["csv"])
+            print(f"CSV output written to {output_paths['csv']}")
+        elif not args.jsonl:
+            # Default: export Excel when neither -c nor -j specified
+            xlsx_path = output_paths["excel"]
+            diag_data = _diagnostics_data(diag)
+            export_excel(verdicts, xlsx_path, diagnostics=diag_data)
+            print(f"Excel output written to {xlsx_path}")
 
-    # Diagnostics export
-    _maybe_export_diagnostics(diag, diag_path)
+        _maybe_export_diagnostics(diag, diag_path)
 
-    if baseline_verdicts is not None:
-        _export_diff_report(baseline_verdicts, verdicts, args)
+        if baseline_verdicts is not None:
+            _export_diff_report(
+                baseline_verdicts,
+                verdicts,
+                args,
+                diff_path=output_paths.get("diff"),
+            )
+    except OSError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     print(f"\nProcessed {len(verdicts)} IOCs:")
     counts = {}
@@ -823,6 +1070,15 @@ def main():
         print(f"  {conclusion}: {count}")
     _print_provider_status(diag)
     print(f"Total time: {time.perf_counter() - start_time:.1f}s")
+
+    if args.strict:
+        strict_reasons = _strict_failure_reasons(diag)
+        if strict_reasons:
+            print(
+                "ERROR: --strict failures: " + "; ".join(strict_reasons),
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
 
 if __name__ == "__main__":

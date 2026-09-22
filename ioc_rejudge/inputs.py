@@ -11,7 +11,7 @@ from enum import Enum
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from ioc_rejudge.normalize import normalize_ioc
+from ioc_rejudge.normalize import parse_ioc_value
 from ioc_rejudge.observations import IocTarget
 from ioc_rejudge.parser import read_jsonl_snapshot_with_diagnostics
 
@@ -32,6 +32,9 @@ class InputBundle:
     targets: list[IocTarget] = field(default_factory=list)
     snapshots: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # Unbounded counters kept separate from bounded error samples.
+    parse_error_count: int = 0
+    nested_data_error_count: int = 0
 
 
 def is_valid_host(host: str) -> bool:
@@ -71,11 +74,15 @@ def _target(value: str) -> IocTarget | None:
     Returns None when the value cannot be parsed as a valid IOC target
     (empty after normalization, unknown type, contains spaces, no host,
     invalid host structure, or out-of-range ports).
+
+    Canonical ``normalized`` keeps URL scheme so bare domain, ``http://``, and
+    ``https://`` are distinct targets; host casing and trailing dots still
+    collapse within the same scope.
     """
     try:
-        normalized, ioc_type, ports = normalize_ioc(value)
+        normalized, ioc_type, ports, scheme = parse_ioc_value(value)
     except ValueError:
-        # normalize_ioc may call urllib.parse which validates port range.
+        # parse_ioc_value may call urllib.parse which validates port range.
         return None
     if not normalized or ioc_type == "unknown" or " " in normalized:
         return None
@@ -85,10 +92,9 @@ def _target(value: str) -> IocTarget | None:
         host = (parsed.hostname or "").lower().rstrip(".")
         if not host or not _is_valid_host(host):
             return None
-        # Validate URL port if present (urllib may have already rejected
-        # out-of-range ports before we reach here, but double-check).
         if parsed.port is not None and not _is_valid_port(str(parsed.port)):
             return None
+        scheme = scheme or (parsed.scheme or "").lower()
     elif ioc_type in {"domain_port", "ip_port"}:
         host = normalized.rsplit(":", 1)[0]
         if not _is_valid_host(host):
@@ -100,7 +106,14 @@ def _target(value: str) -> IocTarget | None:
         if not _is_valid_host(host):
             return None
 
-    return IocTarget(value, normalized, ioc_type, host, tuple(ports))
+    return IocTarget(
+        value,
+        normalized,
+        ioc_type,
+        host,
+        tuple(ports),
+        scheme=scheme,
+    )
 
 
 def read_input_bundle(path: str | None, inline_iocs: list[str] | None = None) -> InputBundle:
@@ -145,28 +158,58 @@ def read_input_bundle(path: str | None, inline_iocs: list[str] | None = None) ->
             break
 
     errors: list[str] = []
+    parse_error_count = 0
+    nested_data_error_count = 0
+    # (location_label, raw_value) pairs preserve physical file line numbers and
+    # distinguish inline --ioc values from file rows.
+    labeled_values: list[tuple[str, str]] = []
     if snapshot_candidate:
         read_result = read_jsonl_snapshot_with_diagnostics(path)
         snapshots = read_result.records
-        values = [str(row.get("ioc", "")) for row in snapshots]
+        line_numbers = read_result.record_line_numbers
+        for index, row in enumerate(snapshots):
+            if not isinstance(row, dict):
+                continue
+            physical_line = (
+                line_numbers[index]
+                if index < len(line_numbers)
+                else index + 1
+            )
+            labeled_values.append(
+                (f"line {physical_line}", str(row.get("ioc", "")))
+            )
         errors.extend(read_result.parse_error_samples)
+        parse_error_count = read_result.skipped
+        nested_data_error_count = read_result.nested_data_error_count
         kind = InputKind.SNAPSHOT
     else:
-        values = [line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")]
         snapshots = []
         kind = InputKind.IOC_LIST
+        for physical_line_no, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if not stripped or stripped.lstrip().startswith("#"):
+                continue
+            labeled_values.append((f"line {physical_line_no}", stripped))
 
-    values.extend(inline_iocs or [])
+    for inline_index, value in enumerate(inline_iocs or [], 1):
+        labeled_values.append((f"inline IOC {inline_index}", value))
 
     targets: list[IocTarget] = []
     seen: set[str] = set()
-    for index, value in enumerate(values, 1):
+    for location, value in labeled_values:
         target = _target(value)
         if target is None:
-            errors.append(f"line {index}: invalid IOC {value!r}")
+            errors.append(f"{location}: invalid IOC {value!r}")
             continue
         if target.normalized not in seen:
             seen.add(target.normalized)
             targets.append(target)
 
-    return InputBundle(kind, targets, snapshots, errors)
+    return InputBundle(
+        kind,
+        targets,
+        snapshots,
+        errors,
+        parse_error_count=parse_error_count,
+        nested_data_error_count=nested_data_error_count,
+    )

@@ -24,6 +24,11 @@ from ioc_rejudge.providers.base import (
 )
 from ioc_rejudge.providers.cache import CacheEntry, JsonlProviderCache
 from ioc_rejudge.providers.go_transport import BatchRequest, GoBatchTransport
+from ioc_rejudge.providers.redaction import (
+    redact_secret_values,
+    safe_text,
+    secret_values,
+)
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import RequestsTransport, TransportError
 
@@ -586,6 +591,15 @@ class FDarkProvider:
     def _cache_ref(self, entry: CacheEntry) -> str:
         return f"cache:{self.name}:{entry.key}"
 
+    def _secret_values(self) -> tuple[str, ...]:
+        return secret_values(self.settings.secrets)
+
+    def _sanitize_response(self, response: object) -> object:
+        return redact_secret_values(response, self._secret_values())
+
+    def _safe_error(self, message: object) -> str:
+        return safe_text(message, self._secret_values())
+
     @staticmethod
     def _items(response: object) -> tuple[list[dict] | None, str | None]:
         if not isinstance(response, dict):
@@ -610,6 +624,34 @@ class FDarkProvider:
     ) -> list[Observation]:
         observations: list[Observation] = []
         for item in items:
+            observed_at = _sample_time(item.get("lseen")) or _sample_time(
+                item.get("fseen")
+            )
+            hash_value = (
+                item.get("md5") or item.get("sha1") or item.get("sha256") or ""
+            )
+            hash_type = next(
+                (
+                    name
+                    for name in ("md5", "sha1", "sha256")
+                    if item.get(name)
+                ),
+                "",
+            )
+            payload: dict[str, object] = {
+                "hash": hash_value,
+                "hash_type": hash_type,
+                "level": item.get("level", 0),
+                "family": item.get("family", ""),
+                "type": item.get("type", ""),
+                "malicious": is_malicious_sample(item, self.config),
+            }
+            if item.get("confidence") is not None:
+                payload["confidence"] = item["confidence"]
+            if observed_at is not None:
+                # Sample last-seen becomes the activity time consumed by the
+                # dossier hash entries (B evidence / temporal validity bounds).
+                payload["time"] = observed_at.isoformat()
             observations.append(Observation(
                 ioc=target.normalized,
                 scope=target.ioc_type,
@@ -617,20 +659,10 @@ class FDarkProvider:
                 kind="associated_sample",
                 status=ProviderStatus.SUCCESS,
                 fetched_at=fetched_at,
-                observed_at=_sample_time(item.get("lseen"))
-                or _sample_time(item.get("fseen")),
+                observed_at=observed_at,
                 freshness=freshness,
                 strength="strong",
-                payload={
-                    "hash": item.get("md5")
-                    or item.get("sha1")
-                    or item.get("sha256")
-                    or "",
-                    "level": item.get("level", 0),
-                    "family": item.get("family", ""),
-                    "type": item.get("type", ""),
-                    "malicious": is_malicious_sample(item, self.config),
-                },
+                payload=payload,
                 raw_ref=raw_ref,
             ))
         return observations
@@ -651,9 +683,13 @@ class FDarkProvider:
                 response,
                 self.cache_params(target, strategy, query),
                 fetched_at=fetched_at,
+                secret_values=self._secret_values(),
             )
         except (OSError, TypeError, ValueError) as exc:
-            return "", f"cache write failed for {target.normalized}: {exc}"
+            return (
+                "",
+                f"cache write failed for {target.normalized}: {self._safe_error(exc)}",
+            )
         return self._cache_ref(entry), None
 
     def _complete_target(
@@ -737,16 +773,19 @@ class FDarkProvider:
                         self.cache_params(target, strategy, query),
                         now=self.now_fn(),
                     )
-                    errors.extend(f"cache: {message}" for message in self.cache.diagnostics)
+                    errors.extend(
+                        f"cache: {self._safe_error(message)}"
+                        for message in self.cache.diagnostics
+                    )
                 if entry is not None and (entry.fresh or context.offline):
-                    response = entry.raw
+                    response = self._sanitize_response(entry.raw)
                     fetched_at = entry.fetched_at
                     freshness = Freshness.FRESH if entry.fresh else Freshness.STALE
                     raw_ref = self._cache_ref(entry)
                     cache_hits += 1
                     items, response_error = self._items(response)
                     if response_error:
-                        state["errors"].append(response_error)
+                        state["errors"].append(self._safe_error(response_error))
                     else:
                         state["freshnesses"].append(freshness)
                         state["observations"].extend(self._observations(
@@ -782,20 +821,21 @@ class FDarkProvider:
             target = state["target"]
             state["remaining"] -= 1
             if result.error is not None:
-                state["errors"].append(str(result.error))
+                state["errors"].append(self._safe_error(result.error))
                 finish(key)
                 continue
             fetched_at = self.now_fn()
+            response = self._sanitize_response(result.payload)
             raw_ref, cache_error = self._store_response(
-                target, strategy, query, result.payload, fetched_at
+                target, strategy, query, response, fetched_at
             )
             if cache_error:
                 state["errors"].append(cache_error)
                 finish(key)
                 continue
-            items, response_error = self._items(result.payload)
+            items, response_error = self._items(response)
             if response_error:
-                state["errors"].append(response_error)
+                state["errors"].append(self._safe_error(response_error))
                 finish(key)
                 continue
             state["freshnesses"].append(Freshness.FRESH)
@@ -871,11 +911,12 @@ class FDarkProvider:
                             now=self.now_fn(),
                         )
                         errors.extend(
-                            f"cache: {message}" for message in self.cache.diagnostics
+                            f"cache: {self._safe_error(message)}"
+                            for message in self.cache.diagnostics
                         )
 
                     if entry is not None and (entry.fresh or context.offline):
-                        response = entry.raw
+                        response = self._sanitize_response(entry.raw)
                         fetched_at = entry.fetched_at
                         freshness = Freshness.FRESH if entry.fresh else Freshness.STALE
                         raw_ref = self._cache_ref(entry)
@@ -887,14 +928,16 @@ class FDarkProvider:
                         continue
                     else:
                         try:
-                            response = self.transport.get_json(
-                                self.settings.base_url,
-                                headers=dict(self.settings.secrets),
-                                params=query,
-                                timeout=self.settings.timeout,
+                            response = self._sanitize_response(
+                                self.transport.get_json(
+                                    self.settings.base_url,
+                                    headers=dict(self.settings.secrets),
+                                    params=query,
+                                    timeout=self.settings.timeout,
+                                )
                             )
                         except TransportError as exc:
-                            target_errors.append(str(exc))
+                            target_errors.append(self._safe_error(exc))
                             continue
                         fetched_at = self.now_fn()
                         freshness = Freshness.FRESH
@@ -907,7 +950,7 @@ class FDarkProvider:
 
                     items, response_error = self._items(response)
                     if response_error:
-                        target_errors.append(response_error)
+                        target_errors.append(self._safe_error(response_error))
                         continue
                     target_freshnesses.append(freshness)
                     target_observations.extend(self._observations(

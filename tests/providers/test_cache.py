@@ -182,6 +182,78 @@ def test_sensitive_mapping_values_are_redacted_before_disk(tmp_path):
     assert "[REDACTED]" in text
 
 
+def test_put_secret_values_redact_persisted_and_returned_fields(tmp_path):
+    value_sentinel = "SENTINEL_CACHE_VALUE_4d7e"
+    key_sentinel = "SENTINEL_CACHE_KEYNAME_2b9a"
+    cache = JsonlProviderCache(tmp_path, "fdark", ttl=timedelta(days=1))
+    params = {"note": value_sentinel, f"{key_sentinel}-token": "x"}
+    expected_key = cache.key("example.invalid", params)
+    entry = cache.put(
+        "example.invalid",
+        {"message": f"echo {value_sentinel}", "keep": "SAFE"},
+        params,
+        fetched_at=datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc),
+        secret_values=(value_sentinel,),
+    )
+    # Key is computed from the original params before redaction.
+    assert entry.key == expected_key
+    # Returned entry fields are value- and key-name-sanitized.
+    assert entry.params["note"] == "[REDACTED]"
+    assert entry.params[f"{key_sentinel}-token"] == "[REDACTED]"
+    assert value_sentinel not in str(entry.raw)
+    disk = cache.path.read_text(encoding="utf-8")
+    assert value_sentinel not in disk
+    # Sensitive key names keep their name but lose the value on disk.
+    assert f"{key_sentinel}-token" in disk
+    assert "SAFE" in disk
+    # get() with the original params still finds the row.
+    replay = cache.get(
+        "example.invalid",
+        params,
+        now=datetime(2026, 9, 21, 12, 30, tzinfo=timezone.utc),
+    )
+    assert replay is not None
+    assert replay.raw == {"message": "echo [REDACTED]", "keep": "SAFE"}
+
+
+def test_concurrent_writes_with_different_sentinels_redact_persisted_bytes(tmp_path):
+    sentinels = [f"SENTINEL_CONCURRENT_{index}_{0xDEAD:x}" for index in range(6)]
+    caches = [
+        JsonlProviderCache(tmp_path, "ioc_info", ttl=timedelta(days=1))
+        for _ in range(len(sentinels))
+    ]
+
+    def write(index):
+        sentinel = sentinels[index]
+        entry = caches[index].put(
+            f"concurrent-{index}.invalid",
+            {"message": f"echo {sentinel}", "keep": "SAFE_KEEP"},
+            {"note": sentinel, "index": index},
+            fetched_at=datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc),
+            secret_values=(sentinel,),
+        )
+        assert entry.params["note"] == "[REDACTED]"
+        assert sentinel not in str(entry.raw)
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        list(executor.map(write, range(len(sentinels))))
+
+    disk = caches[0].path.read_text(encoding="utf-8")
+    assert len(disk.splitlines()) == len(sentinels)
+    for sentinel in sentinels:
+        assert sentinel not in disk
+    assert "SAFE_KEEP" in disk
+    for index, sentinel in enumerate(sentinels):
+        entry = caches[0].get(
+            f"concurrent-{index}.invalid",
+            {"note": sentinel, "index": index},
+            now=datetime(2026, 7, 24, 12, 1, tzinfo=timezone.utc),
+        )
+        assert entry is not None
+        assert entry.raw == {"message": "echo [REDACTED]", "keep": "SAFE_KEEP"}
+        assert entry.params["note"] == "[REDACTED]"
+
+
 def test_cache_miss_returns_none_and_empty_diagnostics(tmp_path):
     cache = JsonlProviderCache(tmp_path, "whois", ttl=timedelta(days=1))
     assert cache.get("missing.invalid") is None
@@ -196,16 +268,16 @@ def test_many_provider_cache_lookups_read_each_shard_once(tmp_path, monkeypatch)
 
     cache = JsonlProviderCache(tmp_path, "whois", ttl=timedelta(days=7))
     cache_path = next(cache.provider_dir.glob("cache_*.jsonl"))
-    original = type(cache_path).read_text
+    original = JsonlProviderCache._read_shard_bytes
     reads = 0
 
-    def counted_read_text(path, *args, **kwargs):
+    def counted_read_shard(self, path):
         nonlocal reads
         if path == cache_path:
             reads += 1
-        return original(path, *args, **kwargs)
+        return original(self, path)
 
-    monkeypatch.setattr(type(cache_path), "read_text", counted_read_text)
+    monkeypatch.setattr(JsonlProviderCache, "_read_shard_bytes", counted_read_shard)
     for index in range(200):
         entry = cache.get(f"bulk-{index}.invalid", now=now + timedelta(days=1))
         assert entry is not None and entry.raw == {"index": index}
@@ -219,16 +291,16 @@ def test_interleaved_provider_cache_get_and_put_does_not_rescan_shard(
     cache = JsonlProviderCache(tmp_path, "whois", ttl=timedelta(days=7))
     cache.get("initial-miss.invalid")
     cache_path = cache._path_for(datetime(2026, 7, 28, tzinfo=timezone.utc))
-    original = type(cache_path).read_text
+    original = JsonlProviderCache._read_shard_bytes
     reads = 0
 
-    def counted_read_text(path, *args, **kwargs):
+    def counted_read_shard(self, path):
         nonlocal reads
         if path == cache_path:
             reads += 1
-        return original(path, *args, **kwargs)
+        return original(self, path)
 
-    monkeypatch.setattr(type(cache_path), "read_text", counted_read_text)
+    monkeypatch.setattr(JsonlProviderCache, "_read_shard_bytes", counted_read_shard)
     now = datetime(2026, 7, 28, tzinfo=timezone.utc)
     for index in range(100):
         ioc = f"interleaved-{index}.invalid"
@@ -236,3 +308,17 @@ def test_interleaved_provider_cache_get_and_put_does_not_rescan_shard(
         cache.put(ioc, {"index": index}, fetched_at=now)
 
     assert reads == 0
+
+
+def test_cache_index_does_not_retain_raw_payloads(tmp_path):
+    cache = JsonlProviderCache(tmp_path, "whois", ttl=timedelta(days=1))
+    cache.put(
+        "example.invalid",
+        {"blob": "x" * 100},
+        fetched_at=datetime(2026, 7, 22, 12, 0, 0),
+    )
+    assert cache.get("example.invalid", now=datetime(2026, 7, 22, 12, 0, 0)) is not None
+    assert cache._index
+    for hit in cache._index.values():
+        assert getattr(hit, "raw", None) is None
+        assert isinstance(hit.offset, int)

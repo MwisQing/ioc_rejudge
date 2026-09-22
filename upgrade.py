@@ -2,12 +2,14 @@
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
 import urllib.error
 import urllib.request
 import zipfile
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -18,6 +20,10 @@ _LATEST_RELEASE_API = f"https://api.github.com/repos/{_REPO}/releases/latest"
 
 _ZIP_PREFIX = "ioc_rejudge"
 _USER_AGENT = "ioc-rejudge-updater"
+# Match pack.py: ioc_rejudge_v{semver}_{YYYYMMDD-HHMMSS}.zip
+_RELEASE_ZIP_RE = re.compile(
+    rf"^{re.escape(_ZIP_PREFIX)}_v(\d+)\.(\d+)\.(\d+)_(\d{{8}})-(\d{{6}})\.zip$"
+)
 
 
 def _read_version(root: Path) -> str:
@@ -29,11 +35,36 @@ def _read_version(root: Path) -> str:
 
 def _parse_version(version_str: str) -> tuple[int, ...]:
     """Parse version string like '1.2.3' into comparable tuple."""
-    parts = version_str.strip().split(".")
+    text = version_str.strip()
+    if text.lower().startswith("v"):
+        text = text[1:]
+    parts = text.split(".")
     try:
         return tuple(int(p) for p in parts)
     except ValueError:
         return (0,)
+
+
+def _parse_release_zip_name(path: Path) -> Optional[tuple[tuple[int, ...], str]]:
+    """Parse ``ioc_rejudge_vX.Y.Z_YYYYMMDD-HHMMSS.zip`` sort keys.
+
+    Returns ``(version_tuple, timestamp)`` or ``None`` when the name is
+    malformed. Requires the same grammar pack.py emits: a leading ``v``,
+    three non-negative numeric version components, and a real calendar
+    timestamp. Version comparison is semantic; timestamp is a lexicographic
+    tie-breaker only among equal versions.
+    """
+    match = _RELEASE_ZIP_RE.fullmatch(path.name)
+    if match is None:
+        return None
+    major, minor, patch, date_part, time_part = match.groups()
+    try:
+        datetime.strptime(f"{date_part}{time_part}", "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+    version = (int(major), int(minor), int(patch))
+    timestamp = f"{date_part}-{time_part}"
+    return version, timestamp
 
 
 def _read_version_from_zip(zf: zipfile.ZipFile) -> Optional[str]:
@@ -52,11 +83,20 @@ def _show_version(root: Path, label: str = "当前版本") -> None:
 
 
 def _find_latest_zip(root: Path) -> Optional[Path]:
+    """Select the newest local release by semantic version, then timestamp."""
     release_dir = root / "release"
     if not release_dir.is_dir():
         return None
-    zips = sorted(release_dir.glob(f"{_ZIP_PREFIX}_*.zip"), reverse=True)
-    return zips[0] if zips else None
+    best_path: Optional[Path] = None
+    best_key: Optional[tuple[tuple[int, ...], str]] = None
+    for path in release_dir.glob(f"{_ZIP_PREFIX}_*.zip"):
+        parsed = _parse_release_zip_name(path)
+        if parsed is None:
+            continue
+        if best_key is None or parsed > best_key:
+            best_key = parsed
+            best_path = path
+    return best_path
 
 
 def _is_safe_member(root: Path, member_name: str) -> bool:

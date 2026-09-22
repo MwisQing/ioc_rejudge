@@ -1,6 +1,6 @@
 # 架构说明
 
-本文描述 IOC Rejudge CLI `2.6.0` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
+本文描述 IOC Rejudge CLI `2.7.0` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
 
 ## 1. 总体数据流
 
@@ -29,9 +29,11 @@ legacy JSONL snapshot / bare IOC file / repeated --ioc
                  \               /
                   unified Verdict
                          |
-            JSONL / CSV / six-sheet Excel
-                    + diagnostics
+             JSONL / CSV / six-sheet Excel
+                     + diagnostics
 ```
+
+离线路线入口另有一条适配链：`roadmap_cli.py` 和 UI workbench 只调用既有本地快照 pipeline 或受控文件操作，持久化 task、results、diagnostics 和人工 review overlay；provider 参数在离线后端中明确拒绝，不伪造联网成功。
 
 系统保留两条入口，但共享核心归一化、证据与裁判语义：
 
@@ -90,18 +92,24 @@ strength, payload, raw_ref
 |---|---|
 | `inputs.py` | 裸 IOC/快照识别、编码处理、结构校验、去重和错误记录 |
 | `parser.py` | 兼容 JSONL 快照、ISO/legacy 时间解析、UTC 归一化和统一 freshness/recent 比较 |
-| `normalize.py` | IOC 规范化、记录时序排序和 dossier 聚合 |
+| `normalize.py` | IOC 规范化（`parse_ioc_value` 保留 URL scheme 的统一身份；`normalize_ioc` 为历史 scheme-less 契约）、记录时序排序和 dossier 聚合（merge 使用 scheme-aware 身份） |
 | `models.py` | Evidence、RecordSnapshot、IocDossier、Verdict |
 | `observations.py` | IocTarget、Observation、provider/freshness/route/disposition 类型 |
 | `profile.py` | domain、IP、HTTP 和运行时画像 |
 | `business_identity.py` | 画像与证据共用的可信业务字段和网站主体关系校验 |
-| `review_queue.py` | 待复核结果队列与人工标签的本地 JSONL 辅助读写；当前不作为 CLI 子命令暴露 |
+| `review_queue.py` | 待复核结果队列与人工标签的本地 JSONL 辅助读写；CLI 只追加人工 overlay，不覆盖系统结论 |
+| `roadmap_cli.py` | 离线 job/review/explain/history/health/cache/table import/export-bundle 命令适配 |
+| `workbench_backend.py` | 本地离线快照 workbench 任务、诊断、结果、复核和导出持久化 |
+| `input_adapters.py` | CSV/XLSX IOC 导入、物理行号、defang/公式风险与重复报告 |
+| `export_bundle.py` | JSONL/CSV/XLSX/diagnostics/diff bundle 原子导出与冲突预检 |
+| `cache_admin.py` | provider/result cache 统计与整 shard dry-run/apply 清理 |
 | `evidence.py` | A-F 证据、样本语义、APT 组合和 URL 作用范围 |
 | `routing.py` | 可靠 DGA-only 分类与分类失败降级 |
 | `dga.py` | DGA facts 和有序硬规则裁判 |
 | `adjudicator.py` | 普通 IOC 五类结论、ICP 人工门和灰规则 |
 | `pipeline.py` | provider 并发、Observation 归并、facts/dossier 构建和分路 |
-| `export.py` | JSONL、CSV、六表 Excel |
+| `files.py` | 路径解析/相等、可写性预检（含已存在目标的 sibling 探测）、单一 atomic 写入原语 `atomic_write_via`（仅 sibling temp + `os.replace`） |
+| `export.py` | JSONL（按行流式）、CSV、六表 Excel |
 | `diff.py` | Verdict 转移和成员变化报告 |
 | `config.py` / `rules.py` | 阈值和规则配置 |
 | `cli.py` | 参数解析、两条入口编排、输出和 diagnostics |
@@ -133,7 +141,7 @@ strength, payload, raw_ref
 
 factory 默认构造六源；缺少 ICP 凭据时只将 ICP 标记为 `disabled`。自动验收只使用 mock/cache，真实 endpoint 风险单独保留。
 
-ICP 响应按 `resultObject.website_icp_num`、`resultObject.icp`、`rows[0].website_icp_num`、`rows[0].icp` 逐级短路规范化；已获得有效高优先级值后，不再让无关的低优先级坏字段推翻结果。成功空结果输出 `kind=icp_registration`、`status=success`、`payload={"current": false, "registration": ""}`；这是真实的 typed negative fact，不是 `no_data`。正结果只输出非空字符串备案号。
+ICP 响应按 `resultObject.website_icp_num`、`resultObject.icp`、`rows[0].website_icp_num`、`rows[0].icp` 逐级短路规范化；已获得有效高优先级值后，不再让无关的低优先级坏字段推翻结果。成功空结果输出 `kind=icp_registration`、`status=success`、`payload={"current": false, "registration": ""}`；这是真实的 typed negative fact，不是 `no_data`。正结果只输出非空字符串备案号。`resultCode=3003` 或 `身份校验失败` 是认证/业务失败，输出 `error`，不得写成 typed negative，也不得覆盖 IOC Info 备案字段。
 
 ### 4.1 工厂与配置
 
@@ -146,7 +154,7 @@ ICP 响应按 `resultObject.website_icp_num`、`resultObject.icp`、`rows[0].web
 - 构造 live 或 fail-closed offline transport。
 - 分离持久 cache 与当前 run 审计目录。
 
-非密钥 provider 配置拒绝 secret/token/password/authorization 类字段。独立凭证文件只接受固定认证字段，指定后不回退环境变量；ProviderSettings 的表示形式和异常信息不会暴露认证值。
+非密钥 provider 配置拒绝 secret/token/password/authorization 类字段。`enabled` 与布尔查询选项要求真正的 JSON boolean；数值选项（含 `max_attempts`、允许为 0 的 `retry_delay`）在 `load_local_config` 阶段统一校验，即使该 provider 本轮未选中。独立凭证文件只接受固定认证字段，指定后不回退环境变量；ProviderSettings 的表示形式和异常信息不会暴露认证值。
 
 ICP 默认限制为 8 workers 和 8 requests/second。配置层目前只校验二者为正数，尚未定义产品级硬上限；接口出现限流、超时或业务错误时可通过本地配置降为 4/4，生产配置必须遵守接口所有者批准的上限。
 
@@ -160,7 +168,7 @@ ICP 默认限制为 8 workers 和 8 requests/second。配置层目前只校验�
 - JSON decode error
 - offline
 
-生产 provider 依赖注入的 transport，测试可完全阻断真实网络。根目录 `iocProducer_api_ioc_info.py` 是旧调用方兼容薄入口，不属于统一 provider 的传输边界。
+生产路径默认把 JSON HTTP 交给捆绑的 Go worker；Python 仍负责解析、缓存和裁判。worker 按块拉起，一块失败不得中断后续块。测试可注入 Python transport 完全阻断真实网络。根目录 `iocProducer_api_ioc_info.py` 是旧调用方兼容薄入口，不属于统一 provider 的传输边界。
 
 ### 4.3 Cache 与审计
 
@@ -170,6 +178,7 @@ ICP 默认限制为 8 workers 和 8 requests/second。配置层目前只校验�
 - K01、IOC Info、F-Dark、WHOIS、pDNS 默认 TTL 7 天，ICP 默认 30 天；本地配置可逐接口覆盖。
 - K01 批量查询默认按 100 个 IOC 分批，批大小可由非密钥 provider 配置覆盖；批次级 transport/业务错误只标记该批，其他批次继续处理。
 - 读取跨日期分片选择同一 query key 的最新响应，并兼容旧 `<provider>.jsonl`。
+- 内存索引只保存 key、分片路径、字节偏移和 `fetched_at`，不驻留 `raw`；`get` 按偏移读一行。
 - K01 批量请求在为 per-IOC query key 写入缓存时保留响应包络，但 `data` 只保留当前 IOC 节点；离线回放与在线解析使用同一响应契约。
 - 坏 cache 行不会阻断其他有效行。
 - stale 结果可用于审计，但不能伪装成新鲜白证据。
@@ -190,13 +199,17 @@ Sidecar 和自定义非 live provider 继续按原 provider 协议执行，不�
 
 ### 4.5 研判结果缓存
 
-`AdjudicationResultCache` 位于 provider 缓存根目录的 `.cache_adjudication_results/cache_YYYY-MM-DD.jsonl`，默认 TTL 7 天。每行保存规范化 IOC、配置指纹、研判时间和完整 verdict 输出。
+`AdjudicationResultCache` 位于 provider 缓存根目录的 `.cache_adjudication_results/cache_YYYY-MM-DD.jsonl`，默认 TTL 7 天。每行保存规范化 IOC、配置指纹、研判时间、可选 `valid_until` 时间边界和完整 verdict 输出。
 
-当前裁判缓存契约为 `7`；本轮证据与 ICP 规则修复使旧契约结果失效，原始 provider 缓存仍可用于重新研判。
+当前裁判缓存契约为 `12`。契约 10 起：目标身份保留 URL scheme（`case.invalid` / `http://…` / `https://…` 为三个独立目标）；指纹对每个目标关联其依赖的 provider 原始缓存记录摘要（fetched_at + raw + params，含 absence），而不是全局分片存在位；sidecar 内容哈希按 `(path, mtime_ns, size)` 在单次 run 内复用。契约 11 起：`valid_until` 取全部已评估实质活动事件的最早 inclusive 上界（快照/IOC Info 的 hash·flint·access·dtree，pDNS 窗口，WHOIS 日期；未来事件在激活时刻前 1µs 截止），并纳入依赖 provider 原始缓存的 `fetched_at+TTL`（含 NO_DATA 完整性）。契约 12 起：`fetched_at+TTL` 边界扩展到 sidecar 行（含显式 fresh 的 NO_DATA 完整性），未来 fetched_at 在激活时刻（前 1µs）截止复用，配置指纹纳入 sidecar TTL。同一天内越过边界时以 `temporal_expired` miss 并重算，无时间敏感证据的 30 秒内重复运行仍可 hit。旧契约行不会被误用；历史 provider 原始缓存文件不迁移。
 
-配置指纹覆盖 IOC 规范化形态、输入快照记录、规则/阈值、provider 顺序、公开 settings、查询选项、sidecar 内容摘要、凭据身份摘要和 provider 原始缓存分片存在状态；凭据原文不序列化、不落盘。只有新鲜且指纹完全相同的结果才会命中，命中目标在 provider 收集前被移出 pending 集合。删除或清空 provider 原始缓存分片会造成 `fingerprint_mismatch`，使完整结果重新采集；采集完成后使用最新缓存状态写入结果指纹。部分命中时只为 miss 目标执行 provider pipeline，最终按输入顺序归并。provider `error` 或必要来源缺失的结果不落盘。`--refresh` 强制全部 miss；坏行只进入 `result_cache_errors`，不阻断其他有效结果。
+配置指纹覆盖 scheme-aware IOC 身份、输入快照记录、规则/阈值、provider 顺序、公开 settings、查询选项、sidecar 内容摘要与 TTL、凭据身份摘要和**按目标**的 provider 原始依赖摘要；凭据原文不序列化、不落盘。只有新鲜、指纹完全相同且未越过 `valid_until` 的结果才会命中，命中目标在 provider 收集前被移出 pending 集合。同一目标原始响应追加或真正消失会造成该目标 `fingerprint_mismatch`，不牵连无关 IOC；生产 provider 原始缓存没有删除 API。部分命中时只为 miss 目标执行 provider pipeline，最终按输入顺序归并。provider `error` 或必要来源缺失的结果不落盘。`--refresh` 强制全部 miss；坏行只进入 `result_cache_errors`，不阻断其他有效结果。
 
 ## 5. 并发与确定性
+
+Go HTTP worker 按块提交任务（默认 `max(workers * 2, 8)`，低内存档更小）。一块的进程崩溃或输出损坏时，只把该块未完成 job 记为 transport `error`，后续块继续；`collect()` 仍返回 `ProviderResult`，不会把整路 IOC 打成 pipeline 级失败。
+
+CLI 按物理内存封顶 HTTP workers、`Config.provider_workers` 和每进程 job 数；约 4 GiB 为 2/2/4，约 8 GiB 为 4/3/8，更大内存不封顶。`IOC_REJUDGE_MEMORY_PROFILE=full` 关闭封顶。Provider 缓存索引只保留 key 与文件偏移，`raw` 在 `get` 时按行读取。
 
 pipeline 在每个收集阶段使用有界线程池并发不同 provider。并发只影响采集时延，不改变业务顺序：
 
@@ -246,7 +259,7 @@ DGA 规则按固定顺序执行：
 - WHOIS 未过期或近期 pDNS 不独立判白。
 - 英文恶意 indicator 使用字母数字词法边界；中文保持包含匹配。
 - 公开 APT 只在结构化条件闭环时形成历史恶意证据：记录主体的规范化 IOC 和类型必须匹配目标，阈值字段须为有限数值，引用须为 host/端口有效且无 userinfo 的 HTTP(S) URL。结构化记录承担 IOC 关联，外部报告 host 无需等于 IOC，正文无需重复 IOC；不声称联网核验正文。
-- `relate_url` 仅对结构、host 和端口均有效的 HTTP(S) URL 建立精确作用范围。
+- `relate_url` 仅对结构、host 和端口均有效的 HTTP(S) URL 建立精确作用范围；URL 目标的直接 A 证据与 retained 必须与目标 scheme-aware 身份完全一致（http/https 不串证），域名目标可按 host 保留 URL 但不得由 relate_url 建立 A。
 - 灰包括既有的历史 URL/失活域名分支，以及低等级但具体恶意 URL 仍需保留的正常服务滥用分支；弱白证据本身不能单独触发灰。
 
 ### 7.3 时间比较边界
@@ -261,7 +274,7 @@ JSONL 保留嵌套数据；CSV/Excel 对对象和数组做稳定 JSON 序列化�
 统计, 总, 判黑, 灰, 误报, 待复核
 ```
 
-diagnostics 记录解析失败、无效 IOC、provider 状态/异常、必要来源缺失和跳过计数。兼容快照中的单条坏 URL 会被隔离并留下样例，后续合法 IOC 继续处理。
+diagnostics 记录解析失败、嵌套 `data` 拒绝的无界计数（`nested_data_error_count`，样例仍有界）、无效 IOC、provider 状态/异常、必要来源缺失和跳过计数。兼容快照中的单条坏 URL、非对象 JSON 行以及嵌套非对象 `data` 条目会被隔离，后续合法 IOC 继续处理；快照非法 IOC 标注物理文件行号。CLI 在 provider 采集前解析全部输出路径并做冲突/可写性预检（已存在输出也探测 sibling 临时文件可写）；结果与 diagnostics/diff 仅经 sibling temp + `os.replace` 写入，锁文件失败保留原字节。`-j`/`-c` 也会自动落盘 diagnostics；可选 `--strict` 把输入拒绝、嵌套/解析错误与传输/处理失败映射为非 0 退出，业务待复核不计入失败。JSONL 按行流式写入；JSONL/CSV 契约包含 `classification_unknown` 布尔导出。
 
 ## 9. 安全边界
 

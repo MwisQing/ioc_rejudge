@@ -47,55 +47,97 @@ def latest_record(records: list[dict]) -> dict:
     return snapshots[-1].raw if snapshots else {}
 
 
-def normalize_ioc(value: str, port: str = "0") -> tuple[str, str, list[str]]:
+def parse_ioc_value(
+    value: str, port: str = "0"
+) -> tuple[str, str, list[str], str]:
+    """Parse an IOC into ``(normalized, ioc_type, ports, scheme)``.
+
+    Unified canonical form used by input dedup, pipeline keys, result cache,
+    observations, and exports:
+
+    - URL: ``{scheme}://{host}[:port][path][?query]`` with lowercased scheme/host,
+      trailing DNS dots stripped, and path/query case preserved. HTTP and HTTPS
+      are distinct identities.
+    - domain / domain_port / ip / ip_port: same as the historical shapes.
+
+    ``scheme`` is ``http``/``https`` for URL targets and ``\"\"`` otherwise.
+    """
     value = value.strip()
     if not value:
-        return ("", "unknown", [])
+        return ("", "unknown", [], "")
 
-    ports = []
+    ports: list[str] = []
     if port and port != "0" and port != "":
         ports = [port]
 
     # URL input: http://host/path or https://host:port/path
-    url_match = re.match(r'^https?://', value, re.IGNORECASE)
+    url_match = re.match(r"^https?://", value, re.IGNORECASE)
     if url_match:
         parsed = urlparse(value)
-        host = parsed.hostname or ""
+        scheme = (parsed.scheme or "").lower()
+        host = (parsed.hostname or "").rstrip(".").lower()
         url_port = str(parsed.port) if parsed.port else ""
+        # Preserve path and query case; drop fragment from identity.
         path = parsed.path or ""
         if parsed.query:
-            path += "?" + parsed.query
-        host = host.rstrip(".").lower()
+            path = f"{path}?{parsed.query}"
         if url_port:
             ports = [url_port]
-            normalized = f"{host}:{url_port}{path}" if path else f"{host}:{url_port}"
+            authority = f"{host}:{url_port}"
         else:
-            normalized = f"{host}{path}" if path else host
-        return (normalized, "url", ports)
+            authority = host
+        normalized = f"{scheme}://{authority}{path}" if path else f"{scheme}://{authority}"
+        return (normalized, "url", ports, scheme)
 
     # IP:port pattern
-    ip_port_match = re.match(r'^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)$', value)
+    ip_port_match = re.match(
+        r"^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)$", value
+    )
     if ip_port_match:
         ip = ip_port_match.group(1)
         p = ip_port_match.group(2)
-        return (f"{ip}:{p}", "ip_port", [p])
+        return (f"{ip}:{p}", "ip_port", [p], "")
 
     # Plain IP
-    if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', value):
-        return (value, "ip", ports)
+    if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", value):
+        return (value, "ip", ports, "")
 
     # domain:port pattern (when port not already set from record)
     if not ports:
-        domain_port_match = re.match(r'^([a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*):(\d+)$', value)
+        domain_port_match = re.match(
+            r"^([a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?"
+            r"(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*):(\d+)$",
+            value,
+        )
         if domain_port_match:
             domain = domain_port_match.group(1).rstrip(".").lower()
             p = domain_port_match.group(5)
-            return (f"{domain}:{p}", "domain_port", [p])
+            return (f"{domain}:{p}", "domain_port", [p], "")
 
     domain = value.rstrip(".").lower()
     if ports:
-        return (f"{domain}:{ports[0]}", "domain_port", ports)
-    return (domain, "domain", ports)
+        return (f"{domain}:{ports[0]}", "domain_port", ports, "")
+    return (domain, "domain", ports, "")
+
+
+def normalize_ioc(value: str, port: str = "0") -> tuple[str, str, list[str]]:
+    """Legacy normalize contract: URL identities omit the scheme prefix.
+
+    Prefer :func:`parse_ioc_value` for unified-path identity. This helper keeps
+    the historical ``host[/path]`` shape so existing record grouping and raw
+    provider-cache IOC fields remain stable.
+    """
+    normalized, ioc_type, ports, scheme = parse_ioc_value(value, port)
+    if ioc_type == "url" and scheme and normalized.startswith(f"{scheme}://"):
+        return (normalized[len(scheme) + 3 :], ioc_type, ports)
+    return (normalized, ioc_type, ports)
+
+
+def target_identity(normalized: str, ioc_type: str, scheme: str = "") -> str:
+    """Stable unique key separating scope and URL scheme."""
+    if ioc_type == "url":
+        return f"url:{normalized}"
+    return f"{ioc_type}:{normalized}"
 
 
 def _get_group_key(record: dict) -> str:
@@ -220,7 +262,9 @@ def merge_records(records: list[dict]) -> IocDossier:
     first = records[0]
     ioc_val = first.get("key") or first.get("host") or first.get("ioc", "")
     port = str(first.get("port", "0"))
-    normalized, ioc_type, ports = normalize_ioc(ioc_val, port)
+    # Dossier identity uses scheme-aware parse so URL targets keep http/https.
+    # Legacy group_by_ioc / raw-cache callers still use normalize_ioc separately.
+    normalized, ioc_type, ports, _scheme = parse_ioc_value(ioc_val, port)
 
     max_level = 0.0
     for rec in records:

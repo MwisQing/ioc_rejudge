@@ -501,15 +501,27 @@ def test_strict_failure_propagates_and_cleans_staging(ui, monkeypatch):
 
 
 def test_bundle_retention_keeps_only_newest(make_server):
+    """max_bundles limits recent-history display; older bundles stay recoverable."""
     url, token, _key, bundles_dir = make_server(max_bundles=2)
     unlock(url, token)
     first = create(url, token, {"content": sample_content()})
     second = create(url, token, {"content": '{"ioc": "second.example.invalid"}\n'})
     third = create(url, token, {"content": '{"ioc": "third.example.invalid"}\n'})
 
-    remaining = {child.name for child in bundles_dir.iterdir()}
-    assert remaining == {second["bundle_id"], third["bundle_id"]}
-    assert first["bundle_id"] not in remaining
+    remaining = {
+        child.name
+        for child in bundles_dir.iterdir()
+        if child.is_dir() and not child.name.startswith(".")
+    }
+    assert remaining == {first["bundle_id"], second["bundle_id"], third["bundle_id"]}
+    assert (bundles_dir / first["bundle_id"] / "share.jsonl.manifest.json").is_file()
+
+    status, body = api_post(url, token, "/api/status", {})
+    assert status == 200
+    listed = [item["bundle_id"] for item in body["bundles"]]
+    assert listed == [third["bundle_id"], second["bundle_id"]]
+    assert body["bundle_history_limit"] == 2
+    assert body["bundle_total"] == 3
 
 
 def test_scan_reports_residual_findings(ui):

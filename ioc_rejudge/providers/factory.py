@@ -15,6 +15,7 @@ from ioc_rejudge.providers.cache import CacheEntry, JsonlProviderCache
 from ioc_rejudge.providers.fdark import FDarkProvider
 from ioc_rejudge.providers.go_transport import GoBatchTransport
 from ioc_rejudge.providers.icp import ICPProvider
+from ioc_rejudge.providers.memory import MemoryLimits, cap_positive_int
 from ioc_rejudge.providers.ioc_info import DEFAULT_URL as IOC_INFO_DEFAULT_URL
 from ioc_rejudge.providers.ioc_info import IOCInfoProvider
 from ioc_rejudge.providers.k01_compromise import (
@@ -22,6 +23,7 @@ from ioc_rejudge.providers.k01_compromise import (
     K01CompromiseProvider,
 )
 from ioc_rejudge.providers.pdns import PDNSProvider
+from ioc_rejudge.providers.redaction import secret_values
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import TransportError
 from ioc_rejudge.providers.whois import WhoisProvider
@@ -127,13 +129,20 @@ class _OfflineTransport:
 class _AuditedProviderCache(JsonlProviderCache):
     """Mirror cache writes and reads into the current run's raw audit log."""
 
-    def __init__(self, cache_root, run_raw_root, provider_name, ttl):
+    def __init__(self, cache_root, run_raw_root, provider_name, ttl, secret_values=()):
         super().__init__(cache_root, provider_name, ttl)
         self.audit = JsonlProviderCache(run_raw_root, provider_name, ttl)
+        self._last_secret_values: tuple[str, ...] = tuple(secret_values)
 
-    def put(self, ioc, raw, params=None, fetched_at=None) -> CacheEntry:
-        entry = super().put(ioc, raw, params, fetched_at=fetched_at)
-        self.audit.put(ioc, raw, params, fetched_at=entry.fetched_at)
+    def put(self, ioc, raw, params=None, fetched_at=None, *, secret_values=()) -> CacheEntry:
+        if secret_values:
+            self._last_secret_values = tuple(secret_values)
+        entry = super().put(
+            ioc, raw, params, fetched_at=fetched_at, secret_values=secret_values
+        )
+        self.audit.put(
+            ioc, raw, params, fetched_at=entry.fetched_at, secret_values=secret_values
+        )
         return entry
 
     def get(self, ioc, params=None, *, now=None) -> CacheEntry | None:
@@ -141,7 +150,13 @@ class _AuditedProviderCache(JsonlProviderCache):
         diagnostics = list(self.diagnostics)
         if entry is not None:
             try:
-                self.audit.put(ioc, entry.raw, params, fetched_at=entry.fetched_at)
+                self.audit.put(
+                    ioc,
+                    entry.raw,
+                    params,
+                    fetched_at=entry.fetched_at,
+                    secret_values=self._last_secret_values,
+                )
             except (OSError, TypeError, ValueError) as exc:
                 diagnostics.append(f"run audit write failed: {exc}")
         self.diagnostics = diagnostics
@@ -253,8 +268,7 @@ def load_local_config(path: str | Path | None) -> dict[str, dict]:
             raise ValueError(f"provider {name} cannot set both url and base_url")
         if "query_params" in options and not isinstance(options["query_params"], dict):
             raise ValueError(f"provider {name} query_params must be an object")
-        if name == "k01_compromise" and "batch_size" in options:
-            _positive_number(name, "batch_size", options["batch_size"], integer=True)
+        _validate_provider_option_types(name, options)
         validated[name] = dict(options)
     return validated
 
@@ -291,12 +305,7 @@ def load_result_cache_settings(
         value = _positive_number(
             "result_cache", key, options[key], integer=False
         )
-        if key == "ttl_seconds":
-            ttl = timedelta(seconds=value)
-        elif key == "ttl_hours":
-            ttl = timedelta(hours=value)
-        else:
-            ttl = timedelta(days=value)
+        ttl = _timedelta_from_ttl("result_cache", key, value)
     return ResultCacheSettings(enabled=enabled, ttl=ttl)
 
 
@@ -345,18 +354,132 @@ def _validate_url(name: str, value: object) -> str:
     return url.rstrip("/")
 
 
-def _positive_number(name: str, option: str, value: object, *, integer: bool):
-    if isinstance(value, bool):
-        raise ValueError(f"provider {name} {option} must be positive")
+def _as_finite_float(name: str, option: str, value: object, *, kind: str) -> float:
+    """Coerce *value* to a finite float, or raise a field-specific ValueError."""
+    if isinstance(value, bool) or value is None:
+        raise ValueError(f"provider {name} {option} must be {kind}")
     try:
-        parsed = int(value) if integer else float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"provider {name} {option} must be positive") from exc
-    if not integer and not isfinite(parsed):
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"provider {name} {option} must be {kind}") from exc
+    if not isfinite(parsed):
         raise ValueError(f"provider {name} {option} must be finite")
-    if parsed <= 0:
-        raise ValueError(f"provider {name} {option} must be positive")
     return parsed
+
+
+def _as_integer_value(
+    name: str,
+    option: str,
+    value: object,
+    as_float: float,
+    *,
+    kind: str,
+) -> int:
+    """Require an integer-valued finite number without OverflowError leakage."""
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError(f"provider {name} {option} must be an integer")
+    if isinstance(value, str):
+        text = value.strip()
+        if "." in text or "e" in text.lower() or "E" in text:
+            if not as_float.is_integer():
+                raise ValueError(f"provider {name} {option} must be an integer")
+    elif not as_float.is_integer():
+        raise ValueError(f"provider {name} {option} must be an integer")
+    try:
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        if isinstance(value, str) and as_float.is_integer() and "e" not in value.lower() and "." not in value.strip():
+            return int(value.strip(), 10)
+        return int(as_float)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"provider {name} {option} must be {kind}") from exc
+
+
+def _positive_number(name: str, option: str, value: object, *, integer: bool):
+    kind = "a positive integer" if integer else "positive"
+    as_float = _as_finite_float(name, option, value, kind=kind)
+    if as_float <= 0:
+        raise ValueError(f"provider {name} {option} must be positive")
+    if integer:
+        return _as_integer_value(name, option, value, as_float, kind=kind)
+    return as_float
+
+
+def _require_bool(name: str, option: str, value: object) -> bool:
+    """Require a real JSON boolean; never coerce strings or 0/1."""
+    if isinstance(value, bool):
+        return value
+    raise ValueError(
+        f"provider {name} {option} must be a JSON boolean (true/false), "
+        f"got {type(value).__name__}"
+    )
+
+
+def _non_negative_number(
+    name: str,
+    option: str,
+    value: object,
+    *,
+    integer: bool,
+):
+    """Parse a finite number that may be zero (for example retry_delay)."""
+    kind = "a non-negative integer" if integer else "a non-negative number"
+    as_float = _as_finite_float(name, option, value, kind=kind)
+    if as_float < 0:
+        raise ValueError(f"provider {name} {option} must be non-negative")
+    if integer:
+        return _as_integer_value(name, option, value, as_float, kind=kind)
+    return as_float
+
+
+def _timedelta_from_ttl(name: str, key: str, value: float) -> timedelta:
+    """Build a TTL timedelta, rejecting values that overflow the platform."""
+    try:
+        if key == "ttl_seconds":
+            result = timedelta(seconds=value)
+        elif key == "ttl_hours":
+            result = timedelta(hours=value)
+        else:
+            result = timedelta(days=value)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError(f"provider {name} {key} is too large") from exc
+    if result < timedelta(0):
+        raise ValueError(f"provider {name} {key} must be positive")
+    return result
+
+
+def _validate_provider_option_types(name: str, options: dict) -> None:
+    """Validate option types for every configured provider, selected or not."""
+    if "enabled" in options:
+        _require_bool(name, "enabled", options["enabled"])
+    bool_options = {
+        "k01_compromise": ("ignore_port", "ignore_url", "ignore_top"),
+        "fdark": ("include_slow_variants", "include_url_param"),
+    }
+    for option in bool_options.get(name, ()):
+        if option in options:
+            _require_bool(name, option, options[option])
+    if name == "ioc_info":
+        if "max_attempts" in options:
+            _positive_number(
+                name, "max_attempts", options["max_attempts"], integer=True
+            )
+        if "retry_delay" in options:
+            _non_negative_number(
+                name, "retry_delay", options["retry_delay"], integer=False
+            )
+    if name == "k01_compromise" and "batch_size" in options:
+        _positive_number(name, "batch_size", options["batch_size"], integer=True)
+    for option in ("timeout", "workers", "rate_per_second"):
+        if option in options:
+            _positive_number(name, option, options[option], integer=True)
+    ttl_options = [key for key in ("ttl_seconds", "ttl_hours", "ttl_days") if key in options]
+    if len(ttl_options) > 1:
+        raise ValueError(f"provider {name} must set only one TTL option")
+    if ttl_options:
+        key = ttl_options[0]
+        value = _positive_number(name, key, options[key], integer=False)
+        _timedelta_from_ttl(name, key, value)
 
 
 def _ttl(name: str, options: dict) -> timedelta:
@@ -367,11 +490,7 @@ def _ttl(name: str, options: dict) -> timedelta:
         return _DEFAULTS[name]["ttl"]
     key = ttl_options[0]
     value = _positive_number(name, key, options[key], integer=False)
-    if key == "ttl_seconds":
-        return timedelta(seconds=value)
-    if key == "ttl_hours":
-        return timedelta(hours=value)
-    return timedelta(days=value)
+    return _timedelta_from_ttl(name, key, value)
 
 
 def _env_value(env: Mapping[str, str], name: str) -> str:
@@ -422,12 +541,15 @@ def _cache_for(
     ttl: timedelta,
     cache_dir: Path | None,
     run_dir: Path | None,
+    secret_values: tuple[str, ...] = (),
 ):
     run_raw = run_dir / "raw" if run_dir is not None else None
     if cache_dir is not None and run_raw is not None:
         if cache_dir.resolve() == run_raw.resolve():
             return JsonlProviderCache(cache_dir, name, ttl)
-        return _AuditedProviderCache(cache_dir, run_raw, name, ttl)
+        return _AuditedProviderCache(
+            cache_dir, run_raw, name, ttl, secret_values=secret_values
+        )
     if cache_dir is not None:
         return JsonlProviderCache(cache_dir, name, ttl)
     if run_raw is not None:
@@ -456,6 +578,7 @@ def build_providers(
     adjudication_config: Config | None = None,
     transport_factory=None,
     offline: bool = False,
+    memory_limits: MemoryLimits | None = None,
 ) -> list:
     selected = parse_provider_names(names)
     if env is not None and credentials_path is not None:
@@ -469,13 +592,21 @@ def build_providers(
     cache_root = Path(cache_dir) if cache_dir is not None else None
     run_root = Path(run_dir) if run_dir is not None else None
     providers = []
-    go_transport = GoBatchTransport() if transport_factory is None and not offline else None
+    go_jobs = None if memory_limits is None else memory_limits.go_jobs_per_process
+    go_transport = (
+        GoBatchTransport(jobs_per_process=go_jobs)
+        if transport_factory is None and not offline
+        else None
+    )
 
     for name in selected:
         options = local.get(name, {})
+        # Options already type-checked when present in load_local_config;
+        # re-validate defaults path for selected providers without a file entry.
+        _validate_provider_option_types(name, options)
         configured_enabled = options.get("enabled", True)
         if not isinstance(configured_enabled, bool):
-            raise ValueError(f"provider {name} enabled must be boolean")
+            configured_enabled = _require_bool(name, "enabled", configured_enabled)
         url = options.get("url", options.get("base_url", _env_url(name, environment)))
         url = _validate_url(name, url)
         timeout = _positive_number(
@@ -484,6 +615,8 @@ def build_providers(
         workers = _positive_number(
             name, "workers", options.get("workers", _DEFAULTS[name].get("workers", 10)), integer=True
         )
+        if memory_limits is not None:
+            workers = cap_positive_int(int(workers), memory_limits.http_workers)
         rate = _positive_number(
             name,
             "rate_per_second",
@@ -503,17 +636,33 @@ def build_providers(
             ttl=ttl,
             enabled=enabled,
         )
-        cache = _cache_for(name, ttl, cache_root, run_root)
+        cache = _cache_for(
+            name, ttl, cache_root, run_root, secret_values=secret_values(secrets)
+        )
         transport = _transport(name, transport_factory, offline)
 
         if name == "ioc_info":
+            max_attempts = (
+                _positive_number(
+                    name, "max_attempts", options["max_attempts"], integer=True
+                )
+                if "max_attempts" in options
+                else 10
+            )
+            retry_delay = (
+                _non_negative_number(
+                    name, "retry_delay", options["retry_delay"], integer=False
+                )
+                if "retry_delay" in options
+                else 0.0
+            )
             provider = IOCInfoProvider(
                 settings,
                 transport=transport,
                 cache=cache,
                 go_transport=go_transport,
-                max_attempts=int(options.get("max_attempts", 10)),
-                retry_delay=float(options.get("retry_delay", 0)),
+                max_attempts=int(max_attempts),
+                retry_delay=float(retry_delay),
             )
         elif name == "k01_compromise":
             provider = K01CompromiseProvider(
@@ -521,9 +670,21 @@ def build_providers(
                 transport=transport,
                 cache=cache,
                 go_transport=go_transport,
-                ignore_port=bool(options.get("ignore_port", False)),
-                ignore_url=bool(options.get("ignore_url", False)),
-                ignore_top=bool(options.get("ignore_top", False)),
+                ignore_port=_require_bool(
+                    name, "ignore_port", options["ignore_port"]
+                )
+                if "ignore_port" in options
+                else False,
+                ignore_url=_require_bool(
+                    name, "ignore_url", options["ignore_url"]
+                )
+                if "ignore_url" in options
+                else False,
+                ignore_top=_require_bool(
+                    name, "ignore_top", options["ignore_top"]
+                )
+                if "ignore_top" in options
+                else False,
                 batch_size=_positive_number(
                     name,
                     "batch_size",
@@ -538,10 +699,20 @@ def build_providers(
                 transport=transport,
                 cache=cache,
                 go_transport=go_transport,
-                include_slow_variants=bool(
-                    options.get("include_slow_variants", False)
-                ),
-                include_url_param=bool(options.get("include_url_param", False)),
+                include_slow_variants=_require_bool(
+                    name,
+                    "include_slow_variants",
+                    options["include_slow_variants"],
+                )
+                if "include_slow_variants" in options
+                else False,
+                include_url_param=_require_bool(
+                    name,
+                    "include_url_param",
+                    options["include_url_param"],
+                )
+                if "include_url_param" in options
+                else False,
                 query_params=options.get("query_params"),
             )
         elif name == "whois":

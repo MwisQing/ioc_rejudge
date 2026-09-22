@@ -230,9 +230,12 @@ def test_collect_normalizes_samples_and_reuses_common_malicious_semantics(tmp_pa
     assert first.kind == "associated_sample"
     assert first.payload == {
         "hash": "md5-first",
+        "hash_type": "md5",
         "level": 80,
         "family": "trojan.family",
         "type": "pe",
+        "confidence": 90,
+        "time": first.observed_at.isoformat(),
         "malicious": True,
     }
     assert first.observed_at == datetime.fromtimestamp(1_720_000_000, timezone.utc)

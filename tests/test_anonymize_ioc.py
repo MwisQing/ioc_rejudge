@@ -608,6 +608,52 @@ def test_share_v07_leak_heuristics_token_redact_and_round_trip(tmp_path):
     assert restored_nested == nested
 
 
+def test_share_scan_skips_empty_final_unix_path_segment():
+    from ioc_rejudge.share import scan_value
+
+    assert scan_value("/lib/") == []
+    assert scan_value("dropped dynamic/appdata/token/lib/") == []
+    codes = {item["code"] for item in scan_value("/home/analyst/samples/payload.bin")}
+    assert "path" in codes
+
+
+def test_share_package_lib_fragment_does_not_fail_strict(tmp_path):
+    from ioc_rejudge.share import create_bundle, restore_bundle, scan_bundle
+
+    source = tmp_path / "source.jsonl"
+    shared = tmp_path / "shared.jsonl"
+    restored = tmp_path / "restored.jsonl"
+    key = tmp_path / "share-key.json"
+    original = {
+        "ioc": "dropped.example.invalid",
+        "context": (
+            "dropped: dynamic/appdata/com.example.invalid/lib/libsample.so "
+            "dynamic/appdata/com.example.invalid/lib/libhelper.so"
+        ),
+        "comment": "also /home/analyst/samples/payload.bin",
+    }
+    source.write_text(json.dumps(original, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    result = create_bundle(
+        source,
+        shared,
+        key,
+        generate_key=True,
+        passphrase="test-passphrase",
+    )
+    assert result["output_findings"] == 0
+    assert scan_bundle(shared)["finding_count"] == 0
+    shared_text = shared.read_text(encoding="utf-8")
+    assert "com.example.invalid" not in shared_text
+    assert "libsample.so" not in shared_text
+    assert "/home/analyst/samples/payload.bin" not in shared_text
+
+    restore_bundle(shared, restored, key, passphrase="test-passphrase")
+    restored_row = json.loads(restored.read_text(encoding="utf-8"))
+    assert restored_row["context"] == original["context"]
+    assert restored_row["comment"] == original["comment"]
+
+
 def test_share_commands_are_available_from_package_entrypoint():
     import subprocess
     import sys

@@ -1,10 +1,12 @@
 """Route selection contract tests."""
 
 from dataclasses import FrozenInstanceError
+from datetime import datetime, timezone
 
 import pytest
 
 from ioc_rejudge.observations import (
+    Freshness,
     IocTarget,
     Observation,
     ProviderStatus,
@@ -21,13 +23,15 @@ TARGET = IocTarget(
 )
 
 
-def _classification(tags, status=ProviderStatus.SUCCESS):
+def _classification(tags, status=ProviderStatus.SUCCESS, freshness=Freshness.FRESH):
     return Observation(
         ioc=TARGET.normalized,
         scope="domain",
         provider="k01_compromise",
         kind="dga_classification",
         status=status,
+        fetched_at=datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc),
+        freshness=freshness,
         payload={"tags": tags},
     )
 

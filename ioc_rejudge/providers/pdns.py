@@ -21,6 +21,11 @@ from ioc_rejudge.providers.base import (
 )
 from ioc_rejudge.providers.cache import CacheEntry, JsonlProviderCache
 from ioc_rejudge.providers.go_transport import BatchRequest, GoBatchTransport
+from ioc_rejudge.providers.redaction import (
+    redact_secret_values,
+    safe_text,
+    secret_values,
+)
 from ioc_rejudge.providers.settings import ProviderSettings
 from ioc_rejudge.providers.transport import RequestsTransport, TransportError
 
@@ -81,6 +86,15 @@ class PDNSProvider:
 
     def _cache_ref(self, entry: CacheEntry) -> str:
         return f"cache:{self.name}:{entry.key}"
+
+    def _secret_values(self) -> tuple[str, ...]:
+        return secret_values(self.settings.secrets)
+
+    def _sanitize_response(self, response: object) -> object:
+        return redact_secret_values(response, self._secret_values())
+
+    def _safe_error(self, message: object) -> str:
+        return safe_text(message, self._secret_values())
 
     @staticmethod
     def _records(response: object) -> tuple[list[dict] | None, str | None]:
@@ -147,6 +161,7 @@ class PDNSProvider:
         freshness: Freshness,
         raw_ref: str,
     ) -> tuple[ProviderStatus, list[Observation], list[str]]:
+        response = self._sanitize_response(response)
         records, response_error = self._records(response)
         if response_error:
             return ProviderStatus.ERROR, [], [response_error]
@@ -175,9 +190,13 @@ class PDNSProvider:
                 response,
                 self.cache_params(target),
                 fetched_at=fetched_at,
+                secret_values=self._secret_values(),
             )
         except (OSError, TypeError, ValueError) as exc:
-            return "", f"cache write failed for {target.normalized}: {exc}"
+            return (
+                "",
+                f"cache write failed for {target.normalized}: {self._safe_error(exc)}",
+            )
         return self._cache_ref(entry), None
 
     def _append_stale(
@@ -198,7 +217,8 @@ class PDNSProvider:
         )
         observations.extend(stale_observations)
         errors.extend(
-            f"{target.normalized}: stale cache: {item}" for item in diagnostics
+            f"{target.normalized}: stale cache: {self._safe_error(item)}"
+            for item in diagnostics
         )
 
     def _collect_with_go(
@@ -225,7 +245,8 @@ class PDNSProvider:
                     target.host, self.cache_params(target), now=self.now_fn()
                 )
                 global_errors.extend(
-                    f"cache: {message}" for message in self.cache.diagnostics
+                    f"cache: {self._safe_error(message)}"
+                    for message in self.cache.diagnostics
                 )
             if entry is not None and entry.fresh:
                 status, cached_observations, diagnostics = self._consume(
@@ -257,14 +278,15 @@ class PDNSProvider:
             target_errors = errors_by_ioc[target.normalized]
             if result.error is not None:
                 statuses[target.normalized] = ProviderStatus.ERROR
-                target_errors.append(str(result.error))
+                target_errors.append(self._safe_error(result.error))
                 stale_observations: list[Observation] = []
                 self._append_stale(target, stale_entry, stale_observations, target_errors)
                 observations_by_ioc[target.normalized] = stale_observations
             else:
                 fetched_at = self.now_fn()
+                response = self._sanitize_response(result.payload)
                 raw_ref, cache_error = self._store_response(
-                    target, result.payload, fetched_at
+                    target, response, fetched_at
                 )
                 if cache_error:
                     statuses[target.normalized] = ProviderStatus.ERROR
@@ -276,12 +298,14 @@ class PDNSProvider:
                     observations_by_ioc[target.normalized] = stale_observations
                 else:
                     status, live_observations, diagnostics = self._consume(
-                        target, result.payload, fetched_at=fetched_at,
+                        target, response, fetched_at=fetched_at,
                         freshness=Freshness.FRESH, raw_ref=raw_ref,
                     )
                     statuses[target.normalized] = status
                     observations_by_ioc[target.normalized] = live_observations
-                    target_errors.extend(diagnostics)
+                    target_errors.extend(
+                        self._safe_error(item) for item in diagnostics
+                    )
             done += 1
             report_progress(context, self.name, done, total)
 
@@ -339,7 +363,8 @@ class PDNSProvider:
                         now=self.now_fn(),
                     )
                     errors.extend(
-                        f"cache: {message}" for message in self.cache.diagnostics
+                        f"cache: {self._safe_error(message)}"
+                        for message in self.cache.diagnostics
                     )
 
                 if entry is not None and (entry.fresh or context.offline):
@@ -365,21 +390,25 @@ class PDNSProvider:
 
                 stale_entry = entry if entry is not None and entry.stale else None
                 try:
-                    response = self.transport.get_json(
-                        self.endpoint(target),
-                        headers=dict(self.settings.secrets),
-                        timeout=self.settings.timeout,
+                    response = self._sanitize_response(
+                        self.transport.get_json(
+                            self.endpoint(target),
+                            headers=dict(self.settings.secrets),
+                            timeout=self.settings.timeout,
+                        )
                     )
                 except TransportError as exc:
                     statuses[target.normalized] = ProviderStatus.ERROR
-                    errors.append(f"{target.normalized}: {exc}")
+                    errors.append(f"{target.normalized}: {self._safe_error(exc)}")
                     self._append_stale(target, stale_entry, observations, errors)
                     continue
 
                 records, response_error = self._records(response)
                 if response_error:
                     statuses[target.normalized] = ProviderStatus.ERROR
-                    errors.append(f"{target.normalized}: {response_error}")
+                    errors.append(
+                        f"{target.normalized}: {self._safe_error(response_error)}"
+                    )
                     self._append_stale(target, stale_entry, observations, errors)
                     continue
 
@@ -400,7 +429,10 @@ class PDNSProvider:
                 )
                 statuses[target.normalized] = status
                 observations.extend(live_observations)
-                errors.extend(f"{target.normalized}: {item}" for item in diagnostics)
+                errors.extend(
+                    f"{target.normalized}: {self._safe_error(item)}"
+                    for item in diagnostics
+                )
             finally:
                 # Count after status/observations/errors are settled, including
                 # handled continue paths. An unexpected exception propagates

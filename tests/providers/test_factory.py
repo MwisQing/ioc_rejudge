@@ -19,6 +19,7 @@ from ioc_rejudge.providers.factory import (
     load_result_cache_settings,
     parse_provider_names,
 )
+from ioc_rejudge.providers.memory import MemoryLimits
 
 
 SENTINEL = "SENTINEL_FACTORY_SECRET_7f21"
@@ -273,6 +274,24 @@ def test_bad_or_secret_bearing_local_config_is_rejected(tmp_path, bad_config, ma
     path.write_text(json.dumps(bad_config), encoding="utf-8")
     with pytest.raises(ValueError, match=match):
         load_local_config(path)
+
+
+def test_memory_limits_cap_http_workers_and_go_jobs_per_process():
+    limits = MemoryLimits(
+        total_bytes=4 * 1024 ** 3,
+        http_workers=2,
+        provider_workers=2,
+        go_jobs_per_process=4,
+    )
+    providers = build_providers(
+        env=_full_env(),
+        adjudication_config=Config(),
+        memory_limits=limits,
+    )
+    assert {provider.settings.workers for provider in providers} == {2}
+    go_transport = providers[0].go_transport
+    assert go_transport is not None
+    assert go_transport.jobs_per_process == 4
 
 
 def test_missing_credentials_disable_each_provider_independently():
