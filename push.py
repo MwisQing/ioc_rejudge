@@ -27,6 +27,7 @@ _INIT_PATHS = [
     "docs/ARCHITECTURE.md",
     "docs/DEVELOPMENT.md",
     "docs/HISTORY.md",
+    "docs/ROADMAP.md",
     "pack.py",
     "push.py",
     "upgrade.py",

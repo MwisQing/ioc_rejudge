@@ -19,11 +19,18 @@ from ioc_rejudge.export import export_csv, export_excel, export_jsonl
 from ioc_rejudge.explanations import explain_verdict
 from ioc_rejudge.files import atomic_write_text
 from ioc_rejudge.diff import compare_verdicts
+from ioc_rejudge.inputs import read_input_bundle
+from ioc_rejudge.pipeline import PipelineDiagnostics, run_unified_pipeline
+from ioc_rejudge.providers.base import ProviderContext
+from ioc_rejudge.providers.factory import DEFAULT_PROVIDERS, build_providers
+from ioc_rejudge.providers.memory import cap_positive_int, detect_memory_limits
 from ioc_rejudge.review_queue import label_review_queue, load_queue
 from ioc_rejudge.workbench import (
     LocalWorkbenchAdapter,
     WorkbenchValidationError,
 )
+
+DEFAULT_PROVIDER_CACHE = Path("provider-cache")
 
 
 _RESULT_EXPORT_FIELDS = {
@@ -65,8 +72,18 @@ class OfflineWorkbenchAdapter(LocalWorkbenchAdapter):
     providers or disable offline mode.
     """
 
-    def __init__(self, workbench_dir: str | Path) -> None:
+    def __init__(
+        self,
+        workbench_dir: str | Path,
+        *,
+        cache_dir: str | Path | None = None,
+    ) -> None:
         super().__init__(workbench_dir)
+        self._cache_dir = (
+            Path(cache_dir).expanduser()
+            if cache_dir is not None
+            else DEFAULT_PROVIDER_CACHE
+        )
         self._task_lock = threading.RLock()
         self._recover_incomplete_tasks()
 
@@ -119,7 +136,7 @@ class OfflineWorkbenchAdapter(LocalWorkbenchAdapter):
             json.dumps(task, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         )
 
-    def _staged_path(self, import_id: str) -> Path:
+    def _load_manifest(self, import_id: str) -> dict[str, Any]:
         import_id = self._safe_id(import_id, "import_id")
         manifest_path = self._safe_join("staging", import_id, "import.json")
         try:
@@ -130,11 +147,22 @@ class OfflineWorkbenchAdapter(LocalWorkbenchAdapter):
             raise WorkbenchValidationError(f"import {import_id} is unreadable") from exc
         if not isinstance(manifest, dict) or not isinstance(manifest.get("filename"), str):
             raise WorkbenchValidationError(f"import {import_id} is malformed")
+        return manifest
+
+    def _staged_path(self, import_id: str) -> Path:
+        manifest = self._load_manifest(import_id)
         filename = self._safe_filename(manifest["filename"])
         staged_path = self._safe_join("staging", import_id, filename)
         if not staged_path.is_file():
             raise WorkbenchValidationError(f"imported input is missing: {import_id}")
         return staged_path
+
+    def _input_kind_for(self, import_id: str) -> str:
+        manifest = self._load_manifest(import_id)
+        kind = manifest.get("input_kind", "jsonl")
+        if kind not in {"jsonl", "bare"}:
+            return "jsonl"
+        return str(kind)
 
     @staticmethod
     def _result_id(task_id: str, ordinal: int) -> str:
@@ -228,19 +256,70 @@ class OfflineWorkbenchAdapter(LocalWorkbenchAdapter):
         return [(ordinals[id(row)], row) for row in filtered]
 
     def _diagnostic_data(self, diagnostics: Any) -> dict[str, Any]:
+        """Serialize legacy or unified diagnostics with stable, optional fields."""
+        if isinstance(diagnostics, PipelineDiagnostics) or hasattr(
+            diagnostics, "to_dict"
+        ):
+            try:
+                payload = diagnostics.to_dict()
+            except Exception:
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            return {
+                "processed_count": payload.get("processed_count", 0),
+                "parse_error_count": payload.get("parse_error_count", 0),
+                "nested_data_error_count": payload.get("nested_data_error_count", 0),
+                "input_errors": payload.get("input_errors") or [],
+                "provider_metrics": payload.get("provider_metrics") or {},
+                "provider_errors": payload.get("provider_errors") or {},
+                "result_cache_hit": payload.get("result_cache_hit", 0),
+                "result_cache_miss": payload.get("result_cache_miss", 0),
+                "result_cache_miss_reasons": payload.get("result_cache_miss_reasons")
+                or {},
+                "result_cache_errors": payload.get("result_cache_errors") or [],
+                "routes": payload.get("routes") or {},
+                "missing_required_providers": payload.get("missing_required_providers")
+                or {},
+                "classification_unknown": payload.get("classification_unknown") or [],
+                "processing_errors": payload.get("processing_errors") or {},
+                # Legacy-shaped keys stay present so consumers can read either path.
+                "missing_data_count": payload.get("missing_data_count", 0),
+                "empty_data_count": payload.get("empty_data_count", 0),
+                "non_list_data_count": payload.get("non_list_data_count", 0),
+                "no_ioc_count": payload.get("no_ioc_count", 0),
+                "invalid_ioc_count": payload.get(
+                    "invalid_ioc_count",
+                    len(payload.get("input_errors") or []),
+                ),
+                "skipped_total": payload.get(
+                    "skipped_total",
+                    payload.get("parse_error_count", 0),
+                ),
+                "parse_error_samples": payload.get("parse_error_samples")
+                or list(payload.get("input_errors") or [])[:20],
+                "skipped_row_samples": payload.get("skipped_row_samples") or [],
+            }
         return {
-            "input_path": diagnostics.input_path,
-            "processed_count": diagnostics.processed_count,
-            "parse_error_count": diagnostics.parse_error_count,
-            "nested_data_error_count": diagnostics.nested_data_error_count,
-            "missing_data_count": diagnostics.missing_data_count,
-            "empty_data_count": diagnostics.empty_data_count,
-            "non_list_data_count": diagnostics.non_list_data_count,
-            "no_ioc_count": diagnostics.no_ioc_count,
-            "invalid_ioc_count": diagnostics.invalid_ioc_count,
-            "skipped_total": diagnostics.skipped_total,
-            "parse_error_samples": diagnostics.parse_error_samples,
-            "skipped_row_samples": diagnostics.skipped_row_samples,
+            "input_path": getattr(diagnostics, "input_path", None),
+            "processed_count": getattr(diagnostics, "processed_count", 0),
+            "parse_error_count": getattr(diagnostics, "parse_error_count", 0),
+            "nested_data_error_count": getattr(
+                diagnostics, "nested_data_error_count", 0
+            ),
+            "missing_data_count": getattr(diagnostics, "missing_data_count", 0),
+            "empty_data_count": getattr(diagnostics, "empty_data_count", 0),
+            "non_list_data_count": getattr(diagnostics, "non_list_data_count", 0),
+            "no_ioc_count": getattr(diagnostics, "no_ioc_count", 0),
+            "invalid_ioc_count": getattr(diagnostics, "invalid_ioc_count", 0),
+            "skipped_total": getattr(diagnostics, "skipped_total", 0),
+            "parse_error_samples": getattr(diagnostics, "parse_error_samples", [])
+            or [],
+            "skipped_row_samples": getattr(diagnostics, "skipped_row_samples", [])
+            or [],
+            "provider_metrics": getattr(diagnostics, "provider_metrics", {}) or {},
+            "result_cache_hit": getattr(diagnostics, "result_cache_hit", 0),
+            "result_cache_miss": getattr(diagnostics, "result_cache_miss", 0),
         }
 
     def _task_paths(self, task_id: str) -> tuple[Path, Path]:
@@ -250,19 +329,58 @@ class OfflineWorkbenchAdapter(LocalWorkbenchAdapter):
             self._safe_join("tasks", task_id, "diagnostics.json"),
         )
 
+    def _run_bare_unified_pipeline(self, staged_path: Path) -> Any:
+        """Offline unified pipeline: cache/sidecar only, no credentials or network."""
+        try:
+            bundle = read_input_bundle(str(staged_path))
+        except (OSError, ValueError) as exc:
+            raise WorkbenchValidationError(str(exc)) from exc
+        if not bundle.targets:
+            detail = "; ".join(bundle.errors[:5]) if bundle.errors else "no targets"
+            raise WorkbenchValidationError(
+                f"bare input produced no valid IOC targets ({detail})"
+            )
+        config = Config()
+        memory_limits = detect_memory_limits()
+        config.provider_workers = cap_positive_int(
+            config.provider_workers, memory_limits.provider_workers
+        )
+        # Default six sources, offline-only: read cache, no credentials, no network.
+        providers = build_providers(
+            list(DEFAULT_PROVIDERS),
+            env={},
+            credentials_path=None,
+            cache_dir=self._cache_dir,
+            adjudication_config=config,
+            offline=True,
+            memory_limits=memory_limits,
+        )
+        return run_unified_pipeline(
+            bundle,
+            providers,
+            config,
+            ProviderContext(offline=True),
+        )
+
     def _run_pipeline_task(self, task_id: str, staged_path: Path) -> None:
         result_path, diagnostics_path = self._task_paths(task_id)
         try:
-            pipeline = run_pipeline_with_diagnostics(str(staged_path), Config())
+            with self._task_lock:
+                task_meta = self._load_task(task_id)
+            input_kind = task_meta.get("input_kind", "jsonl")
+            if input_kind == "bare":
+                pipeline = self._run_bare_unified_pipeline(staged_path)
+                empty_message = "unified pipeline produced no verdicts; see diagnostics"
+            else:
+                pipeline = run_pipeline_with_diagnostics(str(staged_path), Config())
+                empty_message = "snapshot pipeline produced no verdicts; see diagnostics"
             diagnostics = self._diagnostic_data(pipeline.diagnostics)
             atomic_write_text(
                 diagnostics_path,
                 json.dumps(diagnostics, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
             )
             if not pipeline.verdicts:
-                raise WorkbenchValidationError(
-                    "snapshot pipeline produced no verdicts; see diagnostics"
-                )
+                raise WorkbenchValidationError(empty_message)
             export_jsonl(pipeline.verdicts, str(result_path))
             with self._task_lock:
                 task = self._load_task(task_id)
@@ -308,6 +426,12 @@ class OfflineWorkbenchAdapter(LocalWorkbenchAdapter):
         background = bool(options and options.get("background") is True)
 
         staged_path = self._staged_path(import_id)
+        input_kind = self._input_kind_for(import_id)
+        mode = (
+            "offline_unified_bare"
+            if input_kind == "bare"
+            else "offline_legacy_snapshot"
+        )
 
         task_id = f"task-{secrets.token_hex(10)}"
         task_root = self._safe_join("tasks", task_id)
@@ -316,7 +440,8 @@ class OfflineWorkbenchAdapter(LocalWorkbenchAdapter):
             "task_id": task_id,
             "import_id": import_id,
             "state": "queued" if background else "running",
-            "mode": "offline_legacy_snapshot",
+            "mode": mode,
+            "input_kind": input_kind,
             "created_at_utc": _utc_now(),
             "result_count": 0,
             "progress": {"phase": "queued" if background else "pipeline", "completed": 0, "total": None},

@@ -31,6 +31,11 @@ def build_queue(rows: Iterable[dict[str, Any]], *, pending_only: bool = True) ->
         items.append(item)
     return sorted(items, key=lambda x: str(x.get("ioc", "")))
 
+def load_labels(path: str | Path) -> list[dict[str, Any]]:
+    """Return analyst label records (excluding reopens) in file order."""
+    return _read_labels(path)
+
+
 def append_label(path: str | Path, ioc: str, *, label: str, note: str = "", reviewer: str = "", reviewed_at: str | None = None) -> None:
     record={"_type":"label", "ioc":ioc, "label":label, "note":note, "reviewer":reviewer, "reviewed_at": reviewed_at or datetime.now(timezone.utc).isoformat()}
     p=Path(path); p.parent.mkdir(parents=True, exist_ok=True)

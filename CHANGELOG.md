@@ -1,8 +1,12 @@
 # 更新日志
 
-## 未发布
+## 2.9.0 - 2026-10-08
 
-暂无。
+- 新增：队列结果消费闭环。`jobs results/export`（三格式、冲突避让、仅 succeeded）、`jobs explain/review/diff`（解释结构、三值人工标签幂等追加且不改系统结论、双 succeeded 迁移对比）；Web 队列面板成为唯一任务中心——结果行解释展开、复核、三格式受控下载、baseline diff 与 KPI 摘要卡，旧 workbench 面板默认隐藏（`--legacy-workbench` 可回看，后端不变）；`jobs list/run` 输出实际读取的 jobs 目录。
+- 新增：统一任务队列。`python -m ioc_rejudge judge ... --queue` 异步入队并返回 job_id；`jobs list/status/run/cancel/prune` 命令族（`--json` 机器输出、退出码 0/2/3/4、入口自动收口过期租约）；本地 UI 新增「队列」面板（粘贴入队计数预览、列表轮询、queued 取消、行内 offline 运行），CLI 与 Web 共用 `jobs` 目录存储。取消语义如实分层：queued 即时取消，running 仅置标志（启动前消费），不做不安全的运行中强杀；默认保留最近 50 个任务，`prune` 默认 dry-run。修复 Windows 下状态轮询与任务写入并发时 `os.replace` 偶发拒绝访问导致的静默卡死（写入短重试 + 类型化错误闭环 + worker 异常留痕）。online 任务按 CLI 同参运行（凭据仅环境/凭证文件，jobs 目录 sentinel 扫描零匹配）；bare 研判接入完整结果缓存（CLI/Web 共享 fingerprint，`preset=refresh` 绕过）；保留清理默认 dry-run 且永不删除排队/运行中任务。`jobs run` 前台输出逐接口实时进度（与直跑一致，心跳租约防线不受影响），Web 运行中任务显示最近进度行。
+- 新增：`python -m ioc_rejudge judge` 高频轻量入口：位置 IOC、`--stdin`（按行、跳过空行与注释、拒绝交互等待）、`--file`、`--preset fast|standard|refresh` 与 `--json` 适配器摘要组合输入；未识别的主 CLI 参数按选项-值成对透传，不再被误收为位置 IOC；空输入与无来源明确报错并以非 0 退出；输入超过阈值（数量 > 500 或展开长度 > 8192）时自动改写临时文件经 `--input` 传入，规避命令行长度上限，小输入行为不变。
+- 新增：本地 workbench 支持粘贴裸 IOC 文本（`.txt`/等价标记），解析预览有效/重复/拒绝计数后一键入队；`input_kind=bare` 走 offline 统一管线（默认六源、只读本地缓存、不读凭据、不联网，命中缓存即复现结论），legacy JSONL 快照路径与既有结果/复核/导出契约保持不变。
+- 验证：全量 Python 测试 `1265 passed, 1 skipped`。发布包内容、manifest、禁入项和 SHA-256 在打包后复核。
 
 ## 2.8.0 - 2026-09-22
 

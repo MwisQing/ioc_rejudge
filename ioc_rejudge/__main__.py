@@ -29,4 +29,14 @@ if len(sys.argv) > 1 and sys.argv[1] == "ui":
 
     raise SystemExit(ui_main(sys.argv[2:]))
 
+if len(sys.argv) > 1 and sys.argv[1] == "judge":
+    from ioc_rejudge.quick_cli import main as judge_main
+
+    raise SystemExit(judge_main(sys.argv[2:]))
+
+if len(sys.argv) > 1 and sys.argv[1] == "jobs":
+    from ioc_rejudge.jobs_cli import main as jobs_main
+
+    raise SystemExit(jobs_main(sys.argv[2:]))
+
 main()

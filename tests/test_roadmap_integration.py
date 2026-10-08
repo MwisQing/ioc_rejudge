@@ -293,7 +293,10 @@ def test_workbench_background_task_is_observable_and_exposes_safe_diagnostics(tm
     assert "input_path" not in diagnostics
 
     summary = adapter.summary(started["task_id"])
-    assert summary["version"] == "2.8.0"
+    expected_version = (
+        Path(__file__).resolve().parent.parent / "VERSION"
+    ).read_text(encoding="utf-8").strip()
+    assert summary["version"] == expected_version
     assert len(summary["input"]["sha256"]) == 64
     assert summary["execution"]["network"] == "disabled"
     assert "input_path" not in json.dumps(summary, ensure_ascii=False)

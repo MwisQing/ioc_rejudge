@@ -21,6 +21,7 @@ import os
 import re
 import secrets
 import shutil
+import time
 import sys
 import tempfile
 import threading
@@ -34,9 +35,26 @@ from urllib.parse import parse_qs, urlsplit
 import requests
 
 from ioc_rejudge.inputs import read_input_bundle
+from ioc_rejudge.job_queue import (
+    DEFAULT_JOBS_DIR,
+    InvalidJobStateError,
+    JobNotFoundError,
+    JobsQueueError,
+    UnifiedJobQueue,
+)
+from ioc_rejudge.jobs_cli import JobExportError, export_job_results
+from ioc_rejudge.jobs_consumers import (
+    JobsConsumerError,
+    JobsConsumerUsageError,
+    append_review,
+    diff_jobs,
+    explain_result,
+    read_result_rows,
+    review_overlay,
+)
 from ioc_rejudge.observations import Freshness, ProviderStatus
 from ioc_rejudge.providers.base import ProviderContext, ProviderResult
-from ioc_rejudge.providers.factory import build_providers
+from ioc_rejudge.providers.factory import DEFAULT_PROVIDERS, build_providers
 from ioc_rejudge.providers.transport import RequestsTransport
 from ioc_rejudge.share import (
     ShareError,
@@ -58,6 +76,7 @@ MAX_BUNDLES = 20
 MAX_BODY_BYTES = 32 * 1024 * 1024
 DEFAULT_CACHE_DIR = Path("provider-cache")
 DEFAULT_CREDENTIALS_FILE = Path("credentials.local.json")
+UI_JOBS_RUNNER_NAME = "ui-offline"
 LOOKUP_CREDENTIALS_ERROR = (
     "ioc_info is disabled (missing credentials); cannot query. "
     "Start with --credentials-file credentials.local.json "
@@ -70,6 +89,7 @@ LOOKUP_CONNECT_TIMEOUT_SECONDS = 5
 LOOKUP_READ_TIMEOUT_SECONDS = 15
 _PARALLEL_API_PATHS = frozenset({"/api/status", "/api/lookup"})
 _WORKBENCH_API_PREFIX = "/api/workbench/"
+_JOBS_API_PREFIX = "/api/jobs/"
 _SENSITIVE_SUMMARY_KEY_RE = re.compile(
     r"(?:^|_)(?:secret|password|credential|authorization|api[_-]?key|token)(?:$|_)",
     re.IGNORECASE,
@@ -81,6 +101,216 @@ _BUNDLE_ID_RE = re.compile(r"[0-9a-f]{20}")
 _WORKBENCH_ID_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]{0,127}")
 _INVALID_IOC_RE = re.compile(r"^line (\d+): invalid IOC (.+)$")
 _PAGE_FILE = Path(__file__).with_name("ui.html")
+
+# Process-wide single offline jobs runner (UI concurrent cap = 1).
+_jobs_runner_lock = threading.Lock()
+_jobs_runner_thread: threading.Thread | None = None
+_jobs_runner_job_id: str | None = None
+# Latest in-flight progress line for the active runner (single dict overwrite).
+_jobs_runner_progress: dict[str, Any] | None = None
+
+
+def _jobs_recover_stale(queue: UnifiedJobQueue) -> None:
+    try:
+        queue.recover_stale()
+    except Exception:
+        pass
+
+
+def _public_job_record(job: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a browser-safe job document (no filesystem paths)."""
+    if job is None:
+        return None
+    if not isinstance(job, dict):
+        return {"value": str(job)}
+    public: dict[str, Any] = {}
+    for key, value in job.items():
+        if key in {"path", "input_path", "result_path", "diagnostics_path", "jobs_dir"}:
+            continue
+        if isinstance(key, str) and key.endswith("_path"):
+            continue
+        if isinstance(value, dict):
+            public[key] = _public_job_record(value)
+        elif isinstance(value, list):
+            public[key] = [
+                _public_job_record(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        elif isinstance(value, Path):
+            continue
+        else:
+            public[key] = value
+    return public
+
+
+def _read_job_result_rows(queue: UnifiedJobQueue, job_id: str) -> list[dict[str, Any]]:
+    path = queue.root / job_id / "results.jsonl"
+    if not path.is_file():
+        return []
+    rows: list[dict[str, Any]] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+_jobs_runner_last_failure: dict[str, Any] | None = None
+
+_jobs_runner_last_exception: dict[str, Any] | None = None
+
+
+def _format_runner_progress_text(*args: Any, **_kwargs: Any) -> str:
+    """Render one progress callback payload as a short operator-facing line."""
+    if not args:
+        return ""
+    first = args[0]
+    if isinstance(first, str):
+        return first
+    provider = getattr(first, "provider", None)
+    if provider is not None:
+        done = getattr(first, "done", "?")
+        total = getattr(first, "total", "?")
+        detail = getattr(first, "detail", None) or ""
+        line = f"[{provider}] {done}/{total}"
+        if detail:
+            line += f"  {detail}"
+        return line
+    return str(first)
+
+
+def _set_jobs_runner_progress(*args: Any, **kwargs: Any) -> None:
+    """Keep only the most recent progress line for the active UI runner."""
+    global _jobs_runner_progress
+    text = _format_runner_progress_text(*args, **kwargs).strip()
+    if not text:
+        return
+    # ISO-ish timestamp without importing datetime at module import cost paths.
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    with _jobs_runner_lock:
+        _jobs_runner_progress = {"text": text[:500], "updated_at": stamp}
+
+
+def _clear_jobs_runner_progress() -> None:
+    global _jobs_runner_progress
+    with _jobs_runner_lock:
+        _jobs_runner_progress = None
+
+
+def _snapshot_jobs_runner_progress(job_id: str) -> dict[str, Any] | None:
+    """Return a copy of runner progress when it belongs to *job_id*."""
+    with _jobs_runner_lock:
+        if _jobs_runner_job_id != job_id:
+            return None
+        if not isinstance(_jobs_runner_progress, dict):
+            return None
+        text = _jobs_runner_progress.get("text")
+        if not isinstance(text, str) or not text:
+            return None
+        out: dict[str, Any] = {"text": text}
+        updated = _jobs_runner_progress.get("updated_at")
+        if isinstance(updated, str) and updated:
+            out["updated_at"] = updated
+        return out
+
+
+def _record_jobs_runner_exception(job_id: str, exc: BaseException) -> None:
+    """Persist the most recent worker exception for diagnostics.
+
+    Worker threads run headless; without this record an exception before
+    claim would leave the job queued with no visible cause.
+    """
+    global _jobs_runner_last_exception
+    import traceback
+
+    _jobs_runner_last_exception = {
+        "job_id": job_id,
+        "type": type(exc).__name__,
+        "error": str(exc)[:500],
+        "traceback": traceback.format_exc()[-2000:],
+    }
+
+
+
+def _record_jobs_runner_failure(job_id: str, result: dict[str, Any]) -> None:
+    """Keep the most recent runner failure in memory for diagnostics.
+
+    Pre-claim failures leave the job queued (re-runnable); without this
+    record the failure mode would be invisible to the operator.
+    """
+    global _jobs_runner_last_failure
+    _jobs_runner_last_failure = {
+        "job_id": job_id,
+        "error": str(result.get("error", ""))[:500],
+        "state": result.get("state"),
+    }
+
+
+def _jobs_runner_entry(state: "UiState", job_id: str) -> None:
+    """Background entry: claim → execute → finish; always clear the runner slot."""
+    global _jobs_runner_thread, _jobs_runner_job_id, _jobs_runner_progress
+    try:
+        from ioc_rejudge.jobs_cli import run_job
+
+        run_kwargs: dict[str, Any] = dict(
+            cache_dir=state.cache_dir,
+            runner_name=UI_JOBS_RUNNER_NAME,
+            pid=os.getpid(),
+            transport_factory=state.transport_factory,
+            # Heartbeat remains inside run_job; these hooks only capture text.
+            progress=_set_jobs_runner_progress,
+            on_progress=_set_jobs_runner_progress,
+        )
+        # Match lookup credential resolution: explicit file wins; otherwise the
+        # UI may supply a sealed env map (tests); else process environment.
+        if state.credentials_path is not None:
+            run_kwargs["credentials_path"] = state.credentials_path
+        elif state.provider_env is not None:
+            run_kwargs["env"] = dict(state.provider_env)
+
+        result = run_job(state.job_queue, job_id, **run_kwargs)
+        # Transient storage failures (Windows AV/indexer file contention) are
+        # reported as retryable pre-claim outcomes; the job stays queued and
+        # re-runnable, so bounded retries are always safe here.
+        attempts = 0
+        while (
+            isinstance(result, dict)
+            and result.get("ok") is False
+            and result.get("retryable")
+            and attempts < 2
+        ):
+            attempts += 1
+            time.sleep(0.25)
+            result = run_job(state.job_queue, job_id, **run_kwargs)
+        if isinstance(result, dict) and result.get("ok") is False:
+            _record_jobs_runner_failure(job_id, result)
+    except Exception as exc:
+        err_text = str(exc)[:500] or type(exc).__name__
+        _record_jobs_runner_exception(job_id, exc)
+        try:
+            current = state.job_queue.get(job_id)
+            if current.get("state") == "running":
+                state.job_queue.finish(job_id, state="failed", error=err_text)
+        except Exception:
+            pass
+    finally:
+        with _jobs_runner_lock:
+            # Only clear the slot while it still belongs to THIS worker; a
+            # newer worker may already have claimed the slot after this
+            # thread body finished but before its finally ran.
+            if _jobs_runner_thread is threading.current_thread():
+                _jobs_runner_thread = None
+                _jobs_runner_job_id = None
+                _jobs_runner_progress = None
 
 
 def _rejected_rows_from_errors(errors: list[str]) -> list[dict]:
@@ -675,6 +905,8 @@ class UiState:
         provider_env: dict[str, str] | None = None,
         transport_factory=None,
         workbench_adapter: WorkbenchAdapter | None = None,
+        jobs_dir: Path | None = None,
+        job_queue: UnifiedJobQueue | None = None,
     ) -> None:
         if max_bundles < 1:
             raise ValueError("max_bundles must be at least 1")
@@ -694,16 +926,29 @@ class UiState:
         self.lookup_provider = None
         self.lookup_offline = True
         self.workbench_adapter = workbench_adapter
+        if job_queue is not None:
+            self.job_queue = job_queue
+        else:
+            root = Path(jobs_dir) if jobs_dir is not None else Path(DEFAULT_JOBS_DIR)
+            root.mkdir(parents=True, exist_ok=True)
+            self.job_queue = UnifiedJobQueue(root)
         # The passphrase (not the derived key) is kept, because the wrapped
         # share functions re-load and re-verify the key file per operation.
         self.passphrase: str | None = None
         self.key_id: str | None = None
         self.lock = threading.Lock()
         self.lookup_lock = threading.Lock()
+        # Opaque export_id -> on-disk path under jobs_dir (never exposed to clients).
+        self.job_exports: dict[str, Path] = {}
+        self.legacy_workbench: bool = False
 
     @property
     def unlocked(self) -> bool:
         return self.passphrase is not None
+
+    @property
+    def jobs_dir(self) -> Path:
+        return Path(self.job_queue.root)
 
     @property
     def workbench_dir(self) -> Path | None:
@@ -828,6 +1073,16 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             self._send_json(403, {"error": "forbidden"})
             return
         if path.startswith("/api/"):
+            if path.startswith(_JOBS_API_PREFIX):
+                try:
+                    self._handle_jobs_get(path)
+                except ShareError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                except JobsQueueError as exc:
+                    self._send_json(400, {"error": str(exc)})
+                except Exception as exc:
+                    self._send_json(500, {"error": f"internal error: {exc}"})
+                return
             if not path.startswith(_WORKBENCH_API_PREFIX):
                 self._drain_request_body()
                 self._send_json(404, {"error": "not found"})
@@ -855,6 +1110,16 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
         except OSError:
             self._send_json(500, {"error": "ui page is missing from the installation"})
             return
+        # Optional legacy workbench: inject a bootstrap flag so the page can
+        # unhide the retired panel without a second HTML file.
+        if self.ui_state.legacy_workbench:
+            marker = b"<head>"
+            inject = (
+                b"<head>\n"
+                b"<script>window.__LEGACY_WORKBENCH__=true;</script>"
+            )
+            if marker in page:
+                page = page.replace(marker, inject, 1)
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -893,6 +1158,14 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             "/api/workbench/export": self._handle_workbench_export,
             "/api/workbench/diagnostics": self._handle_workbench_diagnostics,
             "/api/workbench/diff": self._handle_workbench_diff,
+            "/api/jobs/enqueue": self._handle_jobs_enqueue,
+            "/api/jobs/cancel": self._handle_jobs_cancel,
+            "/api/jobs/run": self._handle_jobs_run,
+            "/api/jobs/prune": self._handle_jobs_prune,
+            "/api/jobs/explain": self._handle_jobs_explain,
+            "/api/jobs/review": self._handle_jobs_review,
+            "/api/jobs/export": self._handle_jobs_export,
+            "/api/jobs/diff": self._handle_jobs_diff,
         }
         handler = handlers.get(urlsplit(self.path).path)
         if handler is None:
@@ -911,6 +1184,15 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
         except ShareError as exc:
             self._send_json(400, {"error": str(exc)})
             return
+        except JobsConsumerUsageError as exc:
+            self._send_json(400, {"error": str(exc), "reason": str(exc)})
+            return
+        except JobsConsumerError as exc:
+            self._send_json(400, {"error": str(exc), "reason": str(exc)})
+            return
+        except JobExportError as exc:
+            self._send_json(400, {"error": str(exc), "reason": str(exc)})
+            return
         except WorkbenchUnavailable as exc:
             self._send_json(
                 501,
@@ -924,10 +1206,369 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
         except WorkbenchError as exc:
             self._send_json(400, {"error": str(exc), "available": False})
             return
+        except JobsQueueError as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
         except Exception as exc:  # surfaced to the page without a stack trace
             self._send_json(500, {"error": f"internal error: {exc}"})
             return
         self._send_json(200, result)
+
+    # -- unified jobs api handlers ----------------------------------------
+
+    @staticmethod
+    def _valid_job_id(value: Any, field: str = "job_id") -> str:
+        if (
+            not isinstance(value, str)
+            or not value
+            or ".." in value
+            or not _WORKBENCH_ID_RE.fullmatch(value)
+        ):
+            raise ShareError(f"{field} is required")
+        return value
+
+    def _handle_jobs_get(self, path: str) -> None:
+        parts = [part for part in path.split("/") if part]
+        query = parse_qs(urlsplit(self.path).query)
+        queue = self.ui_state.job_queue
+        _jobs_recover_stale(queue)
+
+        if len(parts) == 3 and parts[:3] == ["api", "jobs", "list"]:
+            state_filter = None
+            raw_state = query.get("state")
+            if raw_state:
+                state_filter = raw_state[0]
+                if not state_filter:
+                    state_filter = None
+            try:
+                jobs = queue.list_jobs(state=state_filter)
+            except InvalidJobStateError as exc:
+                raise ShareError(str(exc)) from exc
+            public_jobs = [_public_job_record(job) for job in jobs]
+            self._send_json(200, {"ok": True, "jobs": public_jobs})
+            return
+
+        if len(parts) == 3 and parts[:3] == ["api", "jobs", "status"]:
+            raw_ids = query.get("job_id") or []
+            if not raw_ids:
+                raise ShareError("job_id is required")
+            job_id = self._valid_job_id(raw_ids[0])
+            try:
+                job = queue.get(job_id)
+            except JobNotFoundError as exc:
+                raise ShareError(f"job not found: {job_id}") from exc
+            payload: dict[str, Any] = {"ok": True, "job": _public_job_record(job)}
+            if str(job.get("state") or "") == "running":
+                runner_progress = _snapshot_jobs_runner_progress(job_id)
+                if runner_progress is not None:
+                    payload["runner_progress"] = runner_progress
+            self._send_json(200, payload)
+            return
+
+        if len(parts) == 3 and parts[:3] == ["api", "jobs", "results"]:
+            raw_ids = query.get("job_id") or []
+            if not raw_ids:
+                raise ShareError("job_id is required")
+            job_id = self._valid_job_id(raw_ids[0])
+            try:
+                queue.get(job_id)
+            except JobNotFoundError as exc:
+                raise ShareError(f"job not found: {job_id}") from exc
+            rows = _read_job_result_rows(queue, job_id)
+            try:
+                overlay_items = review_overlay(queue.root, job_id)
+            except JobsConsumerError:
+                overlay_items = []
+            overlay_by_ioc = {
+                str(item.get("ioc")): item
+                for item in overlay_items
+                if isinstance(item, dict) and item.get("ioc") is not None
+            }
+            enriched: list[dict[str, Any]] = []
+            for index, row in enumerate(rows):
+                item = dict(row)
+                embedded = row.get("result_id")
+                if isinstance(embedded, str) and embedded.strip():
+                    result_id = embedded.strip()
+                else:
+                    result_id = f"{job_id}-{index + 1:06d}"
+                item["result_id"] = result_id
+                ioc = row.get("ioc")
+                if ioc is not None and str(ioc) in overlay_by_ioc:
+                    item["review_overlay"] = overlay_by_ioc[str(ioc)]
+                enriched.append(item)
+            self._send_json(200, {"ok": True, "rows": enriched})
+            return
+
+        if len(parts) == 5 and parts[:3] == ["api", "jobs", "export"]:
+            export_id = parts[3]
+            if parts[4] != "download" or not self._valid_workbench_id(export_id):
+                raise ShareError("export_id is invalid")
+            file_path = self.ui_state.job_exports.get(export_id)
+            if file_path is None:
+                self._drain_request_body()
+                self._send_json(404, {"error": "export file not found"})
+                return
+            self._send_controlled_file(file_path, root=self.ui_state.jobs_dir)
+            return
+
+        self._drain_request_body()
+        self._send_json(404, {"error": "unknown jobs endpoint"})
+
+    def _handle_jobs_enqueue(self, body: dict) -> dict:
+        content = body.get("content")
+        if not isinstance(content, str):
+            raise ShareError("content must be a string")
+        if not content.strip():
+            raise ShareError("content is required")
+        filename = body.get("filename")
+        if filename is not None and not isinstance(filename, str):
+            raise ShareError("filename must be a string")
+        raw_mode = body.get("mode", "offline")
+        if raw_mode is None:
+            raw_mode = "offline"
+        if not isinstance(raw_mode, str) or raw_mode not in {"offline", "online"}:
+            raise ShareError("mode must be offline or online")
+        mode = raw_mode
+        source = "ui"
+        if isinstance(filename, str) and filename.strip():
+            # Keep source short and path-free; only the basename label.
+            label = Path(filename.replace("\\", "/")).name.strip()[:64]
+            if label:
+                source = f"ui:{label}"
+        queue = self.ui_state.job_queue
+        _jobs_recover_stale(queue)
+        job = queue.create_job(
+            content,
+            input_kind="bare",
+            mode=mode,
+            providers=list(DEFAULT_PROVIDERS),
+            preset="standard",
+            source=source,
+        )
+        return {"ok": True, "job": _public_job_record(job)}
+
+    def _handle_jobs_cancel(self, body: dict) -> dict:
+        job_id = self._valid_job_id(body.get("job_id"))
+        queue = self.ui_state.job_queue
+        _jobs_recover_stale(queue)
+        try:
+            result = queue.request_cancel(job_id)
+        except JobNotFoundError as exc:
+            raise ShareError(f"job not found: {job_id}") from exc
+        except InvalidJobStateError as exc:
+            raise ShareError(str(exc)) from exc
+        return {
+            "ok": True,
+            "action": result.get("action", "unknown"),
+            "job_id": job_id,
+        }
+
+    def _handle_jobs_run(self, body: dict) -> dict:
+        global _jobs_runner_thread, _jobs_runner_job_id
+        job_id = self._valid_job_id(body.get("job_id"))
+        queue = self.ui_state.job_queue
+        _jobs_recover_stale(queue)
+
+        # Single-runner gate first so duplicate run requests report the live job.
+        # A still-alive runner for THIS job is a genuine duplicate request;
+        # one for a DIFFERENT job means the previous worker is in its exit
+        # window -- wait briefly for the slot instead of reporting success
+        # without starting anything.
+        deadline = time.monotonic() + 10.0
+        while True:
+            with _jobs_runner_lock:
+                alive = (
+                    _jobs_runner_thread is not None
+                    and _jobs_runner_thread.is_alive()
+                )
+                if not alive:
+                    break
+                if _jobs_runner_job_id == job_id:
+                    return {
+                        "ok": True,
+                        "running_job_id": _jobs_runner_job_id,
+                    }
+            if time.monotonic() >= deadline:
+                return {
+                    "ok": False,
+                    "error": "another job is currently running",
+                    "running_job_id": _jobs_runner_job_id,
+                }
+            time.sleep(0.05)
+
+        try:
+            existing = queue.get(job_id)
+        except JobNotFoundError as exc:
+            raise ShareError(f"job not found: {job_id}") from exc
+
+        if existing.get("state") != "queued":
+            return {
+                "ok": False,
+                "error": f"job is not queued (state={existing.get('state')})",
+                "job_id": job_id,
+                "state": existing.get("state"),
+            }
+
+        with _jobs_runner_lock:
+            alive = (
+                _jobs_runner_thread is not None and _jobs_runner_thread.is_alive()
+            )
+            if alive:
+                return {
+                    "ok": True,
+                    "running_job_id": _jobs_runner_job_id,
+                }
+            worker = threading.Thread(
+                target=_jobs_runner_entry,
+                args=(self.ui_state, job_id),
+                name=f"ui-jobs-runner:{job_id}",
+                daemon=True,
+            )
+            _jobs_runner_job_id = job_id
+            _jobs_runner_thread = worker
+            worker.start()
+        return {"ok": True, "job_id": job_id}
+
+    def _handle_jobs_prune(self, body: dict) -> dict:
+        from ioc_rejudge.job_queue import DEFAULT_KEEP
+        from ioc_rejudge.jobs_cli import prune_jobs
+
+        keep = body.get("keep", DEFAULT_KEEP)
+        if keep is None:
+            keep = DEFAULT_KEEP
+        if not isinstance(keep, int) or isinstance(keep, bool) or keep < 0:
+            raise ShareError("keep must be a non-negative integer")
+        apply = bool(body.get("apply", False))
+        queue = self.ui_state.job_queue
+        _jobs_recover_stale(queue)
+        try:
+            result = prune_jobs(queue, keep=keep, dry_run=not apply)
+        except InvalidJobStateError as exc:
+            raise ShareError(str(exc)) from exc
+        return {
+            "ok": True,
+            "kept": result.get("kept"),
+            "removed": result.get("removed") or [],
+            "freed_bytes": result.get("freed_bytes", 0),
+            "dry_run": not apply,
+        }
+
+    def _handle_jobs_explain(self, body: dict) -> dict:
+        job_id = self._valid_job_id(body.get("job_id"))
+        result_id = body.get("result_id")
+        if not isinstance(result_id, str) or not result_id.strip():
+            raise ShareError("result_id is required")
+        queue = self.ui_state.job_queue
+        _jobs_recover_stale(queue)
+        explanation = explain_result(
+            queue.root, job_id, result_id=result_id.strip()
+        )
+        return {"ok": True, "explanation": _public_job_record(explanation)}
+
+    def _handle_jobs_review(self, body: dict) -> dict:
+        job_id = self._valid_job_id(body.get("job_id"))
+        result_id = body.get("result_id")
+        if not isinstance(result_id, str) or not result_id.strip():
+            raise ShareError("result_id is required")
+        label = body.get("label")
+        if not isinstance(label, str) or not label.strip():
+            raise ShareError("label is required")
+        note = body.get("note", "")
+        reviewer = body.get("reviewer", "")
+        if note is None:
+            note = ""
+        if reviewer is None:
+            reviewer = ""
+        if not isinstance(note, str) or not isinstance(reviewer, str):
+            raise ShareError("note and reviewer must be strings")
+
+        queue = self.ui_state.job_queue
+        _jobs_recover_stale(queue)
+        rows, _skipped = read_result_rows(queue.root, job_id)
+        target = result_id.strip()
+        matched_ioc: str | None = None
+        for index, row in enumerate(rows):
+            embedded = row.get("result_id")
+            if isinstance(embedded, str) and embedded.strip():
+                if embedded.strip() == target:
+                    ioc = row.get("ioc")
+                    if isinstance(ioc, str) and ioc.strip():
+                        matched_ioc = ioc.strip()
+                    break
+                continue
+            derived = f"{job_id}-{index + 1:06d}"
+            if derived == target:
+                ioc = row.get("ioc")
+                if isinstance(ioc, str) and ioc.strip():
+                    matched_ioc = ioc.strip()
+                break
+        if not matched_ioc:
+            raise ShareError(f"result not found: {target}")
+
+        review = append_review(
+            queue.root,
+            job_id,
+            ioc=matched_ioc,
+            label=label.strip(),
+            note=note,
+            reviewer=reviewer,
+        )
+        public = _public_job_record(review) or {}
+        return {"ok": True, "review": public}
+
+    def _handle_jobs_export(self, body: dict) -> dict:
+        job_id = self._valid_job_id(body.get("job_id"))
+        raw_fmt = body.get("format", "jsonl")
+        if raw_fmt is None:
+            raw_fmt = "jsonl"
+        if not isinstance(raw_fmt, str) or raw_fmt.lower() not in {
+            "jsonl",
+            "csv",
+            "xlsx",
+        }:
+            raise ShareError("format must be jsonl, csv, or xlsx")
+        fmt = raw_fmt.lower()
+        queue = self.ui_state.job_queue
+        _jobs_recover_stale(queue)
+        payload = export_job_results(queue, job_id, fmt=fmt)
+        path_str = str(payload.get("path") or "")
+        file_path = Path(path_str)
+        export_id = f"export-{secrets.token_hex(10)}"
+        self.ui_state.job_exports[export_id] = file_path
+        response: dict[str, Any] = {
+            "ok": True,
+            "export_id": export_id,
+            "rows": payload.get("rows", 0),
+            "format": fmt,
+            "filename": file_path.name,
+            "job_id": job_id,
+        }
+        if payload.get("skipped"):
+            response["skipped"] = payload["skipped"]
+        return response
+
+    def _handle_jobs_diff(self, body: dict) -> dict:
+        job_id = self._valid_job_id(body.get("job_id"))
+        baseline_job_id = self._valid_job_id(
+            body.get("baseline_job_id"), field="baseline_job_id"
+        )
+        if job_id == baseline_job_id:
+            raise ShareError("job_id and baseline_job_id must differ")
+        queue = self.ui_state.job_queue
+        _jobs_recover_stale(queue)
+        payload = diff_jobs(queue.root, job_id, baseline_job_id)
+        diff = payload.get("diff")
+        response: dict[str, Any] = {
+            "ok": True,
+            "diff": diff,
+            "job_id": job_id,
+            "baseline_job_id": baseline_job_id,
+            "available": bool(payload.get("available", True)),
+        }
+        if payload.get("skipped"):
+            response["skipped"] = payload["skipped"]
+        return response
 
     # -- workbench api handlers -------------------------------------------
 
@@ -1147,16 +1788,18 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             raise WorkbenchError("task_id and baseline_task_id must differ")
         return self.ui_state.workbench_adapter.diff(task_id, baseline_task_id)
 
-    def _send_controlled_file(self, path: Path) -> None:
+    def _send_controlled_file(self, path: Path, *, root: Path | None = None) -> None:
         state = self.ui_state
-        root = state.workbench_dir
-        if root is None:
+        allowed_root = root if root is not None else state.workbench_dir
+        if allowed_root is None:
             raise WorkbenchUnavailable("export.download")
         try:
             resolved = path.resolve()
-            root_resolved = root.resolve()
+            root_resolved = Path(allowed_root).resolve()
             resolved.relative_to(root_resolved)
         except (OSError, ValueError) as exc:
+            if root is not None:
+                raise ShareError("export file is outside the jobs directory") from exc
             raise WorkbenchError("export file is outside the workbench directory") from exc
         if not resolved.is_file():
             self._send_json(404, {"error": "export file not found"})
@@ -1474,6 +2117,8 @@ def build_server(
     transport_factory=None,
     workbench_adapter: WorkbenchAdapter | None = None,
     workbench_dir: str | Path | None = None,
+    jobs_dir: str | Path | None = None,
+    legacy_workbench: bool = False,
 ) -> tuple[ThreadingHTTPServer, str]:
     """Create the loopback UI server and return it with its tokenized URL."""
     resolved_key = Path(key_path).expanduser()
@@ -1483,9 +2128,13 @@ def build_server(
         if workbench_dir is not None
         else resolved_bundles.parent / ".workbench"
     )
+    resolved_jobs = (
+        Path(jobs_dir).expanduser() if jobs_dir is not None else Path(DEFAULT_JOBS_DIR)
+    )
     resolved_key.parent.mkdir(parents=True, exist_ok=True)
     resolved_bundles.mkdir(parents=True, exist_ok=True)
     resolved_workbench.mkdir(parents=True, exist_ok=True)
+    resolved_jobs.mkdir(parents=True, exist_ok=True)
     session_token = token or secrets.token_urlsafe(24)
     resolved_cache = (
         Path(cache_dir).expanduser() if cache_dir is not None else DEFAULT_CACHE_DIR
@@ -1509,9 +2158,15 @@ def build_server(
         workbench_adapter=(
             workbench_adapter
             if workbench_adapter is not None
-            else OfflineWorkbenchAdapter(resolved_workbench)
+            else OfflineWorkbenchAdapter(
+                resolved_workbench,
+                cache_dir=resolved_cache,
+            )
         ),
+        jobs_dir=resolved_jobs,
     )
+    state.legacy_workbench = bool(legacy_workbench)
+    _jobs_recover_stale(state.job_queue)
     saved = _read_passphrase_file(resolved_key)
     if saved is not None and resolved_key.is_file():
         try:
@@ -1614,12 +2269,23 @@ def main(argv: list[str] | None = None) -> int:
         help="credentials JSON for IOC Info lookup (default: credentials.local.json if present, else process env)",
     )
     parser.add_argument(
+        "--jobs-dir",
+        default=str(DEFAULT_JOBS_DIR),
+        help=f"unified job queue directory (default: {DEFAULT_JOBS_DIR})",
+    )
+    parser.add_argument(
         "--no-browser",
         action="store_true",
         help="print the URL instead of opening the browser",
     )
+    parser.add_argument(
+        "--legacy-workbench",
+        action="store_true",
+        help="show the retired workbench panel (default: hidden; queue is the task center)",
+    )
     args = parser.parse_args(argv)
     cache_dir = Path(args.cache_dir).expanduser()
+    jobs_dir = Path(args.jobs_dir).expanduser()
     credentials_path = resolve_ui_credentials_path(args.credentials_file)
     server, url = build_server(
         Path(args.key_file).expanduser(),
@@ -1628,11 +2294,14 @@ def main(argv: list[str] | None = None) -> int:
         max_bundles=args.history_limit,
         cache_dir=cache_dir,
         credentials_path=credentials_path,
+        jobs_dir=jobs_dir,
+        legacy_workbench=bool(args.legacy_workbench),
     )
     print(f"ioc rejudge share ui: {url}")
     print(f"share key file: {Path(args.key_file).expanduser()}")
     print(f"bundle directory: {Path(args.bundle_dir).expanduser()}")
     print(f"provider cache: {cache_dir.resolve()}")
+    print(f"jobs directory: {jobs_dir.resolve()}")
     if credentials_path is not None:
         print(f"ioc info credentials: {credentials_path}")
     else:

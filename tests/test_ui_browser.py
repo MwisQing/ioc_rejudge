@@ -30,6 +30,9 @@ def test_workbench_browser_mobile_incremental_drop_and_plaintext_confirm(tmp_pat
         port=0,
         cache_dir=tmp_path / "cache",
         workbench_dir=tmp_path / "workbench",
+        # Workbench panel is retired from the default task center; browser
+        # coverage of the legacy panel requires the opt-in flag.
+        legacy_workbench=True,
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

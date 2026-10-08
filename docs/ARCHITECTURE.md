@@ -1,6 +1,6 @@
 # 架构说明
 
-本文描述 IOC Rejudge CLI `2.7.0` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
+本文描述 IOC Rejudge CLI `2.9.0` 的当前实现。历史设计和实施计划保留在 `docs/superpowers/`，但不再作为当前能力清单。
 
 ## 1. 总体数据流
 
@@ -113,8 +113,12 @@ strength, payload, raw_ref
 | `diff.py` | Verdict 转移和成员变化报告 |
 | `config.py` / `rules.py` | 阈值和规则配置 |
 | `cli.py` | 参数解析、两条入口编排、输出和 diagnostics |
+| `quick_cli.py` | `judge` 高频入口。只做参数适配，研判仍走主 CLI |
+| `job_queue.py` | 统一任务队列存储、认领、心跳、取消和保留清理 |
+| `jobs_cli.py` | `jobs` 命令族与 offline/online runner |
+| `jobs_consumers.py` | 队列结果查看、导出、解释、人工 overlay 和结论对比 |
 | `share.py` / `share_text.py` | 本地口令保护的 AES-SIV token bundle、v0.7 形态自由文本扫描、流式严格扫描和 token restore |
-| `ui.py` + `ui.html` | 本地 share 助手：回环 HTTP 服务与单文件页面，可折叠 JSON 查看、IOC Info lookup 和「脱敏并复制」 |
+| `ui.py` + `ui.html` | 本地页面：队列面板是任务中心；同时保留 share 助手、可折叠 JSON、IOC Info lookup 和「脱敏并复制」 |
 
 ## 4. Provider 架构
 

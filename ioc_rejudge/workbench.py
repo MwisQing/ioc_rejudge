@@ -17,9 +17,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ioc_rejudge.inputs import _target
+
 
 MAX_IMPORT_BYTES = 32 * 1024 * 1024
 _SAFE_ID_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]{0,127}")
+_BARE_SUFFIXES = {".txt", ".iocs", ".ioc"}
+_JSONL_SUFFIXES = {".jsonl", ".json"}
 
 
 class WorkbenchError(Exception):
@@ -46,15 +50,27 @@ class StagedImport:
     path: Path
     size: int
     rows: int
+    input_kind: str = "jsonl"
+    valid: int = 0
+    duplicated: int = 0
+    rejected: int = 0
+    errors: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "import_id": self.import_id,
             "filename": self.filename,
             "path": str(self.path),
             "size": self.size,
             "rows": self.rows,
+            "input_kind": self.input_kind,
+            "valid": self.valid,
+            "duplicated": self.duplicated,
+            "rejected": self.rejected,
         }
+        if self.errors:
+            payload["errors"] = list(self.errors)
+        return payload
 
 
 class WorkbenchAdapter:
@@ -195,12 +211,23 @@ class LocalWorkbenchAdapter(WorkbenchAdapter):
             raise WorkbenchValidationError("filename is too long")
         return filename
 
-    def stage_input(self, filename: str, content: str) -> dict[str, Any]:
-        if not isinstance(content, str) or not content.strip():
-            raise WorkbenchValidationError("content is required")
-        encoded = content.encode("utf-8")
-        if len(encoded) > MAX_IMPORT_BYTES:
-            raise WorkbenchValidationError("uploaded input is too large")
+    @staticmethod
+    def _detect_input_kind(filename: str) -> str:
+        """Classify staged content from the safe filename suffix or marker."""
+        name = Path(filename.replace("\\", "/")).name
+        lowered = name.casefold()
+        suffix = Path(lowered).suffix
+        stem = Path(lowered).stem
+        # Explicit JSONL/JSON keeps the legacy snapshot contract.
+        if suffix in _JSONL_SUFFIXES:
+            return "jsonl"
+        if suffix in _BARE_SUFFIXES or stem in {"paste", "bare", "iocs"}:
+            return "bare"
+        # Default keeps the historical JSONL contract for unmarked uploads.
+        return "jsonl"
+
+    @staticmethod
+    def _validate_jsonl_rows(content: str) -> tuple[int, int, int, int, list[str]]:
         rows = 0
         for line in content.splitlines():
             if not line.strip():
@@ -214,11 +241,54 @@ class LocalWorkbenchAdapter(WorkbenchAdapter):
             rows += 1
         if rows == 0:
             raise WorkbenchValidationError("input must contain at least one JSONL row")
+        return rows, rows, 0, 0, []
+
+    @staticmethod
+    def _validate_bare_rows(content: str) -> tuple[int, int, int, int, list[str]]:
+        """Reuse inputs._target line semantics for bare IOC text."""
+        valid = 0
+        duplicated = 0
+        rejected = 0
+        errors: list[str] = []
+        seen: set[str] = set()
+        for line_no, line in enumerate(content.splitlines(), 1):
+            stripped = line.strip()
+            if not stripped or stripped.lstrip().startswith("#"):
+                continue
+            target = _target(stripped)
+            if target is None:
+                rejected += 1
+                errors.append(f"line {line_no}: invalid IOC {stripped!r}")
+                continue
+            if target.normalized in seen:
+                duplicated += 1
+                continue
+            seen.add(target.normalized)
+            valid += 1
+        if valid == 0:
+            detail = "; ".join(errors[:5]) if errors else "no IOC lines found"
+            raise WorkbenchValidationError(
+                f"input must contain at least one valid IOC ({detail})"
+            )
+        return valid, valid, duplicated, rejected, errors
+
+    def stage_input(self, filename: str, content: str) -> dict[str, Any]:
+        if not isinstance(content, str) or not content.strip():
+            raise WorkbenchValidationError("content is required")
+        encoded = content.encode("utf-8")
+        if len(encoded) > MAX_IMPORT_BYTES:
+            raise WorkbenchValidationError("uploaded input is too large")
+
+        safe_name = self._safe_filename(filename)
+        input_kind = self._detect_input_kind(safe_name)
+        if input_kind == "bare":
+            rows, valid, duplicated, rejected, errors = self._validate_bare_rows(content)
+        else:
+            rows, valid, duplicated, rejected, errors = self._validate_jsonl_rows(content)
 
         import_id = secrets.token_hex(12)
         directory = self._safe_join("staging", import_id)
         directory.mkdir(parents=True, exist_ok=False)
-        safe_name = self._safe_filename(filename)
         target = self._safe_join("staging", import_id, safe_name)
         fd, temp_name = tempfile.mkstemp(prefix=".upload-", suffix=".tmp", dir=directory)
         temp = Path(temp_name)
@@ -238,15 +308,32 @@ class LocalWorkbenchAdapter(WorkbenchAdapter):
             except OSError:
                 pass
             raise
+        error_samples = tuple(errors[:20])
         manifest = {
             "import_id": import_id,
             "filename": safe_name,
             "size": len(encoded),
             "rows": rows,
+            "input_kind": input_kind,
+            "valid": valid,
+            "duplicated": duplicated,
+            "rejected": rejected,
+            "errors": list(error_samples),
         }
         manifest_path = self._safe_join("staging", import_id, "import.json")
         manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-        return StagedImport(import_id, safe_name, target, len(encoded), rows).as_dict()
+        return StagedImport(
+            import_id,
+            safe_name,
+            target,
+            len(encoded),
+            rows,
+            input_kind=input_kind,
+            valid=valid,
+            duplicated=duplicated,
+            rejected=rejected,
+            errors=error_samples,
+        ).as_dict()

@@ -1,19 +1,19 @@
 # IOC Rejudge CLI
 
-IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.8.0` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。新增的离线路线命令、CSV/XLSX 适配、结果 bundle 导出和本地 workbench 让批处理与人工复核可以在无网络环境完成。
+IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.9.0` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。高频入口是 `python -m ioc_rejudge judge`；批量任务可进入与本地页面共用的 `jobs` 队列，查看结果、导出、解释、人工复核和结论对比。离线路线命令、CSV/XLSX 适配、结果 bundle 导出和本地 workbench 仍可用于无网络批处理与人工复核。
 
 ## 当前状态
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.8.0` |
+| 版本 | `2.9.0` |
 | Python | 已用 Python 3.12 验证 |
 | 输入 | 旧 JSONL 快照、裸 IOC 文件、重复 `--ioc` |
 | IOC 类型 | domain、URL、domain:port、IP、IP:port |
 | 结论 | `存活有效`、`失活有效`、`灰`、`误报`、`待复核` |
 | live provider | K01、IOC Info、F-Dark、WHOIS、pDNS、ICP；按 IOC 类型和研判需要分流 |
 | 本地 provider | 任意 JSONL sidecar；可用于 ICP Observation 回放 |
-| 当前测试 | `1153 passed, 1 skipped`（2026-09-22） |
+| 当前测试 | `1265 passed, 1 skipped`（2026-10-08） |
 
 ICP provider 已按固定响应契约实现并通过 mock/cache 验收；真实 endpoint、认证和生产响应仍需在具备授权凭据的环境中单独确认。
 
@@ -60,7 +60,7 @@ python -m ioc_rejudge share restore `
 python -m ioc_rejudge ui
 ```
 
-浏览器会自动打开带会话令牌的本地页面（默认端口 8731，被占用时自动换随机端口）。可用 `--port`、`--key-file`、`--bundle-dir`、`--cache-dir`、`--credentials-file`、`--no-browser` 调整。默认缓存目录与研判 CLI 相同（`.\provider-cache`）。当前目录存在 `credentials.local.json` 时会自动用来查 IOC Info，否则读本终端环境变量；也可显式 `--credentials-file`。页面操作对应完整流程：
+浏览器会自动打开带会话令牌的本地页面（默认端口 8731，被占用时自动换随机端口）。可用 `--port`、`--key-file`、`--bundle-dir`、`--cache-dir`、`--credentials-file`、`--jobs-dir`、`--legacy-workbench`、`--no-browser` 调整。默认缓存目录与研判 CLI 相同（`.\provider-cache`）；统一任务队列默认 `.\jobs`。当前目录存在 `credentials.local.json` 时会自动用来查 IOC Info，否则读本终端环境变量；也可显式 `--credentials-file`。页面以「队列」面板为任务中心（统一 jobs 入队/列表/运行、结果解释与复核、三格式导出、baseline diff、KPI 摘要；workbench 面板默认隐藏，可用 `--legacy-workbench` 显示），并保留脱敏协作流程：
 
 1. 首次使用输入非空口令并勾选“生成新 key”（默认 `~\.ioc-share\key.json`）。成功后口令保存在 key 同目录的 `passphrase` 文件，下次启动自动解锁；点“清除口令”会同时清内存和该文件。
 2. “查询 IOC Info”：粘贴每行一个 IOC，或填本机文件路径。默认走 7 天缓存，没有缓存再请求接口；接口失败时可以用本机更旧的缓存。无凭据时只读缓存。查询结果是明文，页面可展开/合拢查看，不要直接发给云端。若页面提示查询超时，到启动 UI 的窗口按 Ctrl+C 停掉再启动，不要只刷新网页。
@@ -88,7 +88,7 @@ python -m ioc_rejudge import-table --input .\report.csv --column indicator --out
 python -m ioc_rejudge export-bundle --input .\results.jsonl --output-dir .\bundle
 ```
 
-也可以使用 `roadmap` 包装入口。`import-table` 支持 CSV/XLSX 的物理行号、defang 恢复、公式风险拦截和重复报告；`export-bundle` 会预检路径冲突并原子写出 JSONL、CSV、XLSX 及可选 diagnostics/diff。`cache cleanup` 默认只生成计划，只有加 `--apply` 才删除完整旧 shard。UI 默认使用本地离线 workbench：页面可以拖放或选择 legacy JSONL 导入 staging，以后台模式启动任务并自动轮询状态，在安全边界内取消尚未开始的任务，查看 diagnostics 和安全运行摘要，按 disposition/关键字/Provider 异常分页筛选，点击结果查看解释，提交人工 overlay，用 baseline task 做 diff，并选择 JSONL/CSV/XLSX/diagnostics/diff/bundle 下载。明文查询和还原结果复制、覆盖 key 前会二次确认；页面不读取真实凭据，也不发起网络请求。摘要和浏览器响应不暴露本地路径或凭据；跨运行历史和生产 provider 诊断仍以 CLI 为准。
+也可以使用 `roadmap` 包装入口。`import-table` 支持 CSV/XLSX 的物理行号、defang 恢复、公式风险拦截和重复报告；`export-bundle` 会预检路径冲突并原子写出 JSONL、CSV、XLSX 及可选 diagnostics/diff。`cache cleanup` 默认只生成计划，只有加 `--apply` 才删除完整旧 shard。UI 默认使用本地离线 workbench：页面可以拖放或选择 legacy JSONL 导入 staging，也可以粘贴裸 IOC；粘贴入口走 offline 统一管线，命中本地 provider 缓存即可复现与 CLI offline 回放一致的结论。以后台模式启动任务并自动轮询状态，在安全边界内取消尚未开始的任务，查看 diagnostics 和安全运行摘要，按 disposition/关键字/Provider 异常分页筛选，点击结果查看解释，提交人工 overlay，用 baseline task 做 diff，并选择 JSONL/CSV/XLSX/diagnostics/diff/bundle 下载。明文查询和还原结果复制、覆盖 key 前会二次确认；页面不读取真实凭据，也不发起网络请求。摘要和浏览器响应不暴露本地路径或凭据；跨运行历史和生产 provider 诊断仍以 CLI 为准。
 
 ## 安装
 
@@ -133,6 +133,46 @@ python -m ioc_rejudge -i .\snapshot.jsonl -c .\result.csv --diagnostics .\diagno
 输出路径在请求任何 provider 之前做冲突与可写性预检：结果 JSONL/CSV/Excel、diagnostics、diff 不得覆盖输入、diff 基线、rules、provider-config、credentials 或 sidecar 文件，输出之间也不能互相撞路径；嵌套输出目录会自动创建。写入使用临时文件再替换，失败时尽量保留上一份有效输出；Excel 被占用时给出可操作提示。
 
 默认退出码在仍有可用结果时保持 0（部分输入被拒绝也兼容旧行为）。自动化可用 `--strict`：仍会写出可用结果和 diagnostics，但在存在拒绝输入、provider 错误、处理错误或缺失必要来源时以非 0 退出；普通业务「待复核」结论本身不算失败。
+
+### 高频 judge 入口
+
+面向粘贴和多 IOC 的轻量入口，最终仍进入现有主 CLI 编排；旧的 -i / --ioc / provider / 输出参数含义不变，也可继续直接使用。
+
+```powershell
+python -m ioc_rejudge judge example.invalid other.invalid --offline
+python -m ioc_rejudge judge --stdin --offline
+python -m ioc_rejudge judge --file .\iocs.txt --offline --preset fast
+python -m ioc_rejudge judge example.invalid --preset refresh -j .\result.jsonl
+```
+
+--stdin 按行读取（空行与 # 注释与裸 IOC 文件相同），不进入交互等待。--preset 仅映射已有选项：`fast` / `standard` 使用默认缓存与完整 provider，`refresh` 对应现有 --refresh。结果 JSONL/CSV/Excel 仍由主 CLI 负责；--json 只输出适配器自身的机器可读摘要。
+
+### 统一任务队列（jobs）
+
+CLI 与本地 UI 共用 `.\jobs`（可用 `--jobs-dir` 覆盖）。`judge --queue` 只入队并打印 job_id；`jobs run` 在前台认领并执行 offline 或 online 研判（online 凭据只来自进程环境或 `--credentials-file`，绝不写入 jobs 目录）。bare 统一路径接入与 CLI 相同的研判结果缓存（fingerprint 共享；`preset=refresh` 绕过）。UI 的「队列」面板可选择 offline/online 入队、列表轮询、取消 queued、进程内运行（同一时刻至多 1 个 runner），以及「清理旧任务」prune（先 dry-run 确认；不删 running/queued）。
+
+```powershell
+python -m ioc_rejudge judge alpha.invalid beta.invalid --queue --mode offline
+python -m ioc_rejudge judge beta.invalid --queue --mode online
+python -m ioc_rejudge jobs list --jobs-dir .\jobs
+python -m ioc_rejudge jobs status jq-20261003-120000-abcd1234 --jobs-dir .\jobs
+python -m ioc_rejudge jobs run jq-20261003-120000-abcd1234 --jobs-dir .\jobs
+python -m ioc_rejudge jobs cancel jq-20261003-120000-abcd1234 --jobs-dir .\jobs
+python -m ioc_rejudge jobs prune --keep 50 --jobs-dir .\jobs
+python -m ioc_rejudge ui --jobs-dir .\jobs
+```
+
+`jobs prune` 默认 dry-run，加 `--apply` 才删除（跳过 running/queued）。成功任务可以查看结果、导出、解释、追加人工复核和对比另一条已成功任务：
+
+```powershell
+python -m ioc_rejudge jobs results <job_id> --jobs-dir .\jobs
+python -m ioc_rejudge jobs export <job_id> --format xlsx --jobs-dir .\jobs
+python -m ioc_rejudge jobs explain <job_id> --result-id <result_id> --jobs-dir .\jobs
+python -m ioc_rejudge jobs review <job_id> --ioc example.invalid --label approved --jobs-dir .\jobs
+python -m ioc_rejudge jobs diff <job_id> --baseline <old_job_id> --jobs-dir .\jobs
+```
+
+人工复核只追加 `approved` / `rejected` / `pending`，不改系统结论。旧 workbench 面板默认隐藏，需要时用 `python -m ioc_rejudge ui --legacy-workbench`。
 
 ### 裸 IOC 离线研判
 

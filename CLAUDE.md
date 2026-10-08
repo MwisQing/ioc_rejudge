@@ -2,7 +2,7 @@
 
 > 操作本项目前先读本文件。完成有意义的变更后，更新底部进度记录。
 >
-> 当前版本为 `2.8.0`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收、项目内独立凭证文件、本地安全分享 bundle 和本地 share 助手 UI（含 IOC Info 查询、记住口令、可折叠 JSON 与 v0.7 漏检覆盖）。本版本同时提供离线 job/review/explain/history/health/cache 路线、CSV/XLSX 输入适配、结果 bundle 导出与本地 workbench，并收口研判正确性第一轮、统一时间边界和完整 Web UI 工作流。
+> 当前版本为 `2.9.0`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收、项目内独立凭证文件、本地安全分享 bundle 和本地 share 助手 UI（含 IOC Info 查询、记住口令、可折叠 JSON 与 v0.7 漏检覆盖）。本版本同时提供离线 job/review/explain/history/health/cache 路线、CSV/XLSX 输入适配、结果 bundle 导出与本地 workbench，并收口研判正确性第一轮、统一时间边界和完整 Web UI 工作流。`2.9.0` 增加高频 `judge` 入口，以及 CLI 与本地页面共用的统一任务队列（入队、运行、结果、导出、解释、人工复核和结论对比）。
 
 ## 1. 阅读顺序
 
@@ -27,13 +27,14 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.8.0` |
+| 版本 | `2.9.0` |
 | 项目类型 | Python CLI |
-| 当前输入 | iocProducer 风格 JSONL 快照、裸 IOC 文件或重复 `--ioc` |
+| 当前输入 | iocProducer 风格 JSONL 快照、裸 IOC 文件或重复 `--ioc`；workbench 另支持粘贴裸 IOC（offline 统一管线） |
 | 当前联网 | 裸 IOC 统一模式可按所选 provider 联网；`--offline` 与旧快照兼容模式不联网 |
 | 当前结论 | 统一 pipeline 可按可靠 DGA-only 分类分路，并输出存活有效、失活有效、灰、误报、待复核 |
 | 当前输出 | 带 route/disposition/scope/provider 契约的 JSONL、CSV、六表 Excel 和 diagnostics |
 | Git | `push.py` 可在用户明确授权发布时按 allow-list 初始化并推送；禁止整目录暂存或 force push |
+| 后续开发 | 见 `docs/ROADMAP.md`：judge 与统一队列已随 `2.9.0` 发布；P1/P2 待办与继续开发指引仍以该文件为准 |
 | 2.1.0 | 任务 1-22 与 H1-H3 高危修复全部完成；九场景 online mock、offline replay 和凭据安全已验收 |
 
 ICP provider 已有固定响应契约并进入默认来源；缺少凭据时独立禁用。真实 endpoint、认证和生产响应仍需授权环境验收，不读取 `token_icp.txt`。
@@ -185,7 +186,7 @@ ioc_rejudge/cli.py
 | `routing.py` | 可靠 DGA-only 分类和分类失败降级 |
 | `pipeline.py` | 发现/生命周期两阶段请求规划、provider 聚合、分路、facts/dossier 构建和结构化诊断 |
 | `roadmap_cli.py` | 离线 job/review/explain/history/health/cache/table import/export-bundle 命令适配 |
-| `workbench_backend.py` | 本地离线快照 workbench 任务、诊断、结果、复核和导出持久化 |
+| `workbench_backend.py` | 本地 workbench 任务：legacy JSONL 快照与 bare IOC offline 统一管线分流，诊断/结果/复核/导出持久化 |
 | `input_adapters.py` | CSV/XLSX IOC 导入、物理行号、defang/公式风险与重复报告 |
 | `export_bundle.py` | JSONL/CSV/XLSX/diagnostics/diff bundle 原子导出与冲突预检 |
 | `cache_admin.py` | provider/result cache 统计与整 shard dry-run/apply 清理 |
@@ -195,6 +196,10 @@ ioc_rejudge/cli.py
 | `files.py` | 路径安全、可写性预检（含已存在目标 sibling 探测）、单一 atomic 写入原语 |
 | `export.py` | JSONL（按行流式）、CSV、Excel |
 | `cli.py` | 编排、诊断、CLI |
+| `quick_cli.py` | `judge` 高频入口：位置 IOC、stdin、文件、preset 与超大输入转临时文件 |
+| `job_queue.py` | 统一任务队列存储、认领、心跳、取消和保留清理 |
+| `jobs_cli.py` | `jobs` 命令族与 offline/online runner |
+| `jobs_consumers.py` | 队列结果查看、导出、解释、人工 overlay 和结论对比 |
 | `share.py` / `share_text.py` | 本地口令保护的 AES-SIV token bundle、v0.7 形态自由文本扫描、流式严格扫描和 token restore |
 | `ui.py` + `ui.html` | 本地 share 助手：回环 HTTP 服务、单文件页面、可折叠 JSON、记住口令自动解锁、IOC Info lookup 和「脱敏并复制」 |
 
@@ -246,6 +251,7 @@ ioc_rejudge_cli_1.4.1/
 |   |-- ARCHITECTURE.md
 |   |-- DEVELOPMENT.md
 |   |-- HISTORY.md
+|   |-- ROADMAP.md
 |   `-- superpowers/             # 已批准规格和实施计划
 |-- README.md
 |-- CHANGELOG.md
@@ -286,7 +292,7 @@ ioc_rejudge_cli_1.4.1/
 python -m pytest tests -q
 ```
 
-当前结果（2026-09-22 前端 workbench 最终验收后）：`1153 passed, 1 skipped`。skip 为 Windows 不适用的 POSIX 脚本执行探针；真实 Windows `provider_http.exe` 已由本地 HTTP 端到端验收覆盖。另含 GitHub Release 下载更新、本地凭证文件来源隔离、控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比（含 `operations=` 摘要与 `operational_changes`）、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间、逐接口日期缓存、完整研判结果缓存、评估时间 fingerprint、按目标 provider 依赖摘要与 sidecar 单次哈希、凭据回显值脱敏（六个 provider + `secret_values` 缓存边界 + 并发哨兵写入）、缓存索引性能、生命周期请求规划、最新 comment/context、过期误报出口、share bundle、share 助手 UI（安全门/回环/记住口令/IOC Info lookup/可折叠 JSON/脱敏并复制/历史可还原上限/端口回退）、输入坏行隔离/无界 nested 计数与物理行号/输出路径 sibling 预检与 os.replace-only 原子写入/流式 JSONL/`classification_unknown` 导出/`--strict`/release zip 语法与日历时间戳/NaN·Inf·TTL 溢出配置拒绝、scheme-aware 目标身份/同日 temporal `valid_until`（实质活动全量、未来事件 1µs、provider TTL、sidecar TTL 与未来 fetched_at 激活），发布 allow-list/忽略规则安全专项，以及离线路线 CLI（含 history）、CSV/XLSX 输入适配、结果 bundle 导出、cache inspect/cleanup、review 队列闭环和本地 workbench 持久化。
+当前结果（2026-10-04 队列消费任务 12 后）：`1265 passed, 1 skipped`。skip 为 Windows 不适用的 POSIX 脚本执行探针；真实 Windows `provider_http.exe` 已由本地 HTTP 端到端验收覆盖。另含 GitHub Release 下载更新、本地凭证文件来源隔离、控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比（含 `operations=` 摘要与 `operational_changes`）、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间、逐接口日期缓存、完整研判结果缓存、评估时间 fingerprint、按目标 provider 依赖摘要与 sidecar 单次哈希、凭据回显值脱敏（六个 provider + `secret_values` 缓存边界 + 并发哨兵写入）、缓存索引性能、生命周期请求规划、最新 comment/context、过期误报出口、share bundle、share 助手 UI（安全门/回环/记住口令/IOC Info lookup/可折叠 JSON/脱敏并复制/历史可还原上限/端口回退）、输入坏行隔离/无界 nested 计数与物理行号/输出路径 sibling 预检与 os.replace-only 原子写入/流式 JSONL/`classification_unknown` 导出/`--strict`/release zip 语法与日历时间戳/NaN·Inf·TTL 溢出配置拒绝、scheme-aware 目标身份/同日 temporal `valid_until`（实质活动全量、未来事件 1µs、provider TTL、sidecar TTL 与未来 fetched_at 激活），发布 allow-list/忽略规则安全专项，以及离线路线 CLI（含 history）、CSV/XLSX 输入适配、结果 bundle 导出、cache inspect/cleanup、review 队列闭环和本地 workbench 持久化。
 
 本轮新增统一时间解析与比较边界回归：覆盖 aware/naive 混合、精确 recent/fresh 端点、未来/无效时间、负 Unix 时间、未来 WHOIS 注册日期、固定评估时刻和结果缓存。时间边界与 provider 工厂专项 15 项、人工校准 12 项通过；未使用真实 IOC、人工标签、网络请求或 ICP 凭据。
 
@@ -351,6 +357,8 @@ python -m pytest tests -q
 4. `docs/superpowers/plans/2026-09-01-share-ui-convenience.md`（已实施，规格见 `docs/superpowers/specs/2026-09-01-share-ui-convenience-design.md`）
 5. `docs/superpowers/plans/2026-09-01-share-ui-inspect-and-coverage.md`（已实施，规格见 `docs/superpowers/specs/2026-09-01-share-ui-inspect-and-coverage-design.md`）
 6. `docs/superpowers/plans/2026-09-08-adjudication-correctness.md`（第一轮正确性修复已实施，含验收范围与未完成事项）
+7. `docs/superpowers/specs/2026-10-03-unified-job-queue-design.md`（统一任务队列规格，已实施并验收：judge --queue、jobs 命令族、UI 队列面板、online runner、结果缓存与保留策略）
+8. `docs/superpowers/specs/2026-10-04-queue-consumer-completion-design.md`（队列结果消费闭环规格，已实施并验收：jobs results/export/explain/review/diff、UI 队列面板合一与 KPI 卡、run 进度可见性）
 
 前几份计划均已实施完成，仅用于追溯决策。新的在线 HTTP 工作必须先取得正式外部契约并另立规格；ICP 当前契约已冻结但真实 endpoint 仍待授权验收。
 
@@ -361,12 +369,13 @@ python -m pytest tests -q
 - 新 key 口令非空即可；成功 `/api/key` 后写入 `{key.parent}/passphrase`，启动自动解锁；`/api/lock` 清内存并删文件；`/api/status` 含 `passphrase_saved`。页面 `no-store`，口令不回显。
 - `POST /api/lookup` 只查询 `ioc_info`（`refresh=False`，TTL 7 天）；不要求解锁。进程内复用 provider/缓存索引，连接 5 秒、读取 15 秒，空结果不重试、不拉 Go worker。live 失败时回退本机旧缓存（含超过 7 天）。`--credentials-file` 未指定时，若当前目录有 `credentials.local.json` 则自动使用，否则读进程环境。无凭据时 offline 只读缓存，全部 miss 则 4xx 且不联网。查询结果是明文，页面可折叠查看；主按钮「脱敏并复制」走现有 `/api/create`，复制 compact JSONL。create/restore 仍要解锁。
 - create/restore/scan/key 单锁串行化；status/lookup 不占用该锁。`content`/`input_path` 二选一，restore 按 bundle_id 直定位、sha256 兜底匹配本地 manifest。
-- UI 包装 `share.create_bundle/restore_bundle/scan_bundle` 与 `share.ensure_key`，并额外包装 `ioc_info` lookup；不执行研判、不提供关闭严格模式的入口；`ui.html` 为零外部资源单文件页面。
+- UI 包装 `share.create_bundle/restore_bundle/scan_bundle` 与 `share.ensure_key`，并额外包装 `ioc_info` lookup。队列面板通过本地 jobs runner 执行研判；share 的 create/restore/scan 不研判，也不提供关闭严格模式的入口。`ui.html` 为零外部资源单文件页面。
 
 ## 16. 进度记录
 
 | 日期 | 范围 | 完成内容与验证摘要 |
 |---|---|---|
+| 2026-10-08 | 2.9.0 发布 | 收口高频 `judge` 入口、统一任务队列和队列结果消费：CLI 与本地页面共用 jobs 存储，支持入队、运行、结果、三格式导出、解释、三值人工 overlay 和结论对比。全量 `1265 passed, 1 skipped`，`compileall` 与 `pack.py --check` 160 个发布文件通过。发布包路径、SHA-256 与推送结果在打包验收后补记。 |
 | 2026-08-10 | 2.2.6 发布准备 | 六个在线 provider 接入状态确定后计数的实时进度，TTY 原地重绘、非 TTY 节流且重复终态去重；捆绑 Go HTTP worker 按 provider 原配置并发/限速，Python 保留解析、缓存和裁判语义及 fallback；修复直接脚本启动和逐 IOC 全量重扫缓存分片的性能退化，CLI 显示缓存路径/模式/TTL/miss 原因并在 Ctrl+C 后说明复用边界；修复 `push.py --check` 误推送；真实 Windows EXE 本地 HTTP 验收通过，Python 全量 `708 passed, 1 skipped`，Go、语法、102 文件 pack check 与 diff check 通过 |
 | 2026-08-05 | 2.2.5 发布 | `comment/context` 只取同一 IOC 最新 ioc_info 记录；“黑产/扩展/扩线”保留强恶意证据，但在 WHOIS 过期、无近期活动、ICP+官网闭环、显式资产变化、无威胁残留五条件同时成立时允许误报；“恶意”降为普通强恶意上下文；统一 pipeline 对强备注追加 WHOIS 规划，缓存契约升级为 4；源树与独立发布包均为 `670 passed`，10,856 条脱敏快照相对 v2.2.4 有 505 条黑转待复核、黑白互转 0；发布提交 `461b1bb6989ad399e1f1b0854c15505cbf89115a` 与附注标签 `v2.2.5` 已推送；发布包 `ioc_rejudge_v2.2.5_20260805-094736.zip` 含 96 个发布文件、禁入项 0、SHA-256 `022ecd02a74233e5254d9da0d0a96e7fffd2b305b1657eb980d3b9296cef6105`，GitHub Release 与 ZIP 资产已发布，无 force push |
 | 2026-08-04 | 2.2.4 发布 | 新增 `authoritative_context_indicators` 默认关键词“黑产/扩展/扩线”，命中后强制标准路由并跳过 ICP/DGA 白证据，直接输出 block；源树与独立发布包均为 `656 passed`，10,856 条脱敏快照迁移仅有 253 条待复核转黑、黑白互转 0；发布提交 `19f58ef13a07c38d2f922b86160bf9f6f19229a8` 与附注标签 `v2.2.4` 已推送；发布包 `ioc_rejudge_v2.2.4_20260804-161114.zip` 含 96 个发布文件、禁入项 0、SHA-256 `a4e64b68a727095fa570e0e2692a8d8ece39ff212358f3332fb6208032985791`，GitHub Release 与 ZIP 资产已发布，无 force push |
@@ -449,3 +458,18 @@ python -m pytest tests -q
 | 2026-09-22 | 前端 workbench P2 补齐与主控返修 | Luna 完成单文件拖放、结果字段摘要、运行摘要、安全多格式导出和敏感操作确认；主控补通 `provider_issues=true` 结果/导出筛选（error/disabled/failed/timeout/缺失来源，保留 `no_data` 语义），并为还原结果复制增加二次确认。同步更新优化说明、README 与更新日志；专项/回环 API `57 passed`、全量 `1151 passed, 1 skipped`、`compileall`、Node 页面脚本语法和 `git diff --check` 通过。未提交、未推送、未发布。 |
 | 2026-09-22 | 前端 workbench 移动端与增量渲染 | 结果表窄屏改为带字段标签的可点击卡片，保留鼠标/键盘解释交互；结果行按 24 行/帧使用 `DocumentFragment` 增量挂载，过时渲染可取消并标记 `aria-busy`。新增页面契约覆盖；专项 `tests/test_ui_workbench_contract.py tests/test_workbench_ui.py tests/test_ui_server.py` 共 44 passed，Node 页面脚本语法与 `git diff --check` 通过。未提交、未推送、未发布。 |
 | 2026-09-22 | 前端 workbench v2.8.0 发布准备 | 真实 Chromium 桌面与 390px 窄屏均通过导入、后台任务、结果加载、60 条分块挂载、移动端字段标签和明文复制二次确认；全量 Python `1153 passed, 1 skipped`，workbench/UI 专项 `44 passed`，`compileall`、Node 页面脚本语法与 `git diff --check` 全绿。 |
+| 2026-10-02 | 产品化入口任务 1：judge 高频 CLI | 新增 `python -m ioc_rejudge judge` 轻量入口：位置 IOC、`--stdin`（拒绝交互 TTY、UTF-8 严格解码、跳过空行与 `#` 注释）、`--file`、`--preset fast|standard|refresh`、`--json` stderr 机器摘要；未识别的主 CLI 参数按选项-值成对透传，不再被误收为位置 IOC；仅做参数适配并复用主 CLI 编排，输入顺序 位置→stdin→file 稳定，空输入/无来源明确报错非 0 退出。专项 `tests/test_quick_cli.py` 16 项（含两条子进程 offline 端到端）；独立复跑专项 16 passed、CLI 回归 12 passed、全量 `1169 passed, 1 skipped`，真实控制台 stdin 离线冒烟输出完整 verdict 行且 fail-closed 语义正确；README 新增高频 judge 示例并修复写入时反引号转义损坏的代码围栏与 `fast`/`refresh` 文案。未提交、未发版。 |
+| 2026-10-02 | 产品化入口任务 2：workbench 裸 IOC 粘贴 | workbench `stage_input` 接受 `.txt`/等价标记的裸 IOC 文本（复用 `inputs._target` 行语义，返回 valid/duplicated/rejected）；`OfflineWorkbenchAdapter` 按 `input_kind` 分流：`bare` → offline `run_unified_pipeline`（任务 3 后为默认六源 offline 回放：env={}、不读凭据、无 Go transport、命中缓存即复现结论），`jsonl` 仍走 legacy 快照管线；task JSON 新增 `input_kind`；`ui.html` 增加粘贴 textarea、解析预览与一键入队，保留 JSONL 导入。专项 `tests/test_workbench_paste.py` 7 passed，workbench/UI 44 passed，全量 `1176 passed, 1 skipped`；`ui.html` 仍为零外部资源单文件。未提交、未发版。 |
+| 2026-10-02 | 产品化入口任务 3：bare 六源 offline 回放返修 | 任务 2 初版 bare 路径以空 provider 列表运行、`cache_dir` 不生效，已返修为 `build_providers(list(DEFAULT_PROVIDERS), env={}, credentials_path=None, offline=True, cache_dir=…)`：粘贴任务只读本地缓存、不读凭据、不联网，命中缓存的 IOC 复现真实结论；新增 cache 预填回放对比测试（online 以默认 URL 填充 cache → 无凭据 offline 回放字段等价），空缓存场景断言按 fail-closed 语义允许 error/disabled。专项 8 项、workbench/UI 44 项、全量 `1177 passed, 1 skipped`（均监工独立复跑）；README workbench 段补充粘贴说明，无转义损坏。未提交、未发版。 |
+| 2026-10-03 | 统一任务队列规格立项 | 落盘 `docs/superpowers/specs/2026-10-03-unified-job-queue-design.md`：单一 jobs 存储与状态机（目录锁、认领原子性、心跳与过期接管）、queued 即时取消/running 仅置标志的取消边界、默认保留 50 + prune dry-run、online 模式凭据零落盘、完整结果缓存统一接入、CLI `jobs` 命令族与 UI 队列视图；待用户批准后按任务 5-8 拆分。同轮派发任务 4（judge 超大输入改走临时 `--input` 文件，修复 Windows 命令行长度上限），运行中待验收。提示词包 validator 通过。未提交、未发版。 |
+| 2026-10-03 | 产品化入口任务 4：judge 超大输入 | `judge` 输入超过阈值（数量 > 500 或展开 argv 估算 > 8192 字符）时按原顺序写 UTF-8 临时裸 IOC 文件并经单一 `--input` 传入，规避 Windows 命令行长度上限；小输入 argv 形态逐参数不变，临时文件 finally 清理且不掩盖退出码，`--json` 摘要新增 `transferred_to_file`/`value_count`。专项 33 项、600 值真实端到端（599 行去重 verdict、零临时残留）、全量 `1182 passed, 1 skipped`（均监工独立复跑）。未提交、未发版。 |
+| 2026-10-03 | 统一队列任务 5：job_queue 存储模块 | 新增 `ioc_rejudge/job_queue.py` 与 `tests/test_job_queue.py`：`UnifiedJobQueue` 提供 create/get/list/claim/heartbeat/request_cancel/finish/append_results/write_diagnostics/recover_stale/prune；`job.json` 字段白名单 + 递归 secret 类键拒绝（含 results/diagnostics 行），目录锁 mkdir 原子抢占 + owner.json + 过龄可重建（修复 mkdir→写 owner 窗口误判，以目录 mtime 兜底，30 轮并发专项通过），claim/finish/取消一律持锁重读防 TOCTOU，`job.json` 只经原子替换，queued 即时取消、running 仅置 `cancel_requested`、finish 标注 `cancel_requested_late`，过期心跳（默认 600s）收口 failed 且幂等，prune 按 created_at 保最新 N 且 dry-run 不删。纯新增代码，不 import pipeline/provider/凭据。专项 16 passed、compileall、全量 `1198 passed, 1 skipped`（监工独立复跑并清理两处注释/死代码后复验）。未提交、未发版。 |
+| 2026-10-03 | 统一队列任务 6：jobs CLI 与 offline runner | 新增 `ioc_rejudge/jobs_cli.py`（`jobs list/status/run/cancel/prune`，入口先 `recover_stale`，人读/`--json` 双输出，退出码 0/2/3/4）、`__main__.py` 路由、`judge --queue/--jobs-dir/--mode`（入队打印 job_id，与直跑互斥）；runner 认领后预消费 `cancel_requested`（新增 `mark_cancelled`：running→cancelled 持锁重读），bare 走与 workbench 一致的六源 offline 构建、jsonl 走 legacy 管线，progress 回调喂心跳且心跳异常不中断研判，结果/诊断落 jobs 目录后 finish，异常路径必 finish(failed)；online 拒绝执行保持 queued。专项 31+21、`jobs --help`、全量 `1213 passed, 1 skipped`（监工独立复跑），真实闭环冒烟：入队→list→run（rows=2、诚实待复核）→status（runner 心跳/摘要）→results.jsonl 正确。规格 §10 同步为 UI 分期实施说明。未提交、未发版。 |
+| 2026-10-04 | 统一队列任务 7：UI 队列面板与并发修复 | UI 新增「队列」面板与 `/api/jobs/enqueue/list/status/cancel/run/results` 端点（复用会话令牌 + Host/Origin 校验、响应经 `_public_job_record` 递归剥离本地路径）；单实例后台 runner 复用任务 6 执行函数；README 补 jobs 命令族说明。独立复跑发现 ~1% 概率偶发卡死（job 永久 queued、端点谎报 ok），监工逐步定位根因：Windows 下 `/api/jobs/status` 并发读句柄（无 FILE_SHARE_DELETE）使 `claim` 的 `os.replace` 偶发 WinError 5，裸 OSError 绕过全部 `JobsQueueError` 类型化捕获后被 worker 静默吞掉。四层修复：`_write_job` 写侧 4 次短退避重试并耗尽转 `JobsQueueError`、`run_offline_job` 瞬态失败标记 `retryable` 且 worker 有界重试、worker 异常写入`_jobs_runner_last_exception` 留痕、读侧 `_read_text_with_retry` 瞬态重试；另修 run 端点对不同 job 占用有界等待槽位（10s）与 worker finally 槽位属主检查。新增 claim 写入重试成功/耗尽两条回归；专项 39+18、真实子进程 UI 服务器冒烟（无路径泄漏）、300 轮真实 HTTP 复现循环零卡死（修复前 60/100/200 轮分别在第 60/62/98 次复现）、全量 `1223 passed, 1 skipped`。未提交、未发版。 |
+| 2026-10-04 | 统一队列任务 8：online runner、结果缓存与保留 | `run_job` 按 mode 分流：online bare 路径与 CLI 直跑同参构建（凭据仅显式 `--credentials-file`/UI 解析路径/进程环境，Go worker 与内存封顶一致，`offline+refresh` fail-fast）；bare 路径统一接入 `AdjudicationResultCache`（`preset=refresh` 不传，hit/miss 入 job diagnostics）；`prune_jobs` 在 keep 窗口外跳过 queued/running，CLI 与 `POST /api/jobs/prune` 共用；UI 入队 `mode=offline|online` 单选、online 凭据提示复用 `/api/status`、清理按钮 dry-run 确认制。专项 8 项（sentinel 零匹配、无凭据全 disabled 完成、缓存二跑命中、refresh 绕过、UI prune 保护）+ 队列专项 49、全量 `1231 passed, 1 skipped`（均监工独立复跑）。规格 §13 验收达成，队列线（任务 5-8）收官。未提交、未发版。 |
+| 2026-10-04 | 队列消费闭环规格立项 | 用户批准按产品复盘 P0 执行：落盘 `docs/superpowers/specs/2026-10-04-queue-consumer-completion-design.md`——`jobs results/export` CLI、解释/复核/diff 迁移到队列存储、UI 队列面板吸收 workbench 消费能力并合一、run 进度可见性（LiveProgress 复用）、KPI 摘要卡、jobs dir 打印缓解 cwd 陷阱；非目标为自动运行/收件箱/watch 等后续项。拆分任务 9-12，提示词包 validator 通过。未提交、未发版。 |
+| 2026-10-04 | 队列消费任务 9：jobs results/export | 新增 `jobs results <id>`（人读 `ioc -> conclusion (route/disposition)`、`--limit` 默认 20/0=全部、`--json` 完整行、坏行跳过计 skipped）与 `jobs export <id> --format jsonl|csv|xlsx`（复用 export.py 既有栈，仅 succeeded 可导出，默认落 `<job>/export/results.<fmt>` 且同名冲突以 hex4 递增避让，`--out` 显式冲突 fail-fast，xlsx 异常退出 4 不装成功）；`jobs list/run` 人读首行与 `--json` 输出 jobs 目录（缓解 cwd 陷阱）。专项 23+34、全量 `1239 passed, 1 skipped`（监工独立复跑），真实冒烟：入队→run→results→xlsx 六表结构读回正确→二次导出冲突避让生效。未提交、未发版。 |
+| 2026-10-04 | 队列消费任务 10：jobs explain/review/diff | 新增 `ioc_rejudge/jobs_consumers.py`（read_result_rows 坏行计数、explain_result 按 result_id 精确/行序派生定位并调共享 `explain_verdict`、append_review/review_overlay 落 `<job>/review.jsonl` append-only、diff_jobs 双 succeeded 状态门后走 `compare_verdicts`）与 `jobs explain/review/diff` 子命令。监工验收修正：复核标签对齐 review_queue 规范三值 approved/rejected/pending（初版自造 confirmed-block 违反既有词表契约，测试同步修正）；review_queue 补公开 `load_labels` 消除私有 `_read_labels` 依赖。专项 38+review 回归共 74、全量 `1254 passed, 1 skipped`（监工独立复跑）；真实冒烟：explain 结构完整、复核两次幂等且 results.jsonl 字节不变、非法标签退出 2、diff only_after 正确捕获新增成员。未提交、未发版。 |
+| 2026-10-04 | 队列消费任务 11：UI 面板合一与 KPI 卡 | 队列面板成为唯一任务中心：新增 `/api/jobs/explain|review|export|diff`（会话令牌 + Host/Origin、复核三值白名单幂等追加、导出经 export_id 受控下载零路径泄漏、diff 含 ok 与规范迁移报告、同 job 自比对 400 拒绝）；results 行惰性附 review_overlay；KPI 卡直接渲染 result_summary；workbench 面板默认隐藏（`--legacy-workbench`/`?legacy_workbench=1` opt-in，后端与 API 原样未动，浏览器回归改传 flag 无断言弱化）。专项 68、全量 `1260 passed, 1 skipped`（监工独立复跑）；真实子进程冒烟：解释/复核幂等/CSV 下载字节正确/面板隐藏/零外部资源/零路径泄漏全过（监工修正自 diff 测试场景——同 job 比对被正确拒绝是预期行为）。未提交、未发版。 |
+| 2026-10-04 | 队列消费任务 12：run 进度可见性收官 | `jobs run` 人读模式经 `_progress_tee` 组合回调接入 LiveProgress（claim 成功且非预启动取消后创建；心跳与渲染各自 try/except 异常隔离，心跳防线不削弱）；`--json` 不创建渲染、stdout 仅最终 JSON；UI runner 记录最近一条进度文本，`/api/jobs/status` 仅对 running 且匹配当前 runner 的 job 透出 `runner_progress`，结束清空。专项 83（全队列线）、全量 `1265 passed, 1 skipped`（监工独立复跑）；目视核验真实 `jobs run` 输出逐接口进度行（[provider] done/total + completed 永久行）与 judge 直跑渲染一致。第二阶段（任务 9-12）收官，两份队列规格全部实施完成。未提交、未发版。 |
+| 2026-10-05 | 路线图落盘 | 新增 `docs/ROADMAP.md` 作为“接着做”入口：当前状态快照（未提交清单、基线 1265）、已完成能力地图与关键语义、已知限制与设计决策（勿当 bug 修）、P1/P2 待开发清单（复核收件箱、自动运行、cwd 根治、README 重排、watch/通知/退役/进程级竞争测试/发版收口）与继续开发操作指引；CLAUDE.md 当前事实表加指针，保证后续任何会话可发现。仅文档变更。未提交、未发版。 |
