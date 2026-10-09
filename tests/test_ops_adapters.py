@@ -257,7 +257,7 @@ class TestExportBundle:
         assert rows[0]["original_ioc"] == "old.invalid"
         assert rows[0]["conclusion"] == "灰"
         assert rows[0]["provider_statuses"] == {"test": "success"}
-        with result.outputs["csv"].open(newline="", encoding="utf-8") as handle:
+        with result.outputs["csv"].open(newline="", encoding="utf-8-sig") as handle:
             assert list(csv.DictReader(handle))[0]["ioc"] == "old.invalid"
         load_workbook(result.outputs["xlsx"]).close()
         assert json.loads(result.outputs["diagnostics"].read_text("utf-8")) == diagnostics

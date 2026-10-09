@@ -92,7 +92,7 @@ def test_export_csv(tmp_path):
     verdicts = [_make_verdict("evil.com")]
     path = tmp_path / "out.csv"
     export_csv(verdicts, str(path))
-    with path.open(encoding="utf-8", newline="") as rf:
+    with path.open(encoding="utf-8-sig", newline="") as rf:
         rows = list(csv.DictReader(rf))
     assert len(rows) == 1
     assert rows[0]["ioc"] == "evil.com"
@@ -104,12 +104,26 @@ def test_export_csv(tmp_path):
     assert json.loads(rows[0]["scope_actions"])[0]["action"] == "block"
 
 
+def test_export_csv_starts_with_bom_and_roundtrips_chinese(tmp_path):
+    verdict = _make_verdict("chinese.invalid")
+    verdict["conclusion"] = "存活有效"
+    verdict["reason"] = "中文结论需要原样保留"
+    path = tmp_path / "chinese.csv"
+    export_csv([verdict], str(path))
+    raw = path.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")
+    with path.open(encoding="utf-8-sig", newline="") as rf:
+        rows = list(csv.DictReader(rf))
+    assert rows[0]["conclusion"] == "存活有效"
+    assert rows[0]["reason"] == "中文结论需要原样保留"
+
+
 def test_export_csv_sanitizes_illegal_control_chars(tmp_path):
     verdict = _make_verdict("evil.com")
     verdict["reason"] = "bad\x08reason"
     path = tmp_path / "out.csv"
     export_csv([verdict], str(path))
-    with path.open(encoding="utf-8", newline="") as rf:
+    with path.open(encoding="utf-8-sig", newline="") as rf:
         rows = list(csv.DictReader(rf))
     assert rows[0]["reason"] == "badreason"
 
@@ -341,7 +355,7 @@ def test_export_neutralizes_spreadsheet_formula_prefixes(tmp_path):
 
     csv_path = tmp_path / "formula.csv"
     export_csv([verdict], str(csv_path))
-    with csv_path.open(encoding="utf-8", newline="") as rf:
+    with csv_path.open(encoding="utf-8-sig", newline="") as rf:
         rows = list(csv.reader(rf))
     header, data = rows[0], rows[1]
     assert data[header.index("family")] == "'" + payload

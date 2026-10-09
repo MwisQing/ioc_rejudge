@@ -1,5 +1,12 @@
 # 更新日志
 
+## 2.9.1 - 2026-10-09
+
+- 修复：导出的 CSV 改为带 BOM 的 UTF-8，中文 Windows 的 Excel 双击后结论不再乱码。日期列按文本写出，避免被挤成 `###`。JSONL 仍不带 BOM。日常查看仍建议用 XLSX。
+- 新增：项目根目录 `start-server.bat` / `stop-server.bat` 可双击开关本地网页。脚本优先使用本目录 `.venv`，已在运行时不重复启动。停止前核对进程身份，认不出时不结束其他程序。
+- 变更：网页队列在检测到本目录凭证文件时默认「联网研判」，并写明会访问外部接口。每一行任务标明「联网」或「只用缓存」。启动窗口和页面显示来源完成情况，来源异常写出来源名。解释区默认可见结论和原因。
+- 验证：全量 Python 测试 `1286 passed, 1 skipped`。
+
 ## 2.9.0 - 2026-10-08
 
 - 新增：队列结果消费闭环。`jobs results/export`（三格式、冲突避让、仅 succeeded）、`jobs explain/review/diff`（解释结构、三值人工标签幂等追加且不改系统结论、双 succeeded 迁移对比）；Web 队列面板成为唯一任务中心——结果行解释展开、复核、三格式受控下载、baseline diff 与 KPI 摘要卡，旧 workbench 面板默认隐藏（`--legacy-workbench` 可回看，后端不变）；`jobs list/run` 输出实际读取的 jobs 目录。

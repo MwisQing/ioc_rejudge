@@ -375,20 +375,23 @@ def _diagnostics_to_dict(diagnostics: Any) -> dict[str, Any]:
 def _result_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     conclusions: Counter[str] = Counter()
     provider_statuses: Counter[str] = Counter()
+    provider_details: dict[str, str] = {}
     for row in rows:
         conclusion = row.get("conclusion")
         if conclusion is not None:
             conclusions[str(conclusion)] += 1
         statuses = row.get("provider_statuses")
         if isinstance(statuses, dict):
-            for status in statuses.values():
+            for name, status in statuses.items():
                 provider_statuses[str(status)] += 1
+                provider_details[str(name)] = str(status)
         elif statuses is not None:
             provider_statuses[str(statuses)] += 1
     return {
         "rows": len(rows),
         "conclusions": dict(conclusions),
         "provider_statuses": dict(provider_statuses),
+        "provider_details": dict(sorted(provider_details.items())),
     }
 
 

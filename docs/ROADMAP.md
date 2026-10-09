@@ -2,14 +2,14 @@
 
 > 本文件是"接着做"的入口：记录已完成的能力、当前工作区状态、待开发清单与验收纪律。
 > 任何 AI 会话被问"还需要开发什么/做到哪了"，先读本文件，再按需读引用的规格与提示词包。
-> 最后更新：2026-10-08（`2.9.0` 收口 judge 入口与统一任务队列）。
+> 最后更新：2026-10-09（`2.9.1` 收口网页操作体验与一键启停）。
 
 ## 1. 当前状态快照
 
 | 项 | 值 |
 |---|---|
-| 版本 | `2.9.0` |
-| 测试基线 | `python -m pytest tests -q` = `1265 passed, 1 skipped`（2026-10-08） |
+| 版本 | `2.9.1` |
+| 测试基线 | `python -m pytest tests -q` = `1286 passed, 1 skipped`（2026-10-09） |
 | 已发布能力 | judge 高频入口、统一任务队列、队列结果消费（results/export/explain/review/diff）和 Web 队列面板 |
 | 已验收开发任务 | 12/12（提示词包 `docs/agent-prompts/product-surface/index.md`，gitignore 内，不进发布包） |
 | 已实施规格 | `docs/superpowers/specs/2026-10-03-unified-job-queue-design.md`、`docs/superpowers/specs/2026-10-04-queue-consumer-completion-design.md`（gitignore 内） |
@@ -87,5 +87,5 @@ python -m ioc_rejudge ui    # 队列面板：粘贴入队/运行/进度/KPI 卡/
 1. **读序**：`CLAUDE.md` → 本文件 → 相关规格 → 提示词包 `docs/agent-prompts/product-surface/index.md`（任务表记录 12 单验收历史）。
 2. **流程**：先写/改规格（用户批准）→ `plan-to-prompts` 拆单（validator 必须通过）→ 派发执行 → **监工独立复跑专项+全量 + 真实冒烟**（不采信自报；历史证明自报全绿仍可能藏着转义损坏、假回放、并发卡死）→ 更新 index 状态与 CLAUDE.md 进度。
 3. **执行方偏好**（用户历史指令）：外部执行方用无头单轮模式跑提示词文档；监工保留架构、规格、审查、验收。派发时加技术兜底：禁子代理、禁网络搜索、轮次封顶、deny 规则挡 git 写操作与发布脚本。
-4. **回归纪律**：全量 `python -m pytest tests -q`（当前 `1265 passed, 1 skipped`）；改 normalize/evidence/adjudicator 须跑人工校准与全量差异（CLAUDE.md §11）。
+4. **回归纪律**：全量 `python -m pytest tests -q`（当前 `1286 passed, 1 skipped`）；改 normalize/evidence/adjudicator 须跑人工校准与全量差异（CLAUDE.md §11）。
 5. **红线**：不删断言宣布完成；复核不改系统结论；凭据零落盘；不做破坏性文件操作；发布需明确授权。

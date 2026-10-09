@@ -108,6 +108,9 @@ _jobs_runner_thread: threading.Thread | None = None
 _jobs_runner_job_id: str | None = None
 # Latest in-flight progress line for the active runner (single dict overwrite).
 _jobs_runner_progress: dict[str, Any] | None = None
+# Small per-run operator log, mirrored to stderr and the queue page.
+_ui_runner_logs: dict[str, list[dict[str, str]]] = {}
+_ui_runner_logs_lock = threading.Lock()
 
 
 def _jobs_recover_stale(queue: UnifiedJobQueue) -> None:
@@ -188,12 +191,62 @@ def _format_runner_progress_text(*args: Any, **_kwargs: Any) -> str:
     return str(first)
 
 
-def _set_jobs_runner_progress(*args: Any, **kwargs: Any) -> None:
+def _record_ui_job_log(job_id: str, text: str) -> None:
+    """Print a permanent operator line and keep the same line for the page."""
+    clean = " ".join(str(text).split())[:500]
+    if not clean:
+        return
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    with _ui_runner_logs_lock:
+        _ui_runner_logs.setdefault(job_id, []).append(
+            {"text": clean, "updated_at": stamp}
+        )
+    print(f"[{stamp}] 研判 {job_id}: {clean}", file=sys.stderr, flush=True)
+
+
+def _ui_mode_label(mode: Any) -> str:
+    return "联网研判" if str(mode or "").lower() == "online" else "只用缓存"
+
+
+def _ui_provider_event_completed(first: Any) -> bool:
+    try:
+        return int(getattr(first, "done")) == int(getattr(first, "total"))
+    except (TypeError, ValueError):
+        return False
+
+
+def _ui_abnormal_providers(summary: Any) -> list[str]:
+    details = (
+        summary.get("provider_details")
+        if isinstance(summary, dict)
+        else None
+    )
+    if not isinstance(details, dict):
+        return []
+    abnormal = {"error", "failed", "timeout"}
+    return [
+        str(name)
+        for name, status in details.items()
+        if str(status).strip().lower() in abnormal
+    ]
+
+
+def _set_jobs_runner_progress(job_id: str, *args: Any, **kwargs: Any) -> None:
     """Keep only the most recent progress line for the active UI runner."""
     global _jobs_runner_progress
+    first = args[0] if args else None
     text = _format_runner_progress_text(*args, **kwargs).strip()
     if not text:
         return
+    if (
+        first is not None
+        and getattr(first, "provider", None) is not None
+        and _ui_provider_event_completed(first)
+    ):
+        _record_ui_job_log(
+            job_id,
+            f"来源完成：{getattr(first, 'provider', '')}（{text}）",
+        )
     # ISO-ish timestamp without importing datetime at module import cost paths.
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     with _jobs_runner_lock:
@@ -209,18 +262,20 @@ def _clear_jobs_runner_progress() -> None:
 def _snapshot_jobs_runner_progress(job_id: str) -> dict[str, Any] | None:
     """Return a copy of runner progress when it belongs to *job_id*."""
     with _jobs_runner_lock:
-        if _jobs_runner_job_id != job_id:
-            return None
-        if not isinstance(_jobs_runner_progress, dict):
-            return None
-        text = _jobs_runner_progress.get("text")
-        if not isinstance(text, str) or not text:
-            return None
-        out: dict[str, Any] = {"text": text}
-        updated = _jobs_runner_progress.get("updated_at")
-        if isinstance(updated, str) and updated:
-            out["updated_at"] = updated
-        return out
+        active = _jobs_runner_job_id == job_id
+        out: dict[str, Any] = {}
+        if active and isinstance(_jobs_runner_progress, dict):
+            text = _jobs_runner_progress.get("text")
+            if isinstance(text, str) and text:
+                out["text"] = text
+            updated = _jobs_runner_progress.get("updated_at")
+            if isinstance(updated, str) and updated:
+                out["updated_at"] = updated
+    with _ui_runner_logs_lock:
+        out["log"] = [
+            dict(item) for item in _ui_runner_logs.get(job_id, [])
+        ]
+    return out if out else None
 
 
 def _record_jobs_runner_exception(job_id: str, exc: BaseException) -> None:
@@ -261,14 +316,30 @@ def _jobs_runner_entry(state: "UiState", job_id: str) -> None:
     try:
         from ioc_rejudge.jobs_cli import run_job
 
+        try:
+            existing = state.job_queue.get(job_id)
+        except Exception:
+            existing = {}
+        credentials_loaded = state.credentials_path is not None
+        _record_ui_job_log(
+            job_id,
+            "研判开始：模式 "
+            + _ui_mode_label(existing.get("mode"))
+            + "，凭据文件 "
+            + ("已加载" if credentials_loaded else "未加载"),
+        )
         run_kwargs: dict[str, Any] = dict(
             cache_dir=state.cache_dir,
             runner_name=UI_JOBS_RUNNER_NAME,
             pid=os.getpid(),
             transport_factory=state.transport_factory,
             # Heartbeat remains inside run_job; these hooks only capture text.
-            progress=_set_jobs_runner_progress,
-            on_progress=_set_jobs_runner_progress,
+            progress=lambda *args, **kwargs: _set_jobs_runner_progress(
+                job_id, *args, **kwargs
+            ),
+            on_progress=lambda *args, **kwargs: _set_jobs_runner_progress(
+                job_id, *args, **kwargs
+            ),
         )
         # Match lookup credential resolution: explicit file wins; otherwise the
         # UI may supply a sealed env map (tests); else process environment.
@@ -293,9 +364,22 @@ def _jobs_runner_entry(state: "UiState", job_id: str) -> None:
             result = run_job(state.job_queue, job_id, **run_kwargs)
         if isinstance(result, dict) and result.get("ok") is False:
             _record_jobs_runner_failure(job_id, result)
+        if isinstance(result, dict) and result.get("ok") is not False:
+            try:
+                current = state.job_queue.get(job_id)
+                summary = current.get("result_summary")
+                abnormal = _ui_abnormal_providers(summary)
+                _record_ui_job_log(
+                    job_id,
+                    "研判结束：异常来源 "
+                    + ("、".join(abnormal) if abnormal else "无"),
+                )
+            except Exception:
+                pass
     except Exception as exc:
         err_text = str(exc)[:500] or type(exc).__name__
         _record_jobs_runner_exception(job_id, exc)
+        _record_ui_job_log(job_id, f"研判失败：{err_text}")
         try:
             current = state.job_queue.get(job_id)
             if current.get("state") == "running":
@@ -1244,7 +1328,14 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
                 jobs = queue.list_jobs(state=state_filter)
             except InvalidJobStateError as exc:
                 raise ShareError(str(exc)) from exc
-            public_jobs = [_public_job_record(job) for job in jobs]
+            public_jobs = []
+            for job in jobs:
+                public_job = _public_job_record(job)
+                if public_job and isinstance(job, dict) and job.get("job_id"):
+                    progress = _snapshot_jobs_runner_progress(str(job["job_id"]))
+                    if progress and (progress.get("log") or progress.get("text")):
+                        public_job["runner_progress"] = progress
+                public_jobs.append(public_job)
             self._send_json(200, {"ok": True, "jobs": public_jobs})
             return
 
@@ -1258,10 +1349,9 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             except JobNotFoundError as exc:
                 raise ShareError(f"job not found: {job_id}") from exc
             payload: dict[str, Any] = {"ok": True, "job": _public_job_record(job)}
-            if str(job.get("state") or "") == "running":
-                runner_progress = _snapshot_jobs_runner_progress(job_id)
-                if runner_progress is not None:
-                    payload["runner_progress"] = runner_progress
+            runner_progress = _snapshot_jobs_runner_progress(job_id)
+            if runner_progress and (runner_progress.get("log") or runner_progress.get("text")):
+                payload["runner_progress"] = runner_progress
             self._send_json(200, payload)
             return
 
@@ -2192,6 +2282,7 @@ def build_server(
     except (OSError, ValueError):
         state.lookup_provider = None
         state.lookup_offline = True
+    print("正在加载 IOC Info 缓存索引，缓存大时会等一会儿。", file=sys.stderr, flush=True)
     _warmup_lookup_cache(state)
     Handler.ui_state = state
     Handler.page_path = _PAGE_FILE

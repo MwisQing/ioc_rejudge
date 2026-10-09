@@ -258,7 +258,7 @@ def test_get_serves_single_file_page(ui):
     assert "本机 key 同目录" in text
     assert "脱敏并复制" in text
     assert "全部展开" in text
-    assert "全部合拢" in text
+    assert "全部收起" in text
     assert "明文" in text
     assert "勿发给云端" in text
     assert "credentials.local.json" in text

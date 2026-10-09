@@ -786,7 +786,12 @@ def test_ui_run_wires_progress_callback_and_clears(make_jobs_server, monkeypatch
         url, token, f"/api/jobs/status?job_id={urllib.parse.quote(job_id)}"
     )
     assert status == 200, body
-    assert "runner_progress" not in body
+    progress = body.get("runner_progress")
+    assert isinstance(progress, dict)
+    log = progress.get("log")
+    assert isinstance(log, list)
+    assert any("研判开始" in entry.get("text", "") for entry in log)
+    assert any("研判结束" in entry.get("text", "") for entry in log)
     assert ui_mod._jobs_runner_progress is None
 
     final_doc = json.loads((jobs_dir / job_id / "job.json").read_text(encoding="utf-8"))

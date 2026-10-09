@@ -36,3 +36,4 @@ share-key.json
 
 # Orchestrator runtime artifacts
 /.orchestrator/
+.server.pid

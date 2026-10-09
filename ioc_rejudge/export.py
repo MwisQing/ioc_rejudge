@@ -53,6 +53,11 @@ _OUTPUT_FIELDS = [
     "classification_unknown",
 ]
 
+_CSV_TEXT_DATE_FIELDS = {
+    "latest_material_activity_time",
+    "latest_intel_update_time",
+}
+
 _STRUCTURED_DEFAULTS = {
     "scope_actions": [],
     "retained_urls": [],
@@ -140,12 +145,12 @@ def export_jsonl(verdicts: list[dict], filepath: str):
 
 def export_csv(verdicts: list[dict], filepath: str):
     def _write(temp_path):
-        with open(temp_path, "w", encoding="utf-8", newline="") as f:
+        with open(temp_path, "w", encoding="utf-8-sig", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=_OUTPUT_FIELDS, extrasaction="ignore")
             writer.writeheader()
             for v in verdicts:
                 writer.writerow({
-                    field: _neutralize_formula(_safe_value(v, field))
+                    field: _neutralize_formula(_csv_cell(v, field))
                     for field in _OUTPUT_FIELDS
                 })
 
@@ -206,6 +211,13 @@ def _safe_value(v, key: str, default: str = ""):
         sanitized = _sanitize_json_value(val)
         return json.dumps(sanitized, ensure_ascii=False, sort_keys=True)
     return _sanitize_cell_text(str(val))
+
+
+def _csv_cell(v, key: str) -> str:
+    value = _safe_value(v, key)
+    if key in _CSV_TEXT_DATE_FIELDS and value.strip():
+        return "'" + value
+    return value
 
 
 def _sanitize_cell_text(text: str) -> str:

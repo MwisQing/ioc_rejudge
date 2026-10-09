@@ -1,19 +1,19 @@
 # IOC Rejudge CLI
 
-IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.9.0` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。高频入口是 `python -m ioc_rejudge judge`；批量任务可进入与本地页面共用的 `jobs` 队列，查看结果、导出、解释、人工复核和结论对比。离线路线命令、CSV/XLSX 适配、结果 bundle 导出和本地 workbench 仍可用于无网络批处理与人工复核。
+IOC Rejudge CLI 是一个可审计的 IOC 多源研判工具。`2.9.1` 同时支持旧 IOC Info JSONL 快照和裸 IOC 输入，可聚合本地或在线 provider，按 DGA/普通 IOC 分路，并输出结构化结论、证据来源和诊断信息。高频入口是 `python -m ioc_rejudge judge`；批量任务可进入与本地页面共用的 `jobs` 队列，查看结果、导出、解释、人工复核和结论对比。离线路线命令、CSV/XLSX 适配、结果 bundle 导出和本地 workbench 仍可用于无网络批处理与人工复核。
 
 ## 当前状态
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.9.0` |
+| 版本 | `2.9.1` |
 | Python | 已用 Python 3.12 验证 |
 | 输入 | 旧 JSONL 快照、裸 IOC 文件、重复 `--ioc` |
 | IOC 类型 | domain、URL、domain:port、IP、IP:port |
 | 结论 | `存活有效`、`失活有效`、`灰`、`误报`、`待复核` |
 | live provider | K01、IOC Info、F-Dark、WHOIS、pDNS、ICP；按 IOC 类型和研判需要分流 |
 | 本地 provider | 任意 JSONL sidecar；可用于 ICP Observation 回放 |
-| 当前测试 | `1265 passed, 1 skipped`（2026-10-08） |
+| 当前测试 | `1286 passed, 1 skipped`（2026-10-09） |
 
 ICP provider 已按固定响应契约实现并通过 mock/cache 验收；真实 endpoint、认证和生产响应仍需在具备授权凭据的环境中单独确认。
 
@@ -54,7 +54,15 @@ python -m ioc_rejudge share restore `
 
 ## 本地 share 助手 UI
 
-`share` 命令行参数较多，高频单条/小批量场景可以用本地单页助手代替。在保存研判产物和 share key 的机器上运行：
+日常启动时，双击项目根目录的 `start-server.bat`；或在项目根目录运行：
+
+```powershell
+python start-server.py
+```
+
+启动脚本会优先使用项目目录里的 `.venv\Scripts\python.exe`，没有 `.venv` 时使用当前 `python`。停止服务运行 `stop-server.py` 或双击 `stop-server.bat`。
+
+`share` 命令行参数较多，高频单条/小批量场景也可以用本地单页助手代替。在保存研判产物和 share key 的机器上运行：
 
 ```powershell
 python -m ioc_rejudge ui

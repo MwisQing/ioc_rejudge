@@ -2,7 +2,7 @@
 
 > 操作本项目前先读本文件。完成有意义的变更后，更新底部进度记录。
 >
-> 当前版本为 `2.9.0`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收、项目内独立凭证文件、本地安全分享 bundle 和本地 share 助手 UI（含 IOC Info 查询、记住口令、可折叠 JSON 与 v0.7 漏检覆盖）。本版本同时提供离线 job/review/explain/history/health/cache 路线、CSV/XLSX 输入适配、结果 bundle 导出与本地 workbench，并收口研判正确性第一轮、统一时间边界和完整 Web UI 工作流。`2.9.0` 增加高频 `judge` 入口，以及 CLI 与本地页面共用的统一任务队列（入队、运行、结果、导出、解释、人工复核和结论对比）。
+> 当前版本为 `2.9.1`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收、项目内独立凭证文件、本地安全分享 bundle 和本地 share 助手 UI（含 IOC Info 查询、记住口令、可折叠 JSON 与 v0.7 漏检覆盖）。本版本同时提供离线 job/review/explain/history/health/cache 路线、CSV/XLSX 输入适配、结果 bundle 导出与本地 workbench，并收口研判正确性第一轮、统一时间边界和完整 Web UI 工作流。`2.9.0` 增加高频 `judge` 入口，以及 CLI 与本地页面共用的统一任务队列（入队、运行、结果、导出、解释、人工复核和结论对比）。
 
 ## 1. 阅读顺序
 
@@ -27,14 +27,14 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.9.0` |
+| 版本 | `2.9.1` |
 | 项目类型 | Python CLI |
 | 当前输入 | iocProducer 风格 JSONL 快照、裸 IOC 文件或重复 `--ioc`；workbench 另支持粘贴裸 IOC（offline 统一管线） |
 | 当前联网 | 裸 IOC 统一模式可按所选 provider 联网；`--offline` 与旧快照兼容模式不联网 |
 | 当前结论 | 统一 pipeline 可按可靠 DGA-only 分类分路，并输出存活有效、失活有效、灰、误报、待复核 |
 | 当前输出 | 带 route/disposition/scope/provider 契约的 JSONL、CSV、六表 Excel 和 diagnostics |
 | Git | `push.py` 可在用户明确授权发布时按 allow-list 初始化并推送；禁止整目录暂存或 force push |
-| 后续开发 | 见 `docs/ROADMAP.md`：judge 与统一队列已随 `2.9.0` 发布；P1/P2 待办与继续开发指引仍以该文件为准 |
+| 后续开发 | 见 `docs/ROADMAP.md`：judge、统一队列和网页一键启停已随 `2.9.1` 发布；P1/P2 待办仍以该文件为准 |
 | 2.1.0 | 任务 1-22 与 H1-H3 高危修复全部完成；九场景 online mock、offline replay 和凭据安全已验收 |
 
 ICP provider 已有固定响应契约并进入默认来源；缺少凭据时独立禁用。真实 endpoint、认证和生产响应仍需授权环境验收，不读取 `token_icp.txt`。
@@ -375,6 +375,7 @@ python -m pytest tests -q
 
 | 日期 | 范围 | 完成内容与验证摘要 |
 |---|---|---|
+| 2026-10-09 | 2.9.1 发布 | 网页队列默认联网并标明会访问外部接口，任务行区分联网和只用缓存，来源异常写出来源名；CSV 带 BOM 且日期按文本写出；新增双击启停脚本。发布包与测试结果在打包验收后补记。 |
 | 2026-10-09 | 2.9.0 GitHub Release | 已创建公开 Release `v2.9.0` 并上传 ZIP 资产 `ioc_rejudge_v2.9.0_20261008-103404.zip`（5,555,974 字节，SHA-256 `12303b5f3aa55796cb2ae0784e653cbc0d9f171fe1539a186642bdaadb6ef49a`）。页面：`https://github.com/MwisQing/ioc_rejudge/releases/tag/v2.9.0`。无 force push。 |
 | 2026-10-08 | 2.9.0 发布 | 收口高频 `judge` 入口、统一任务队列和队列结果消费：CLI 与本地页面共用 jobs 存储，支持入队、运行、结果、三格式导出、解释、三值人工 overlay 和结论对比。源树与独立解压包均为 `1265 passed, 1 skipped`；Go worker、`compileall`、CLI help、`pack.py --check` 通过。发布提交 `20f091ffda08511b7c300edfb36d2fbc89d9764f` 与附注标签 `v2.9.0`。发布包 `ioc_rejudge_v2.9.0_20261008-103404.zip` 含 160 个发布文件，禁入项 0，SHA-256 `12303b5f3aa55796cb2ae0784e653cbc0d9f171fe1539a186642bdaadb6ef49a`。GitHub Release 页面与 ZIP 资产于 2026-10-09 补齐。 |
 | 2026-08-10 | 2.2.6 发布准备 | 六个在线 provider 接入状态确定后计数的实时进度，TTY 原地重绘、非 TTY 节流且重复终态去重；捆绑 Go HTTP worker 按 provider 原配置并发/限速，Python 保留解析、缓存和裁判语义及 fallback；修复直接脚本启动和逐 IOC 全量重扫缓存分片的性能退化，CLI 显示缓存路径/模式/TTL/miss 原因并在 Ctrl+C 后说明复用边界；修复 `push.py --check` 误推送；真实 Windows EXE 本地 HTTP 验收通过，Python 全量 `708 passed, 1 skipped`，Go、语法、102 文件 pack check 与 diff check 通过 |

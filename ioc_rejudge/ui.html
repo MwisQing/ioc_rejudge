@@ -21,12 +21,12 @@
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    padding: 24px 16px 64px;
+    padding: 16px 12px 48px;
     background: var(--bg);
     color: var(--ink);
-    font: 14px/1.6 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font: 14px/1.6 system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   }
-  main { max-width: 980px; margin: 0 auto; }
+  main { max-width: 1080px; margin: 0 auto; }
   header { max-width: 980px; margin: 0 auto 16px; }
   h1 { font-size: 20px; margin: 0 0 8px; }
   .statusbar {
@@ -53,7 +53,7 @@
   body.is-unlocked .badge { color: var(--ok); border-color: var(--ok); }
   .panel {
     background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-    padding: 16px; margin-top: 16px;
+    padding: 14px; margin-top: 14px;
   }
   .panel h2 { font-size: 16px; margin: 0 0 4px; }
   .panel .hint { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
@@ -95,15 +95,22 @@
   }
   .actions { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .queue-kpi {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-    gap: 8px; margin: 10px 0 4px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+    gap: 6px; margin: 8px 0 4px;
   }
   .queue-kpi .kpi-card {
     background: #f8fafc; border: 1px solid var(--line); border-radius: 6px;
-    padding: 8px 10px; text-align: center;
+    padding: 4px 6px; text-align: center;
   }
-  .queue-kpi .kpi-card .kpi-label { display: block; color: var(--muted); font-size: 12px; }
-  .queue-kpi .kpi-card .kpi-value { display: block; font-size: 18px; font-weight: 600; color: var(--ink); }
+  .queue-kpi .kpi-card .kpi-label { display: block; color: var(--muted); font-size: 11px; line-height: 1.4; }
+  .queue-kpi .kpi-card .kpi-value { display: block; font-size: 14px; font-weight: 600; color: var(--ink); line-height: 1.3; }
+  .queue-kpi .kpi-card .kpi-detail { display: block; color: var(--danger-ink); font-size: 11px; line-height: 1.3; word-break: break-word; }
+  #queue-panel button {
+    background: transparent; color: var(--accent);
+  }
+  #queue-panel #queue-enqueue {
+    background: var(--accent); color: var(--accent-ink);
+  }
   .queue-results-table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .queue-results-table th, .queue-results-table td {
     border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top;
@@ -112,6 +119,14 @@
   .queue-results-table tr.queue-row:hover { background: #f1f5f9; }
   .queue-results-table tr.queue-row.is-selected { background: #eef2ff; }
   .queue-row-review { color: var(--muted); font-size: 12px; }
+  .queue-run-log {
+    color: var(--muted); font-size: 11px; margin-top: 4px;
+    white-space: normal; overflow-wrap: anywhere;
+  }
+  .mode-label {
+    display: inline-block; border: 1px solid var(--line); border-radius: 999px;
+    padding: 0 6px; font-size: 11px; color: var(--muted); background: #f8fafc;
+  }
   #key-panel .note { background: #eff6ff; border-color: #bfd4fb; color: #1e4f9c; }
   body:not(.is-unlocked) .needs-key { display: none; }
   ul.bundles { list-style: none; margin: 0; padding: 0; font-size: 13px; color: var(--muted); }
@@ -129,6 +144,19 @@
     cursor: pointer;
     font: 12px/1.5 ui-monospace, Consolas, monospace;
     color: var(--ink);
+  }
+  details.json-branch > .json-branch-body {
+    display: block;
+    overflow: hidden;
+    height: auto;
+    transition: height 180ms ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    details.json-branch,
+    details.json-branch > .json-branch-body {
+      transition: none !important;
+      animation: none !important;
+    }
   }
   .json-leaf {
     margin-left: 16px;
@@ -218,6 +246,13 @@
   }
   @media (min-width: 720px) {
     .review-grid { grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  }
+  @media (max-width: 390px) {
+    body { padding: 12px 8px 32px; }
+    .panel { padding: 12px; }
+    .actions { gap: 6px; }
+    button { padding: 6px 10px; font-size: 13px; }
+    .queue-kpi { grid-template-columns: repeat(3, 1fr); }
   }
 </style>
 </head>
@@ -390,14 +425,14 @@
 
   <section class="panel" id="queue-panel">
     <h2>统一任务队列（任务中心）</h2>
-    <p class="hint">粘贴裸 IOC 文本写入本机统一 jobs 存储（与 CLI <code>judge --queue</code> / <code>jobs</code> 共用）。可选择 offline（仅本地缓存）或 online（环境变量 / 凭证文件凭据）研判；查看结果行解释与人工复核、三格式导出、baseline diff 与批次 KPI。取消排队中任务；「清理旧任务」按保留策略 prune（默认 dry-run 确认）。不显示本机路径。</p>
+    <p class="hint">粘贴裸 IOC 文本入队研判；结果表、解释、导出和对比都在这里查看。清理旧任务按保留策略执行（默认先确认）。不显示本机路径。</p>
     <label for="queue-paste">粘贴裸 IOC 文本</label>
     <textarea id="queue-paste" rows="6" placeholder="# 每行一个 IOC；空行与 # 注释会被忽略&#10;alpha.example.invalid&#10;beta.example.invalid"></textarea>
     <div class="actions" style="margin-top:0.4rem">
-      <label><input type="radio" name="queue-mode" id="queue-mode-offline" value="offline" checked> offline</label>
-      <label><input type="radio" name="queue-mode" id="queue-mode-online" value="online"> online</label>
+      <label><input type="radio" name="queue-mode" id="queue-mode-offline" value="offline"> 只用本机缓存</label>
+      <label><input type="radio" name="queue-mode" id="queue-mode-online" value="online"> 联网研判</label>
     </div>
-    <div class="note" id="queue-cred-note" hidden>online 模式将使用当前进程凭据（credentials.local.json 或环境变量）。无凭据时各源为 disabled，任务仍会完成。</div>
+    <div class="note" id="queue-cred-note">正在判断凭据…</div>
     <div class="stats" id="queue-enqueue-preview">入队后显示有效 / 重复 / 拒绝计数</div>
     <div class="actions">
       <button type="button" id="queue-enqueue">入队</button>
@@ -1212,9 +1247,29 @@ function renderScalar(value) {
   return span;
 }
 
+const JSON_COLLAPSED_KEYS = new Set([
+  'job_id',
+  'result_id',
+  'evidence_fingerprint',
+]);
+
 function renderTree(value, key, collapsed) {
   const wrap = document.createElement('div');
   wrap.className = 'json-node';
+  if (key != null && JSON_COLLAPSED_KEYS.has(String(key))) {
+    const details = document.createElement('details');
+    details.className = 'json-branch';
+    details.open = false;
+    const summary = document.createElement('summary');
+    summary.textContent = String(key) + '（已收起）';
+    const body = document.createElement('div');
+    body.className = 'json-branch-body';
+    body.appendChild(renderTree(value, null, false));
+    details.appendChild(summary);
+    details.appendChild(body);
+    wrap.appendChild(details);
+    return wrap;
+  }
   if (value !== null && typeof value === 'object') {
     const details = document.createElement('details');
     details.className = 'json-branch';
@@ -1223,17 +1278,23 @@ function renderTree(value, key, collapsed) {
     const prefix = key != null ? (key + ': ') : '';
     if (Array.isArray(value)) {
       summary.textContent = prefix + 'Array(' + value.length + ')';
-      details.appendChild(summary);
+      const body = document.createElement('div');
+      body.className = 'json-branch-body';
       value.forEach((item, index) => {
-        details.appendChild(renderTree(item, String(index), true));
+        body.appendChild(renderTree(item, String(index), collapsed));
       });
+      details.appendChild(summary);
+      details.appendChild(body);
     } else {
       const keys = Object.keys(value);
       summary.textContent = prefix + 'Object{' + keys.length + '}';
-      details.appendChild(summary);
+      const body = document.createElement('div');
+      body.className = 'json-branch-body';
       keys.forEach((childKey) => {
-        details.appendChild(renderTree(value[childKey], childKey, true));
+        body.appendChild(renderTree(value[childKey], childKey, collapsed));
       });
+      details.appendChild(summary);
+      details.appendChild(body);
     }
     wrap.appendChild(details);
     return wrap;
@@ -1263,18 +1324,22 @@ function renderJsonlViewer(container, text) {
   toolbar.className = 'json-toolbar';
   const expandBtn = document.createElement('button');
   expandBtn.type = 'button';
-  expandBtn.className = 'secondary';
-  expandBtn.textContent = '全部展开';
-  const collapseBtn = document.createElement('button');
-  collapseBtn.type = 'button';
-  collapseBtn.className = 'secondary';
-  collapseBtn.textContent = '全部合拢';
+  expandBtn.className = 'secondary json-toggle';
   const cardsHost = document.createElement('div');
   cardsHost.className = 'json-cards';
-  expandBtn.addEventListener('click', () => setAllOpen(cardsHost, true));
-  collapseBtn.addEventListener('click', () => setAllOpen(cardsHost, false));
+  const updateJsonToggle = () => {
+    const branches = cardsHost.querySelectorAll('details.json-branch');
+    expandBtn.textContent = branches.length && !Array.from(branches).some((el) => !el.open)
+      ? '全部收起'
+      : '全部展开';
+  };
+  expandBtn.addEventListener('click', () => {
+    const shouldOpen = Array.from(cardsHost.querySelectorAll('details.json-branch')).some((el) => !el.open);
+    setAllOpen(cardsHost, shouldOpen);
+    updateJsonToggle();
+  });
+  cardsHost.addEventListener('toggle', updateJsonToggle, true);
   toolbar.appendChild(expandBtn);
-  toolbar.appendChild(collapseBtn);
   container.appendChild(toolbar);
   container.appendChild(cardsHost);
 
@@ -1286,7 +1351,7 @@ function renderJsonlViewer(container, text) {
     if (item.ok) {
       head.textContent = '#' + (index + 1) + ' · ' + cardSummary(item.value);
       card.appendChild(head);
-      card.appendChild(renderTree(item.value, null, true));
+      card.appendChild(renderTree(item.value, null, false));
     } else {
       head.textContent = '#' + (index + 1) + ' · 无法解析的行';
       card.appendChild(head);
@@ -1297,6 +1362,7 @@ function renderJsonlViewer(container, text) {
     }
     cardsHost.appendChild(card);
   });
+  updateJsonToggle();
 }
 
 function showCompactResult(prefix, text) {
@@ -1355,6 +1421,8 @@ async function refreshStatus() {
   const credNote = $('lookup-cred-note');
   if (credNote) credNote.hidden = !!status.ioc_info_enabled;
   queueState.iocInfoEnabled = !!status.ioc_info_enabled;
+  const preferredMode = $('queue-mode-' + (queueState.iocInfoEnabled ? 'online' : 'offline'));
+  if (preferredMode) preferredMode.checked = true;
   updateQueueCredNote();
   if (status.workbench) {
     workbenchSetAvailability(
@@ -2092,6 +2160,16 @@ const QUEUE_STATE_LABELS = {
   corrupt: '损坏',
 };
 
+function queueLocalTime(value) {
+  const raw = String(value || '');
+  if (!raw) return '';
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  const pad = (n) => String(n).padStart(2, '0');
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) +
+    ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+}
+
 function queueStateLabel(state) {
   return QUEUE_STATE_LABELS[state] || (state || '未知');
 }
@@ -2132,12 +2210,16 @@ function updateQueueCredNote() {
   const note = $('queue-cred-note');
   if (!note) return;
   const online = queueSelectedMode() === 'online';
-  note.hidden = !online;
-  if (!online) return;
   const enabled = !!queueState.iocInfoEnabled;
+  if (online) {
+    note.textContent = enabled
+      ? '联网研判：将调用外部 API。当前已检测到 IOC Info 凭据；无凭据来源仍只读本机数据。'
+      : '联网研判：将调用外部 API，但当前未检测到 IOC Info 凭据；相关来源会用本机缓存或保持禁用。';
+    return;
+  }
   note.textContent = enabled
-    ? 'online：当前已检测到 IOC Info 凭据（credentials.local.json 或环境变量）。其他源同样只读进程环境 / 凭证文件；无凭据的源为 disabled。'
-    : 'online：当前未检测到 IOC Info 凭据。无凭据时各源为 disabled，任务仍会完成；可用 credentials.local.json 或环境变量后重启 UI。';
+    ? '只用本机缓存：不调用外部 API，只读取本机缓存。'
+    : '默认只用本机缓存：当前未检测到 IOC Info 凭据，不会发起网络请求。';
 }
 
 function queueKpiFromSummary(summary) {
@@ -2157,12 +2239,18 @@ function queueKpiFromSummary(summary) {
     Number(providerStatuses.error || 0) +
     Number(providerStatuses.failed || 0) +
     Number(providerStatuses.timeout || 0);
+  const providerDetails = summary && summary.provider_details && typeof summary.provider_details === 'object'
+    ? summary.provider_details
+    : {};
+  const abnormalProviders = Object.keys(providerDetails)
+    .filter((name) => ['error', 'failed', 'timeout'].indexOf(String(providerDetails[name]).toLowerCase()) >= 0)
+    .map((name) => name + '=' + providerDetails[name]);
   return [
     { label: '判黑', value: black },
     { label: '待复核', value: review },
     { label: '灰', value: gray },
     { label: '误报', value: fp },
-    { label: '来源异常', value: providerIssue },
+    { label: '来源异常', value: providerIssue, detail: abnormalProviders.join(' · ') },
   ];
 }
 
@@ -2182,6 +2270,7 @@ function renderQueueKpi(job) {
     '<div class="kpi-card">' +
       '<span class="kpi-label">' + queueEscape(card.label) + '</span>' +
       '<span class="kpi-value">' + queueEscape(String(card.value)) + '</span>' +
+      (card.detail ? '<span class="kpi-detail">' + queueEscape(card.detail) + '</span>' : '') +
     '</div>'
   )).join('');
   box.hidden = false;
@@ -2255,13 +2344,20 @@ function renderQueueList() {
     const jobId = job.job_id || '';
     const state = job.state || '';
     const mode = job.mode || 'offline';
-    const created = job.created_at || job.updated_at || '';
+    const created = queueLocalTime(job.created_at || job.updated_at || '');
     let summary = queueSummaryText(job);
+    let runLog = '';
     const progress = job.runner_progress && typeof job.runner_progress === 'object'
       ? job.runner_progress
       : null;
-    if (state === 'running' && progress && progress.text) {
-      summary = String(progress.text);
+    if (progress && progress.text) {
+      summary = state === 'running' ? String(progress.text) : summary;
+      const log = Array.isArray(progress.log) ? progress.log : [];
+      if (log.length) {
+        runLog = '<div class="queue-run-log">' + log.map((entry) =>
+          queueEscape((entry && entry.updated_at ? entry.updated_at + ' · ' : '') + (entry && entry.text ? entry.text : ''))
+        ).join('<br>') + '</div>';
+      }
     }
     const canCancel = state === 'queued';
     const canRun = state === 'queued';
@@ -2279,9 +2375,9 @@ function renderQueueList() {
     return (
       '<tr data-job-id="' + queueEscape(jobId) + '">' +
       '<td class="wrap">' + queueEscape(jobId) +
-        (mode === 'online' ? ' <span class="stats">[online]</span>' : '') + '</td>' +
+        ' <span class="mode-label">' + queueEscape(mode === 'online' ? '联网' : '只用缓存') + '</span></td>' +
       '<td>' + queueEscape(queueStateLabel(state)) + '</td>' +
-      '<td class="wrap">' + queueEscape(summary) + '</td>' +
+      '<td class="wrap">' + queueEscape(summary) + runLog + '</td>' +
       '<td class="wrap">' + queueEscape(created) + '</td>' +
       '<td>' + (actions.join(' ') || '—') + '</td>' +
       '</tr>'
