@@ -375,7 +375,7 @@ python -m pytest tests -q
 
 | 日期 | 范围 | 完成内容与验证摘要 |
 |---|---|---|
-| 2026-10-09 | 2.9.1 发布 | 网页队列默认联网并标明会访问外部接口，任务行区分联网和只用缓存，来源异常写出来源名；CSV 带 BOM 且日期按文本写出；新增双击启停脚本。发布包与测试结果在打包验收后补记。 |
+| 2026-10-09 | 2.9.1 发布 | 网页队列默认联网并标明会访问外部接口，任务行区分联网和只用缓存，来源异常写出来源名；CSV 带 BOM 且日期按文本写出；新增双击启停脚本。源树与独立解压包均为 `1286 passed, 1 skipped`。发布提交 `57f37048f39fdd7b7f14fd410b626cb0b5896e0b` 与附注标签 `v2.9.1`。发布包 `ioc_rejudge_v2.9.1_20261009-162314.zip` 含 165 个发布文件，禁入项 0，SHA-256 `ee98bb83b0fc0a16b7fecb5a3b0204b735e0e65e94b622b7fd19c4c4bcd56467`。 |
 | 2026-10-09 | 2.9.0 GitHub Release | 已创建公开 Release `v2.9.0` 并上传 ZIP 资产 `ioc_rejudge_v2.9.0_20261008-103404.zip`（5,555,974 字节，SHA-256 `12303b5f3aa55796cb2ae0784e653cbc0d9f171fe1539a186642bdaadb6ef49a`）。页面：`https://github.com/MwisQing/ioc_rejudge/releases/tag/v2.9.0`。无 force push。 |
 | 2026-10-08 | 2.9.0 发布 | 收口高频 `judge` 入口、统一任务队列和队列结果消费：CLI 与本地页面共用 jobs 存储，支持入队、运行、结果、三格式导出、解释、三值人工 overlay 和结论对比。源树与独立解压包均为 `1265 passed, 1 skipped`；Go worker、`compileall`、CLI help、`pack.py --check` 通过。发布提交 `20f091ffda08511b7c300edfb36d2fbc89d9764f` 与附注标签 `v2.9.0`。发布包 `ioc_rejudge_v2.9.0_20261008-103404.zip` 含 160 个发布文件，禁入项 0，SHA-256 `12303b5f3aa55796cb2ae0784e653cbc0d9f171fe1539a186642bdaadb6ef49a`。GitHub Release 页面与 ZIP 资产于 2026-10-09 补齐。 |
 | 2026-08-10 | 2.2.6 发布准备 | 六个在线 provider 接入状态确定后计数的实时进度，TTY 原地重绘、非 TTY 节流且重复终态去重；捆绑 Go HTTP worker 按 provider 原配置并发/限速，Python 保留解析、缓存和裁判语义及 fallback；修复直接脚本启动和逐 IOC 全量重扫缓存分片的性能退化，CLI 显示缓存路径/模式/TTL/miss 原因并在 Ctrl+C 后说明复用边界；修复 `push.py --check` 误推送；真实 Windows EXE 本地 HTTP 验收通过，Python 全量 `708 passed, 1 skipped`，Go、语法、102 文件 pack check 与 diff check 通过 |
