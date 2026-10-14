@@ -1544,6 +1544,7 @@ function initShell() {
   if (storedJobId && !queueState.selectedJobId) {
     queueState.selectedJobId = String(storedJobId);
   }
+  restoreQueueResultState();
   window.addEventListener('popstate', () => {
     applyMode(modeFromHash() || readStore().mode || 'queue');
   });
@@ -3848,6 +3849,43 @@ function renderQueueList() {
   fillQueueBaselineOptions(queueState.selectedJobId || '');
 }
 
+function restoreQueueResultState() {
+  const stored = readStore();
+  const storedResultId = stored['queue.selectedResultId'];
+  if (storedResultId && !queueState.selectedResultId) {
+    queueState.selectedResultId = String(storedResultId);
+  }
+  const storedLimit = Number(stored['queue.pageSize']);
+  if (Number.isFinite(storedLimit) && storedLimit > 0) {
+    queueState.resultLimit = storedLimit;
+  }
+  const storedOffset = Number(stored['queue.page']);
+  if (Number.isFinite(storedOffset) && storedOffset > 0) {
+    queueState.resultOffset = Math.floor(storedOffset);
+  }
+  const storedDispositions = Array.isArray(stored['queue.dispositions'])
+    ? stored['queue.dispositions'].map((item) => String(item))
+    : [];
+  const kind = Object.keys(QUEUE_FILTERS).find((key) => (
+    QUEUE_FILTERS[key].length === storedDispositions.length
+    && QUEUE_FILTERS[key].every((value) => storedDispositions.indexOf(value) >= 0)
+  ));
+  if (kind) queueFilterState().kind = kind;
+  if (stored['queue.providerIssues']) queueFilterState().providerIssues = true;
+  const sizeSelect = $('queue-page-size');
+  if (sizeSelect && String(sizeSelect.value) !== String(queueState.resultLimit)) {
+    sizeSelect.value = String(queueState.resultLimit);
+  }
+}
+
+async function restoreQueueResults() {
+  const jobId = queueState.selectedJobId;
+  if (!jobId) return;
+  const job = (queueState.jobs || []).find((item) => item.job_id === jobId);
+  if (!job || job.state !== 'succeeded') return;
+  await doQueueResults(jobId);
+}
+
 function queueUpdateBatchBar() {
   const bar = $('queue-batch-bar');
   if (!bar) return;
@@ -4698,13 +4736,16 @@ async function doQueueResults(jobId) {
   try {
     clearError();
     if (!jobId) throw new Error('缺少 job_id');
+    const sameJob = queueState.selectedJobId === jobId;
+    if (!sameJob) {
+      queueState.resultOffset = 0;
+      queueState.selectedResultId = '';
+      queueState.selectedResultIds = new Set();
+      patchStore({ 'queue.selectedJobId': jobId, 'queue.selectedResultId': '' });
+    }
     queueState.selectedJobId = jobId;
-    queueState.selectedResultId = '';
-    queueState.selectedResultIds = new Set();
-    patchStore({ 'queue.selectedJobId': jobId, 'queue.selectedResultId': '' });
     closeQueueDetail();
-    queueState.resultOffset = 0;
-    await queueLoadResults(0);
+    await queueLoadResults(queueState.resultOffset || 0);
     const selected = (queueState.jobs || []).find((job) => job.job_id === jobId) || null;
     renderQueueKpi(selected);
     fillQueueBaselineOptions(jobId);
@@ -5051,7 +5092,9 @@ initShell();
 maybeShowLegacyWorkbench();
 workbenchSyncControls();
 refreshStatus();
-refreshQueueList(true).catch(() => {});
+refreshQueueList(true)
+  .then(() => restoreQueueResults())
+  .catch(() => {});
 </script>
 </body>
 </html>
