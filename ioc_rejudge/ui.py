@@ -29,6 +29,7 @@ import tempfile
 import threading
 import time
 import webbrowser
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -179,6 +180,82 @@ def _read_job_result_rows(queue: UnifiedJobQueue, job_id: str) -> list[dict[str,
         if isinstance(row, dict):
             rows.append(row)
     return rows
+
+
+def _unique_export_path(export_dir: Path, stem: str, suffix: str) -> Path:
+    """Allocate a collision-free export file name inside *export_dir*."""
+    export_dir.mkdir(parents=True, exist_ok=True)
+    for index in range(1, 1000):
+        name = f"{stem}{suffix}" if index == 1 else f"{stem}-{index}{suffix}"
+        candidate = export_dir / name
+        if not candidate.exists():
+            return candidate
+    raise ShareError("cannot allocate an export file name")
+
+
+def _result_id_for_row(job_id: str, index: int, row: dict[str, Any]) -> str:
+    embedded = row.get("result_id")
+    if isinstance(embedded, str) and embedded.strip():
+        return embedded.strip()
+    return f"{job_id}-{index + 1:06d}"
+
+
+def _parse_csv_param(values: list[str] | None) -> list[str] | None:
+    """Parse a repeated/comma-joined query parameter into a clean list."""
+    if not values:
+        return None
+    items: list[str] = []
+    for value in values:
+        for part in str(value).split(","):
+            part = part.strip()
+            if part and part not in items:
+                items.append(part)
+    return items or None
+
+
+def _parse_bool_param(values: list[str] | None) -> bool:
+    if not values:
+        return False
+    return str(values[0]).strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _parse_int_param(
+    values: list[str] | None,
+    *,
+    default: int | None,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int | None:
+    if not values:
+        return default
+    raw = str(values[0]).strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ShareError(f"invalid integer parameter: {raw}") from exc
+    if minimum is not None and value < minimum:
+        raise ShareError(f"parameter must be >= {minimum}")
+    if maximum is not None and value > maximum:
+        raise ShareError(f"parameter must be <= {maximum}")
+    return value
+
+
+def _row_has_provider_issue(row: dict[str, Any]) -> bool:
+    """Match actionable provider failures; ``no_data`` never counts as one."""
+    missing = row.get("missing_required_providers")
+    if isinstance(missing, (list, tuple, set)) and any(
+        str(item).strip() for item in missing
+    ):
+        return True
+    statuses = row.get("provider_statuses")
+    if not isinstance(statuses, dict):
+        return False
+    return any(
+        str(status).casefold() in {"error", "disabled", "failed", "timeout"}
+        for status in statuses.values()
+    )
 
 
 _jobs_runner_last_failure: dict[str, Any] | None = None
@@ -1417,7 +1494,44 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
                 if ioc is not None and str(ioc) in overlay_by_ioc:
                     item["review_overlay"] = overlay_by_ioc[str(ioc)]
                 enriched.append(item)
-            self._send_json(200, {"ok": True, "rows": enriched})
+            # Optional server-side filtering/pagination (old callers keep the
+            # unpaginated `rows` contract and simply see extra keys).
+            dispositions = _parse_csv_param(query.get("dispositions"))
+            query_text = (query.get("query") or [""])[0].strip()
+            provider_issues = _parse_bool_param(query.get("provider_issues"))
+            offset = _parse_int_param(query.get("offset"), default=0, minimum=0)
+            limit = _parse_int_param(
+                query.get("limit"), default=None, minimum=1, maximum=1000
+            )
+            filtered = enriched
+            if dispositions is not None:
+                wanted = set(dispositions)
+                filtered = [
+                    item for item in filtered if item.get("disposition") in wanted
+                ]
+            if provider_issues:
+                filtered = [
+                    item for item in filtered if _row_has_provider_issue(item)
+                ]
+            if query_text:
+                lowered = query_text.casefold()
+                filtered = [
+                    item
+                    for item in filtered
+                    if lowered in json.dumps(item, ensure_ascii=False).casefold()
+                ]
+            total = len(filtered)
+            page = filtered[offset:] if limit is None else filtered[offset : offset + limit]
+            self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "rows": page,
+                    "total": total,
+                    "offset": offset,
+                    "limit": limit if limit is not None else len(page),
+                },
+            )
             return
 
         if len(parts) == 5 and parts[:3] == ["api", "jobs", "export"]:
@@ -1806,27 +1920,200 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             "jsonl",
             "csv",
             "xlsx",
+            "diagnostics",
+            "diff",
+            "bundle",
         }:
-            raise ShareError("format must be jsonl, csv, or xlsx")
+            raise ShareError(
+                "format must be jsonl, csv, xlsx, diagnostics, diff, or bundle"
+            )
         fmt = raw_fmt.lower()
+        raw_result_ids = body.get("result_ids")
+        result_ids: list[str] | None = None
+        if raw_result_ids is not None:
+            if not isinstance(raw_result_ids, list) or not all(
+                isinstance(item, str) and item.strip() for item in raw_result_ids
+            ):
+                raise ShareError("result_ids must be a list of result_id strings")
+            result_ids = [item.strip() for item in raw_result_ids]
+            if len(result_ids) > 1000:
+                raise ShareError("result_ids accepts at most 1000 rows per export")
+        raw_dispositions = body.get("dispositions")
+        dispositions: list[str] | None = None
+        if raw_dispositions is not None:
+            if isinstance(raw_dispositions, str):
+                dispositions = _parse_csv_param([raw_dispositions])
+            elif isinstance(raw_dispositions, list) and all(
+                isinstance(item, str) for item in raw_dispositions
+            ):
+                dispositions = _parse_csv_param(
+                    [",".join(item for item in raw_dispositions)]
+                )
+            else:
+                raise ShareError("dispositions must be a list of strings")
+        raw_query = body.get("query")
+        query_text = ""
+        if raw_query is not None:
+            if not isinstance(raw_query, str):
+                raise ShareError("query must be a string")
+            query_text = raw_query.strip()
+        provider_issues = bool(body.get("provider_issues"))
+        raw_baseline = body.get("baseline_job_id")
+        baseline_job_id: str | None = None
+        if raw_baseline is not None:
+            baseline_job_id = self._valid_job_id(
+                raw_baseline, field="baseline_job_id"
+            )
         queue = self.ui_state.job_queue
         _jobs_recover_stale(queue)
-        payload = export_job_results(queue, job_id, fmt=fmt)
-        path_str = str(payload.get("path") or "")
-        file_path = Path(path_str)
+        skipped: Any = None
+        filters_active = bool(dispositions) or bool(query_text) or provider_issues
+        if fmt in {"jsonl", "csv", "xlsx"} and result_ids is None and not filters_active:
+            # Legacy path: the whole result file, unchanged behaviour.
+            payload = export_job_results(queue, job_id, fmt=fmt)
+            file_path = Path(str(payload.get("path") or ""))
+            rows = payload.get("rows", 0)
+            skipped = payload.get("skipped")
+        else:
+            file_path, rows, skipped = self._export_job_variant(
+                queue,
+                job_id,
+                fmt=fmt,
+                result_ids=result_ids,
+                baseline_job_id=baseline_job_id,
+                dispositions=dispositions,
+                query=query_text,
+                provider_issues=provider_issues,
+            )
         export_id = f"export-{secrets.token_hex(10)}"
         self.ui_state.job_exports[export_id] = file_path
         response: dict[str, Any] = {
             "ok": True,
             "export_id": export_id,
-            "rows": payload.get("rows", 0),
+            "rows": rows,
             "format": fmt,
             "filename": file_path.name,
             "job_id": job_id,
         }
-        if payload.get("skipped"):
-            response["skipped"] = payload["skipped"]
+        if skipped:
+            response["skipped"] = skipped
         return response
+
+    def _export_job_variant(
+        self,
+        queue: UnifiedJobQueue,
+        job_id: str,
+        *,
+        fmt: str,
+        result_ids: list[str] | None,
+        baseline_job_id: str | None,
+        dispositions: list[str] | None = None,
+        query: str = "",
+        provider_issues: bool = False,
+    ) -> tuple[Path, int, Any]:
+        """Filtered row exports plus single-file diagnostics/diff/bundle exports."""
+        try:
+            job = queue.get(job_id)
+        except JobNotFoundError as exc:
+            raise ShareError(f"job not found: {job_id}") from exc
+        state = str(job.get("state") or "")
+        if state != "succeeded":
+            raise ShareError(
+                f"job is not succeeded (state={state}); export requires succeeded"
+            )
+        job_dir = queue.root / job_id
+        export_dir = job_dir / "export"
+        if fmt == "diagnostics":
+            source = job_dir / "diagnostics.json"
+            if not source.is_file():
+                raise ShareError("diagnostics not found for this job")
+            destination = _unique_export_path(export_dir, "diagnostics", ".json")
+            _write_complete_file(destination, source.read_bytes())
+            return destination, 0, None
+        if fmt == "diff":
+            if not baseline_job_id:
+                raise ShareError("baseline_job_id is required for diff export")
+            if baseline_job_id == job_id:
+                raise ShareError("job_id and baseline_job_id must differ")
+            payload = diff_jobs(queue.root, job_id, baseline_job_id)
+            destination = _unique_export_path(export_dir, "diff", ".json")
+            _write_complete_file(
+                destination,
+                json.dumps(
+                    payload.get("diff"), ensure_ascii=False, indent=2
+                ).encode("utf-8"),
+            )
+            return destination, 0, payload.get("skipped")
+
+        rows, skipped = read_result_rows(queue.root, job_id)
+        enriched: list[dict[str, Any]] = []
+        for index, row in enumerate(rows):
+            item = dict(row)
+            item["result_id"] = _result_id_for_row(job_id, index, row)
+            enriched.append(item)
+        selected = enriched
+        if dispositions:
+            wanted = set(dispositions)
+            selected = [item for item in selected if item.get("disposition") in wanted]
+        if provider_issues:
+            selected = [item for item in selected if _row_has_provider_issue(item)]
+        if query:
+            lowered = query.casefold()
+            selected = [
+                item
+                for item in selected
+                if lowered in json.dumps(item, ensure_ascii=False).casefold()
+            ]
+        if result_ids is not None:
+            by_id = {str(item.get("result_id")): item for item in selected}
+            missing = [item for item in result_ids if item not in by_id]
+            if missing:
+                raise ShareError("unknown result_id(s): " + ", ".join(missing[:5]))
+            selected = [by_id[item] for item in result_ids]
+
+        from ioc_rejudge.export import export_csv, export_excel, export_jsonl
+
+        if fmt == "bundle":
+            destination = _unique_export_path(export_dir, "bundle", ".zip")
+            staging = Path(tempfile.mkdtemp(prefix="bundle-", dir=str(export_dir)))
+            try:
+                export_jsonl(selected, str(staging / "results.jsonl"))
+                export_csv(selected, str(staging / "results.csv"))
+                export_excel(selected, str(staging / "results.xlsx"))
+                diagnostics = job_dir / "diagnostics.json"
+                if diagnostics.is_file():
+                    (staging / "diagnostics.json").write_bytes(
+                        diagnostics.read_bytes()
+                    )
+                if baseline_job_id:
+                    if baseline_job_id == job_id:
+                        raise ShareError("job_id and baseline_job_id must differ")
+                    diff_payload = diff_jobs(queue.root, job_id, baseline_job_id)
+                    (staging / "diff.json").write_bytes(
+                        json.dumps(
+                            diff_payload.get("diff"), ensure_ascii=False, indent=2
+                        ).encode("utf-8")
+                    )
+                with zipfile.ZipFile(
+                    destination, "w", zipfile.ZIP_DEFLATED
+                ) as archive:
+                    for child in sorted(staging.iterdir(), key=lambda item: item.name):
+                        archive.write(child, arcname=child.name)
+            finally:
+                shutil.rmtree(staging, ignore_errors=True)
+            return destination, len(selected), skipped
+
+        destination = _unique_export_path(export_dir, f"{job_id}-filtered", f".{fmt}")
+        try:
+            if fmt == "jsonl":
+                export_jsonl(selected, str(destination))
+            elif fmt == "csv":
+                export_csv(selected, str(destination))
+            else:
+                export_excel(selected, str(destination))
+        except Exception as exc:
+            raise ShareError(f"export failed: {exc}") from exc
+        return destination, len(selected), skipped
 
     def _handle_jobs_diff(self, body: dict) -> dict:
         job_id = self._valid_job_id(body.get("job_id"))

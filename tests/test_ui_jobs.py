@@ -939,3 +939,194 @@ def test_jobs_import_requires_token_and_import_id_is_exclusive(make_jobs_server)
     )
     assert status == 200, legacy
     assert legacy["job"]["input"]["valid"] == 1
+
+
+# --- slice 3: results filtering/pagination and export extensions ----------
+
+
+def _seed_filter_job(jobs_dir: Path) -> str:
+    rows = [
+        {
+            "ioc": "black.example.invalid",
+            "conclusion": "存活有效",
+            "disposition": "block",
+            "route": "standard",
+            "confidence": 0.93,
+            "provider_statuses": {"whois": "success", "pDNS": "success"},
+            "retained_urls": [],
+            "reason": "命中黑名单",
+        },
+        {
+            "ioc": "review.example.invalid",
+            "conclusion": "待复核",
+            "disposition": "review",
+            "route": "standard",
+            "confidence": 0.62,
+            "provider_statuses": {"whois": "timeout"},
+            "retained_urls": [],
+            "reason": "证据不足",
+        },
+        {
+            "ioc": "gray.example.invalid",
+            "conclusion": "灰",
+            "disposition": "gray",
+            "route": "standard",
+            "confidence": 0.55,
+            "provider_statuses": {"whois": "success"},
+            "retained_urls": ["gray.example.invalid/path"],
+            "reason": "保留 URL 不拦截",
+        },
+        {
+            "ioc": "fp.example.invalid",
+            "conclusion": "误报",
+            "disposition": "false_positive",
+            "route": "standard",
+            "confidence": 0.9,
+            "provider_statuses": {"whois": "no_data"},
+            "retained_urls": [],
+            "reason": "业务资产",
+        },
+    ]
+    return _seed_succeeded_job(jobs_dir, rows)
+
+
+def test_jobs_results_filters_and_pagination(make_jobs_server):
+    url, token, jobs_dir, _cache, _server = make_jobs_server()
+    job_id = _seed_filter_job(jobs_dir)
+    base = f"/api/jobs/results?job_id={urllib.parse.quote(job_id)}"
+
+    status, body = api_get_json(url, token, base)
+    assert status == 200, body
+    assert len(body["rows"]) == 4
+    assert body["total"] == 4
+    assert body["offset"] == 0
+    assert body["limit"] == 4
+
+    status, body = api_get_json(url, token, base + "&limit=2&offset=1")
+    assert status == 200, body
+    assert body["total"] == 4
+    assert body["offset"] == 1
+    assert body["limit"] == 2
+    assert [row["ioc"] for row in body["rows"]] == [
+        "review.example.invalid",
+        "gray.example.invalid",
+    ]
+
+    status, body = api_get_json(url, token, base + "&dispositions=review")
+    assert status == 200, body
+    assert [row["ioc"] for row in body["rows"]] == ["review.example.invalid"]
+    assert body["total"] == 1
+
+    status, body = api_get_json(url, token, base + "&dispositions=gray,false_positive")
+    assert status == 200, body
+    assert body["total"] == 2
+
+    status, body = api_get_json(
+        url, token, base + "&query=" + urllib.parse.quote("业务资产")
+    )
+    assert status == 200, body
+    assert [row["ioc"] for row in body["rows"]] == ["fp.example.invalid"]
+
+    status, body = api_get_json(url, token, base + "&provider_issues=true")
+    assert status == 200, body
+    # timeout counts as an issue; no_data must not.
+    assert [row["ioc"] for row in body["rows"]] == ["review.example.invalid"]
+
+    status, body = api_get_json(url, token, base + "&limit=0")
+    assert status == 400, body
+
+
+def test_jobs_export_result_ids_and_new_formats(make_jobs_server):
+    url, token, jobs_dir, _cache, _server = make_jobs_server()
+    job_id = _seed_filter_job(jobs_dir)
+    other_id = _seed_succeeded_job(
+        jobs_dir,
+        [{"ioc": "black.example.invalid", "conclusion": "误报", "disposition": "false_positive"}],
+        text="black.example.invalid\n",
+    )
+    UnifiedJobQueue(jobs_dir).write_diagnostics(job_id, {"notes": "synthetic"})
+
+    result_ids = [f"{job_id}-000002"]
+    for fmt in ("jsonl", "csv", "xlsx"):
+        status, body = api_post(
+            url,
+            token,
+            "/api/jobs/export",
+            {"job_id": job_id, "format": fmt, "result_ids": result_ids},
+        )
+        assert status == 200, body
+        assert body["rows"] == 1
+        dumped = json.dumps(body)
+        assert str(jobs_dir) not in dumped
+        assert "path" not in body
+
+    status, body = api_post(
+        url, token, "/api/jobs/export", {"job_id": job_id, "format": "jsonl", "result_ids": ["missing-id"]}
+    )
+    assert status == 400, body
+    assert body.get("error")
+
+    status, body = api_post(
+        url,
+        token,
+        "/api/jobs/export",
+        {"job_id": job_id, "format": "jsonl", "dispositions": ["gray"]},
+    )
+    assert status == 200, body
+    assert body["rows"] == 1
+
+    status, body = api_post(
+        url, token, "/api/jobs/export", {"job_id": job_id, "format": "diagnostics"}
+    )
+    assert status == 200, body
+    assert body["filename"].endswith(".json")
+    status, _headers, data = api_get_bytes(
+        url, token, f"/api/jobs/export/{urllib.parse.quote(body['export_id'])}/download"
+    )
+    assert status == 200
+    assert b"synthetic" in data
+
+    status, body = api_post(
+        url, token, "/api/jobs/export", {"job_id": job_id, "format": "diff"}
+    )
+    assert status == 400, body
+
+    status, body = api_post(
+        url,
+        token,
+        "/api/jobs/export",
+        {"job_id": job_id, "format": "diff", "baseline_job_id": other_id},
+    )
+    assert status == 200, body
+
+    status, body = api_post(
+        url,
+        token,
+        "/api/jobs/export",
+        {"job_id": job_id, "format": "bundle", "baseline_job_id": other_id},
+    )
+    assert status == 200, body
+    assert body["filename"].endswith(".zip")
+    status, _headers, data = api_get_bytes(
+        url, token, f"/api/jobs/export/{urllib.parse.quote(body['export_id'])}/download"
+    )
+    assert status == 200
+    assert data[:2] == b"PK"
+    import io as _io
+    import zipfile as _zip
+
+    with _zip.ZipFile(_io.BytesIO(data)) as archive:
+        names = set(archive.namelist())
+    assert {"results.jsonl", "results.csv", "results.xlsx", "diagnostics.json"} <= names
+    assert str(jobs_dir) not in json.dumps(body)
+
+
+def test_jobs_export_without_result_ids_keeps_legacy_rows(make_jobs_server):
+    url, token, jobs_dir, _cache, _server = make_jobs_server()
+    job_id = _seed_filter_job(jobs_dir)
+    status, body = api_post(
+        url, token, "/api/jobs/export", {"job_id": job_id, "format": "jsonl"}
+    )
+    assert status == 200, body
+    assert body["rows"] == 4
+    assert body["format"] == "jsonl"

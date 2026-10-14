@@ -356,10 +356,123 @@
   .toast.is-success { border-left-color: var(--status-success); }
   .toast.is-error { border-left-color: var(--status-error); }
   .toast.is-info { border-left-color: var(--text-secondary); }
-  #queue-panel button {
-    background: var(--bg-surface); border-color: var(--line-strong); color: var(--text-primary);
+  .icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
   }
-  #queue-panel button:hover:not(:disabled) { background: var(--bg-elevated); border-color: var(--accent); }
+  .results-toolbar {
+    position: sticky; top: 52px; z-index: var(--z-sticky-header);
+    background: var(--bg-surface); border-bottom: 1px solid var(--divider);
+    padding: var(--space-3) 0; margin-top: var(--space-3);
+    display: flex; flex-direction: column; gap: var(--space-2);
+  }
+  .results-toolbar-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .results-headline { margin: 0; color: var(--text-primary); font-weight: 500; }
+  .results-toolbar-actions {
+    margin-left: auto; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  }
+  .filter-group { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+  .filter-chip {
+    height: 32px; padding: 0 var(--space-3);
+    background: var(--bg-surface); border: 1px solid var(--line-strong);
+    color: var(--text-secondary); border-radius: var(--radius-control);
+    font-size: 13px; font-weight: 400;
+  }
+  .filter-chip:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-surface); color: var(--text-primary); }
+  .filter-chip[aria-pressed="true"] {
+    background: var(--accent-soft); border-color: var(--accent); color: var(--text-primary);
+  }
+  .queue-query { width: min(240px, 100%); margin-left: auto; font-family: var(--font-sans); }
+  .inline-field {
+    font-size: 12px; line-height: 16px; color: var(--text-secondary);
+    margin: 0; font-weight: 500; letter-spacing: 0.01em;
+  }
+  .queue-page-size, .queue-baseline {
+    width: auto; min-width: 6rem; max-width: 100%;
+    font-family: var(--font-sans); font-size: 13px;
+  }
+  .menu-wrap { position: relative; }
+  .menu {
+    position: absolute; right: 0; top: calc(100% + var(--space-1)); z-index: var(--z-side-panel);
+    min-width: 10rem; padding: var(--space-1);
+    background: var(--bg-elevated); border: 1px solid var(--line);
+    border-radius: var(--radius-control); box-shadow: var(--shadow-2);
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .menu[hidden] { display: none; }
+  .menu button {
+    justify-content: flex-start; height: 32px; padding: 0 var(--space-2);
+    background: transparent; border-color: transparent; color: var(--text-primary);
+    font-size: 13px; font-weight: 400;
+  }
+  .menu button:hover:not(:disabled) { background: var(--accent-soft); border-color: transparent; }
+  .batch-bar {
+    display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+    background: var(--accent-soft); border: 1px solid var(--line);
+    border-radius: var(--radius-card); padding: var(--space-2) var(--space-3);
+    margin-top: var(--space-2);
+  }
+  .batch-bar[hidden] { display: none; }
+  .batch-bar .stats { margin: 0; color: var(--text-primary); }
+  .verdict-badge {
+    display: inline-block; height: 22px; line-height: 16px; padding: 2px 8px;
+    border-radius: var(--radius-badge); font-size: 12px; font-weight: 500; white-space: nowrap;
+  }
+  .verdict-badge.is-black { background: var(--verdict-black-bg); color: var(--verdict-black-fg); border: 1px solid var(--line-strong); }
+  .verdict-badge.is-gray { background: var(--verdict-gray-bg); color: var(--verdict-gray-fg); }
+  .verdict-badge.is-white { background: var(--verdict-white-bg); color: var(--verdict-white-fg); }
+  .verdict-badge.is-review { background: var(--accent); color: var(--accent-ink); }
+  .verdict-badge.is-unknown { background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--line); }
+  .review-badge {
+    display: inline-block; height: 20px; line-height: 16px; padding: 1px 6px;
+    border-radius: var(--radius-badge); font-size: 11px; font-weight: 500;
+    border: 1px solid var(--line); background: var(--bg-elevated); color: var(--text-secondary);
+  }
+  .review-badge.is-approved { color: var(--status-success); }
+  .review-badge.is-rejected { color: var(--status-error); }
+  .review-badge.is-pending { color: var(--accent); }
+  .provider-cell { display: flex; flex-direction: column; gap: 2px; }
+  .provider-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+  .provider-chip {
+    display: inline-flex; align-items: center; gap: 2px;
+    height: 20px; padding: 1px 6px; border-radius: var(--radius-badge);
+    border: 1px solid var(--line); background: var(--bg-surface);
+    font-size: 11px; line-height: 16px; font-weight: 500; white-space: nowrap;
+  }
+  .provider-chip.is-success { color: var(--status-success); }
+  .provider-chip.is-no_data { color: var(--status-no-data); }
+  .provider-chip.is-error { color: var(--status-error); }
+  .provider-chip.is-disabled { color: var(--status-disabled); }
+  .provider-chip .chip-icon { width: 8px; height: 8px; flex: none; }
+  .queue-results-wrap { max-height: 70vh; overflow: auto; }
+  .queue-results-table { min-width: 1080px; }
+  .queue-results-table thead th {
+    position: sticky; top: 0; z-index: var(--z-content); background: var(--bg-surface);
+  }
+  .queue-results-table .col-select { width: 36px; text-align: center; }
+  .queue-results-table .col-id { width: 68px; }
+  .queue-results-table .col-conclusion { width: 140px; }
+  .queue-results-table .col-route { width: 96px; }
+  .queue-results-table .col-review { width: 110px; }
+  .queue-results-table .col-confidence { width: 80px; text-align: right; }
+  .queue-results-table .col-provider { width: 220px; }
+  .queue-results-table .col-url { width: 180px; }
+  .queue-results-table .col-summary { min-width: 260px; }
+  .queue-results-table td.cell-id, .queue-results-table td.cell-route { font-family: var(--font-mono); font-size: 13px; }
+  .queue-results-table td.cell-ioc { font-family: var(--font-mono); font-size: 13px; max-width: 320px; }
+  .queue-results-table td.cell-confidence { text-align: right; font-variant-numeric: tabular-nums; }
+  .queue-results-table td.cell-select { text-align: center; }
+  .ellipsis { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .clamp-2 {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; white-space: normal; word-break: break-word;
+  }
+  .conclusion-cell { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+  .conclusion-cell .disposition-text {
+    font-size: 11px; line-height: 14px; color: var(--text-secondary); font-family: var(--font-mono);
+  }
+  .row-select { width: 16px; height: 16px; }
   #queue-panel #queue-enqueue {
     background: var(--accent); border-color: var(--accent); color: var(--accent-ink);
   }
@@ -776,30 +889,82 @@
       </table>
     </div>
     <div class="result" id="queue-results-box" hidden>
-      <div class="stats" id="queue-results-stats"></div>
-      <div class="actions">
-        <button class="secondary" type="button" id="queue-export-jsonl" data-queue-export="jsonl">导出 JSONL</button>
-        <button class="secondary" type="button" id="queue-export-csv" data-queue-export="csv">导出 CSV</button>
-        <button class="secondary" type="button" id="queue-export-xlsx" data-queue-export="xlsx">导出 XLSX</button>
-        <span class="flash" id="queue-export-flash" hidden></span>
+      <div class="results-toolbar" id="queue-results-toolbar">
+        <div class="results-toolbar-row">
+          <span class="stats results-headline" id="queue-results-stats">未选择任务</span>
+          <div class="results-toolbar-actions">
+            <button class="ghost icon-btn" type="button" id="queue-results-clear-filter" hidden>清除筛选</button>
+            <button class="ghost icon-btn" type="button" id="queue-results-refresh">刷新结果</button>
+          </div>
+        </div>
+        <div class="results-toolbar-row">
+          <div class="filter-group" role="group" aria-label="结论快捷筛选">
+            <button class="filter-chip" type="button" data-queue-filter="all" aria-pressed="true">全部</button>
+            <button class="filter-chip" type="button" data-queue-filter="review" aria-pressed="false">待复核</button>
+            <button class="filter-chip" type="button" data-queue-filter="gray" aria-pressed="false">灰</button>
+            <button class="filter-chip" type="button" data-queue-filter="false_positive" aria-pressed="false">误报</button>
+            <button class="filter-chip" type="button" data-queue-filter="block" aria-pressed="false">黑</button>
+            <button class="filter-chip" type="button" id="queue-filter-provider-issues" aria-pressed="false" aria-describedby="queue-provider-filter-status">Provider 异常</button>
+          </div>
+          <input type="search" id="queue-query" class="queue-query" placeholder="关键字：IOC / 证据" autocomplete="off" aria-label="结果关键字">
+        </div>
+        <div class="results-toolbar-row">
+          <span class="stats" id="queue-page-status">第 0 / 0 页 · 共 0 行</span>
+          <div class="results-toolbar-actions">
+            <button class="secondary icon-btn" type="button" id="queue-prev-page" disabled>上一页</button>
+            <button class="secondary icon-btn" type="button" id="queue-next-page" disabled>下一页</button>
+            <label class="inline-field" for="queue-page-size">每页</label>
+            <select id="queue-page-size" class="queue-page-size" aria-label="每页行数">
+              <option value="50">50</option>
+              <option value="100" selected>100</option>
+              <option value="200">200</option>
+              <option value="500">500</option>
+            </select>
+            <div class="menu-wrap">
+              <button class="secondary icon-btn" type="button" id="queue-export-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-export-menu">导出</button>
+              <div class="menu" id="queue-export-menu" role="menu" hidden>
+                <button type="button" role="menuitem" id="queue-export-jsonl" data-queue-export="jsonl">JSONL</button>
+                <button type="button" role="menuitem" id="queue-export-csv" data-queue-export="csv">CSV</button>
+                <button type="button" role="menuitem" id="queue-export-xlsx" data-queue-export="xlsx">XLSX</button>
+                <button type="button" role="menuitem" id="queue-export-diagnostics" data-queue-export="diagnostics">诊断 JSON</button>
+                <button type="button" role="menuitem" id="queue-export-diff" data-queue-export="diff">diff JSON</button>
+                <button type="button" role="menuitem" id="queue-export-bundle" data-queue-export="bundle">bundle ZIP</button>
+              </div>
+            </div>
+            <button class="secondary icon-btn" type="button" id="queue-diff">对比 baseline</button>
+            <span class="flash" id="queue-export-flash" hidden></span>
+          </div>
+        </div>
+        <div class="results-toolbar-row">
+          <label class="inline-field" for="queue-baseline-job">baseline job</label>
+          <select id="queue-baseline-job" class="queue-baseline"></select>
+        </div>
       </div>
-      <div class="actions">
-        <label for="queue-baseline-job" style="margin:0">baseline job</label>
-        <select id="queue-baseline-job" style="min-width:12rem;max-width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;"></select>
-        <button class="secondary" type="button" id="queue-diff">对比 baseline</button>
+      <p class="stats" id="queue-provider-filter-status">Provider 异常筛选会匹配 error、disabled、failed、timeout 和缺失必要来源；no_data 不视为失败。</p>
+      <div class="batch-bar" id="queue-batch-bar" hidden>
+        <span class="stats" id="queue-batch-count">已选 0 行</span>
+        <button class="secondary icon-btn" type="button" id="queue-batch-copy">复制 IOC</button>
+        <button class="secondary icon-btn" type="button" id="queue-batch-export">导出选中</button>
+        <button class="ghost icon-btn" type="button" id="queue-batch-clear">取消选择</button>
       </div>
       <div class="result" id="queue-diff-result" hidden>
         <div class="stats" id="queue-diff-stats"></div>
         <div class="json-viewer" id="queue-diff-viewer"></div>
       </div>
-      <div class="table-wrap">
+      <div class="table-wrap queue-results-wrap" id="queue-results-wrap">
         <table class="queue-results-table">
           <thead>
             <tr>
-              <th>result_id</th>
-              <th>IOC</th>
-              <th>结论</th>
-              <th>人工标签</th>
+              <th class="col-select"><input type="checkbox" id="queue-select-all" aria-label="选择当前页全部行"></th>
+              <th class="col-id">#</th>
+              <th class="col-ioc">IOC</th>
+              <th class="col-conclusion">结论 / 处置</th>
+              <th class="col-route">route</th>
+              <th class="col-review">人工标签</th>
+              <th class="col-confidence">置信度</th>
+              <th class="col-provider">来源</th>
+              <th class="col-url">保留 URL</th>
+              <th class="col-summary">摘要</th>
             </tr>
           </thead>
           <tbody id="queue-results-body"></tbody>
@@ -1156,6 +1321,12 @@ const queueState = {
   iocInfoEnabled: false,
   selectedFile: null,
   stagedImport: null,
+  resultTotal: 0,
+  resultOffset: 0,
+  resultLimit: 100,
+  filters: { kind: 'all', query: '', providerIssues: false },
+  selectedResultIds: new Set(),
+  renderVersion: 0,
 };
 
 const WORKBENCH_STATE_LABELS = {
@@ -2927,42 +3098,282 @@ function fillQueueBaselineOptions(currentJobId) {
   }
 }
 
+const QUEUE_RENDER_CHUNK_SIZE = 24;
+const QUEUE_FILTERS = {
+  all: [],
+  review: ['review'],
+  gray: ['gray'],
+  false_positive: ['false_positive'],
+  block: ['block'],
+};
+const QUEUE_FILTER_LABELS = { review: '待复核', gray: '灰', false_positive: '误报', block: '黑' };
+const SVG_NS = $('icon-sprite') ? $('icon-sprite').namespaceURI : '';
+
+function queueFilterState() {
+  if (!queueState.filters) {
+    queueState.filters = { kind: 'all', query: '', providerIssues: false };
+  }
+  return queueState.filters;
+}
+
+function queueFiltersActive() {
+  const filters = queueFilterState();
+  return filters.kind !== 'all' || !!filters.query || !!filters.providerIssues;
+}
+
+function queueVerdictClass(conclusion) {
+  const value = String(conclusion == null ? '' : conclusion);
+  if (value === '存活有效' || value === '失活有效') return 'is-black';
+  if (value === '灰') return 'is-gray';
+  if (value === '误报') return 'is-white';
+  if (value === '待复核') return 'is-review';
+  return 'is-unknown';
+}
+
+function queueProviderStatusClass(status) {
+  const value = String(status == null ? '' : status).toLowerCase();
+  if (value === 'success' || value === 'ok') return 'is-success';
+  if (value === 'disabled') return 'is-disabled';
+  if (value === 'error' || value === 'failed' || value === 'timeout') return 'is-error';
+  return 'is-no_data';
+}
+
+function queueAlertIcon() {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('class', 'chip-icon');
+  svg.setAttribute('aria-hidden', 'true');
+  const body = document.createElementNS(SVG_NS, 'path');
+  body.setAttribute('d', 'M8 2.6 14.2 13H1.8z');
+  body.setAttribute('fill', 'none');
+  body.setAttribute('stroke', 'currentColor');
+  body.setAttribute('stroke-width', '1.5');
+  body.setAttribute('stroke-linejoin', 'round');
+  const stem = document.createElementNS(SVG_NS, 'path');
+  stem.setAttribute('d', 'M8 6.6v2.6');
+  stem.setAttribute('fill', 'none');
+  stem.setAttribute('stroke', 'currentColor');
+  stem.setAttribute('stroke-width', '1.5');
+  stem.setAttribute('stroke-linecap', 'round');
+  svg.appendChild(body);
+  svg.appendChild(stem);
+  return svg;
+}
+
+function queueProviderChip(name, status) {
+  const chip = document.createElement('span');
+  chip.className = 'provider-chip ' + queueProviderStatusClass(status);
+  if (queueProviderStatusClass(status) === 'is-error') chip.appendChild(queueAlertIcon());
+  const text = document.createElement('span');
+  text.textContent = String(name) + ' ' + String(status == null ? '' : status);
+  chip.appendChild(text);
+  return chip;
+}
+
+function queueProviderCell(row) {
+  const cell = document.createElement('div');
+  cell.className = 'provider-cell';
+  const statuses = row.provider_statuses && typeof row.provider_statuses === 'object'
+    ? row.provider_statuses
+    : {};
+  const missing = Array.isArray(row.missing_required_providers)
+    ? row.missing_required_providers.filter((item) => String(item || '').trim())
+    : [];
+  const abnormal = [];
+  const normal = [];
+  Object.keys(statuses).forEach((name) => {
+    const status = statuses[name];
+    if (queueProviderStatusClass(status) === 'is-error' || String(status).toLowerCase() === 'disabled') {
+      abnormal.push([name, status]);
+    } else {
+      normal.push([name, status]);
+    }
+  });
+  const chips = document.createElement('div');
+  chips.className = 'provider-chips';
+  const shown = abnormal.length ? abnormal : normal.slice(0, 3);
+  if (shown.length) {
+    shown.forEach((entry) => chips.appendChild(queueProviderChip(entry[0], entry[1])));
+  } else {
+    const empty = document.createElement('span');
+    empty.className = 'stats';
+    empty.textContent = '无来源数据';
+    chips.appendChild(empty);
+  }
+  cell.appendChild(chips);
+  if (missing.length) {
+    const missingLine = document.createElement('span');
+    missingLine.className = 'queue-run-log';
+    missingLine.textContent = '缺失 ' + missing.length + '：' + missing.join('、');
+    cell.appendChild(missingLine);
+  }
+  return cell;
+}
+
+function queueFirstRetainedUrl(value) {
+  if (!Array.isArray(value) || !value.length) return '';
+  const first = value[0];
+  if (first == null) return '';
+  if (typeof first === 'string') return first;
+  if (typeof first === 'object') {
+    return String(first.url || first.domain || first.host || first.path || '');
+  }
+  return String(first);
+}
+
+function queueConfidenceText(value) {
+  if (value == null || value === '') return '--';
+  const number = Number(value);
+  if (!Number.isFinite(number)) return String(value);
+  return number.toFixed(2);
+}
+
+function queueBuildRow(row, index) {
+  const resultId = String(row.result_id || '');
+  const tr = document.createElement('tr');
+  tr.className = 'queue-row' + (resultId && resultId === queueState.selectedResultId ? ' is-selected' : '');
+  tr.setAttribute('data-queue-result-id', resultId);
+  tr.tabIndex = 0;
+  tr.setAttribute('aria-label', '结果 ' + resultId + '，按 Enter 查看解释');
+
+  const selectCell = document.createElement('td');
+  selectCell.className = 'cell-select';
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.className = 'row-select';
+  checkbox.checked = !!(queueState.selectedResultIds && queueState.selectedResultIds.has(resultId));
+  checkbox.setAttribute('aria-label', '选择 ' + resultId);
+  checkbox.addEventListener('click', (event) => event.stopPropagation());
+  checkbox.addEventListener('change', () => {
+    if (!queueState.selectedResultIds) queueState.selectedResultIds = new Set();
+    if (checkbox.checked) queueState.selectedResultIds.add(resultId);
+    else queueState.selectedResultIds.delete(resultId);
+    queueUpdateBatchBar();
+  });
+  selectCell.appendChild(checkbox);
+  tr.appendChild(selectCell);
+
+  const idCell = document.createElement('td');
+  idCell.className = 'cell-id';
+  idCell.textContent = resultId ? resultId.slice(-6) : String(index + 1);
+  idCell.title = resultId;
+  tr.appendChild(idCell);
+
+  const iocCell = document.createElement('td');
+  iocCell.className = 'cell-ioc';
+  const iocText = document.createElement('span');
+  iocText.className = 'ellipsis';
+  iocText.textContent = String(row.ioc == null ? '' : row.ioc);
+  iocText.title = String(row.ioc == null ? '' : row.ioc);
+  iocCell.appendChild(iocText);
+  tr.appendChild(iocCell);
+
+  const conclusionCell = document.createElement('td');
+  conclusionCell.className = 'cell-conclusion';
+  const conclusionWrap = document.createElement('div');
+  conclusionWrap.className = 'conclusion-cell';
+  const badge = document.createElement('span');
+  badge.className = 'verdict-badge ' + queueVerdictClass(row.conclusion);
+  badge.textContent = String(row.conclusion == null || row.conclusion === '' ? '未知' : row.conclusion);
+  conclusionWrap.appendChild(badge);
+  const disposition = String(row.disposition == null ? '' : row.disposition);
+  if (disposition) {
+    const dispositionText = document.createElement('span');
+    dispositionText.className = 'disposition-text';
+    dispositionText.textContent = disposition;
+    conclusionWrap.appendChild(dispositionText);
+  }
+  conclusionCell.appendChild(conclusionWrap);
+  tr.appendChild(conclusionCell);
+
+  const routeCell = document.createElement('td');
+  routeCell.className = 'cell-route';
+  routeCell.textContent = String(row.route == null ? '—' : row.route);
+  tr.appendChild(routeCell);
+
+  const reviewCell = document.createElement('td');
+  reviewCell.className = 'cell-review';
+  const overlay = row.review_overlay && typeof row.review_overlay === 'object' ? row.review_overlay : null;
+  const label = overlay && overlay.label ? String(overlay.label) : '';
+  const reviewBadge = document.createElement('span');
+  reviewBadge.className = 'review-badge' + (label ? ' is-' + label : '');
+  reviewBadge.textContent = label || '未复核';
+  if (overlay && overlay.note) reviewBadge.title = String(overlay.note);
+  reviewCell.appendChild(reviewBadge);
+  tr.appendChild(reviewCell);
+
+  const confidenceCell = document.createElement('td');
+  confidenceCell.className = 'cell-confidence';
+  confidenceCell.textContent = queueConfidenceText(row.confidence);
+  tr.appendChild(confidenceCell);
+
+  const providerCell = document.createElement('td');
+  providerCell.className = 'cell-provider';
+  providerCell.appendChild(queueProviderCell(row));
+  tr.appendChild(providerCell);
+
+  const urlCell = document.createElement('td');
+  urlCell.className = 'cell-url';
+  const urlText = document.createElement('span');
+  urlText.className = 'ellipsis';
+  const retained = queueFirstRetainedUrl(row.retained_urls);
+  urlText.textContent = retained || '—';
+  urlText.title = retained;
+  urlCell.appendChild(urlText);
+  tr.appendChild(urlCell);
+
+  const summaryCell = document.createElement('td');
+  summaryCell.className = 'cell-summary';
+  const summary = document.createElement('span');
+  summary.className = 'clamp-2';
+  summary.textContent = String(row.reason || row.summary || row.review_suggestion || '');
+  summaryCell.appendChild(summary);
+  tr.appendChild(summaryCell);
+
+  tr.addEventListener('click', () => doQueueExplain(resultId));
+  return tr;
+}
+
 function renderQueueResultRows(rows) {
   const body = $('queue-results-body');
   if (!body) return;
   queueState.resultRows = rows || [];
+  queueState.renderVersion += 1;
+  const version = queueState.renderVersion;
+  body.textContent = '';
+  body.setAttribute('aria-busy', 'true');
   if (!rows || !rows.length) {
-    body.innerHTML = '<tr><td colspan="4" class="wrap">无结果行</td></tr>';
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 10;
+    td.className = 'wrap queue-empty';
+    td.textContent = queueFiltersActive()
+      ? '当前筛选没有结果。清除筛选或换关键字。'
+      : '这个任务没有结果。请确认任务已完成，或换一个任务。';
+    tr.appendChild(td);
+    body.appendChild(tr);
+    body.setAttribute('aria-busy', 'false');
+    queueUpdateBatchBar();
     return;
   }
-  body.innerHTML = rows.map((row) => {
-    const resultId = row.result_id || '';
-    const ioc = row.ioc || '';
-    const conclusion = row.conclusion || '';
-    const overlay = row.review_overlay && typeof row.review_overlay === 'object'
-      ? row.review_overlay
-      : null;
-    const labelText = overlay && overlay.label
-      ? (overlay.label + (overlay.note ? (' · ' + overlay.note) : ''))
-      : '—';
-    const selected = resultId && resultId === queueState.selectedResultId ? ' is-selected' : '';
-    return (
-      '<tr class="queue-row' + selected + '" data-queue-result-id="' + queueEscape(resultId) + '">' +
-      '<td class="wrap">' + queueEscape(resultId) + '</td>' +
-      '<td class="wrap">' + queueEscape(ioc) + '</td>' +
-      '<td>' + queueEscape(conclusion) + '</td>' +
-      '<td class="queue-row-review">' + queueEscape(labelText) + '</td>' +
-      '</tr>'
-    );
-  }).join('');
-  body.querySelectorAll('[data-queue-result-id]').forEach((rowEl) => {
-    rowEl.addEventListener('click', () => {
-      const resultId = rowEl.getAttribute('data-queue-result-id');
-      doQueueExplain(resultId);
-    });
-  });
+  let cursor = 0;
+  const mount = () => {
+    if (version !== queueState.renderVersion) return;
+    const fragment = document.createDocumentFragment();
+    const end = Math.min(cursor + QUEUE_RENDER_CHUNK_SIZE, rows.length);
+    for (; cursor < end; cursor += 1) {
+      fragment.appendChild(queueBuildRow(rows[cursor], cursor));
+    }
+    body.appendChild(fragment);
+    if (cursor < rows.length) {
+      requestAnimationFrame(mount);
+    } else {
+      body.setAttribute('aria-busy', 'false');
+      queueUpdateBatchBar();
+    }
+  };
+  requestAnimationFrame(mount);
 }
-
 function queueProgressInfo(job) {
   const state = (job && job.state) || '';
   const progress = job && job.runner_progress && typeof job.runner_progress === 'object'
@@ -3074,6 +3485,171 @@ function renderQueueList() {
   }
   renderQueueKpi(selected);
   fillQueueBaselineOptions(queueState.selectedJobId || '');
+}
+
+function queueUpdateBatchBar() {
+  const bar = $('queue-batch-bar');
+  if (!bar) return;
+  const selected = queueState.selectedResultIds || new Set();
+  const rows = queueState.resultRows || [];
+  const count = selected.size;
+  bar.hidden = count === 0;
+  const countEl = $('queue-batch-count');
+  if (countEl) countEl.textContent = '已选 ' + count + ' 行';
+  const selectAll = $('queue-select-all');
+  if (selectAll) {
+    selectAll.checked = rows.length > 0 && count >= rows.length;
+    selectAll.indeterminate = count > 0 && count < rows.length;
+  }
+}
+
+function queueUpdateResultsToolbar() {
+  const filters = queueFilterState();
+  document.querySelectorAll('[data-queue-filter]').forEach((button) => {
+    button.setAttribute(
+      'aria-pressed',
+      button.getAttribute('data-queue-filter') === filters.kind ? 'true' : 'false'
+    );
+  });
+  const providerButton = $('queue-filter-provider-issues');
+  if (providerButton) {
+    providerButton.setAttribute('aria-pressed', filters.providerIssues ? 'true' : 'false');
+  }
+  const clear = $('queue-results-clear-filter');
+  if (clear) clear.hidden = !queueFiltersActive();
+  const limit = queueState.resultLimit > 0 ? queueState.resultLimit : 100;
+  const total = queueState.resultTotal || 0;
+  const pages = Math.max(1, Math.ceil(total / limit));
+  const page = Math.floor((queueState.resultOffset || 0) / limit) + 1;
+  const status = $('queue-page-status');
+  if (status) {
+    status.textContent = total
+      ? '第 ' + page + ' / ' + pages + ' 页 · 共 ' + total + ' 行'
+      : '共 0 行';
+  }
+  const prev = $('queue-prev-page');
+  const next = $('queue-next-page');
+  if (prev) prev.disabled = (queueState.resultOffset || 0) <= 0;
+  if (next) next.disabled = (queueState.resultOffset || 0) + limit >= total;
+  const size = $('queue-page-size');
+  if (size && String(size.value) !== String(limit)) size.value = String(limit);
+}
+
+function queueResultsHeadline() {
+  const filters = queueFilterState();
+  const bits = ['任务 ' + (queueState.selectedJobId || '—')];
+  bits.push('共 ' + (queueState.resultTotal || 0) + ' 行');
+  if (QUEUE_FILTER_LABELS[filters.kind]) bits.push('筛选“' + QUEUE_FILTER_LABELS[filters.kind] + '”');
+  if (filters.providerIssues) bits.push('Provider 异常');
+  if (filters.query) bits.push('关键字 ' + filters.query);
+  return bits.join(' · ');
+}
+
+function queuePersistResultState() {
+  const filters = queueFilterState();
+  patchStore({
+    'queue.page': queueState.resultOffset,
+    'queue.pageSize': queueState.resultLimit,
+    'queue.dispositions': QUEUE_FILTERS[filters.kind] || [],
+    'queue.providerIssues': !!filters.providerIssues,
+  });
+}
+
+function queueResultsParams(offset) {
+  const filters = queueFilterState();
+  const params = new URLSearchParams();
+  params.set('job_id', queueState.selectedJobId);
+  params.set('offset', String(Math.max(0, offset || 0)));
+  params.set('limit', String(queueState.resultLimit || 100));
+  const dispositions = QUEUE_FILTERS[filters.kind] || [];
+  if (dispositions.length) params.set('dispositions', dispositions.join(','));
+  if (filters.query) params.set('query', filters.query);
+  if (filters.providerIssues) params.set('provider_issues', 'true');
+  return params;
+}
+
+async function queueLoadResults(offset) {
+  if (!queueState.selectedJobId) throw new Error('请先打开任务结果');
+  const body = $('queue-results-body');
+  if (body) body.setAttribute('aria-busy', 'true');
+  const start = Math.max(0, offset || 0);
+  const data = await apiGet('/api/jobs/results?' + queueResultsParams(start).toString());
+  const rows = (data && data.rows) || [];
+  queueState.resultRows = [];
+  queueState.resultTotal = data && data.total != null ? Number(data.total) : rows.length;
+  queueState.resultOffset = data && data.offset != null ? Number(data.offset) : start;
+  if (data && data.limit != null) queueState.resultLimit = Number(data.limit) || queueState.resultLimit;
+  $('queue-results-box').hidden = false;
+  $('queue-results-stats').textContent = queueResultsHeadline();
+  queueState.selectedResultIds = new Set(
+    Array.from(queueState.selectedResultIds || []).filter(
+      (resultId) => rows.some((row) => String(row.result_id) === resultId)
+    )
+  );
+  renderQueueResultRows(rows);
+  queueUpdateResultsToolbar();
+  queuePersistResultState();
+}
+
+async function queueReloadFromFilters() {
+  queueState.resultOffset = 0;
+  queueState.selectedResultIds = new Set();
+  try {
+    clearError();
+    await queueLoadResults(0);
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  }
+}
+
+function queueOpenExportMenu(open) {
+  const menu = $('queue-export-menu');
+  const button = $('queue-export-menu-button');
+  if (!menu || !button) return;
+  menu.hidden = !open;
+  button.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) {
+    const first = menu.querySelector('button:not(:disabled)');
+    if (first) first.focus();
+  }
+}
+
+async function doQueueBatchCopy() {
+  const selected = queueState.selectedResultIds || new Set();
+  if (!selected.size) return;
+  const iocs = (queueState.resultRows || [])
+    .filter((row) => selected.has(String(row.result_id)))
+    .map((row) => String(row.ioc == null ? '' : row.ioc))
+    .filter(Boolean);
+  if (!iocs.length) {
+    showToast('选中的行没有可复制的 IOC。', 'info');
+    return;
+  }
+  if (!window.confirm('将复制 ' + iocs.length + ' 个 IOC 到剪贴板，确认复制？')) return;
+  try {
+    await navigator.clipboard.writeText(iocs.join('\n'));
+    showToast('已复制 ' + iocs.length + ' 个 IOC 到剪贴板。', 'success');
+  } catch (err) {
+    showError('剪贴板不可用：请在表格中手动选择后复制。');
+  }
+}
+
+async function doQueueBatchExport() {
+  const selected = queueState.selectedResultIds || new Set();
+  if (!selected.size) return;
+  try {
+    clearError();
+    const payload = {
+      job_id: queueState.selectedJobId,
+      format: 'jsonl',
+      result_ids: Array.from(selected),
+    };
+    const result = await api('/api/jobs/export', payload);
+    queueDownloadExport(result, 'jsonl');
+    showToast('已生成选中 ' + result.rows + ' 行的 JSONL。', 'success');
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  }
 }
 
 function queueSchedulePoll() {
@@ -3238,14 +3814,12 @@ async function doQueueResults(jobId) {
     if (!jobId) throw new Error('缺少 job_id');
     queueState.selectedJobId = jobId;
     queueState.selectedResultId = '';
+    queueState.selectedResultIds = new Set();
     patchStore({ 'queue.selectedJobId': jobId, 'queue.selectedResultId': '' });
-    const data = await apiGet('/api/jobs/results?job_id=' + encodeURIComponent(jobId));
-    const rows = (data && data.rows) || [];
-    $('queue-results-box').hidden = false;
-    $('queue-results-stats').textContent = jobId + ' · ' + rows.length + ' 行结果';
-    renderQueueResultRows(rows);
     $('queue-explain-box').hidden = true;
     $('queue-diff-result').hidden = true;
+    queueState.resultOffset = 0;
+    await queueLoadResults(0);
     const selected = (queueState.jobs || []).find((job) => job.job_id === jobId) || null;
     renderQueueKpi(selected);
     fillQueueBaselineOptions(jobId);
@@ -3314,35 +3888,52 @@ async function doQueueReview() {
 }
 
 async function doQueueExport(format) {
+  queueOpenExportMenu(false);
   try {
     clearError();
     if (!queueState.selectedJobId) throw new Error('请先打开任务结果');
-    if (['jsonl', 'csv', 'xlsx'].indexOf(format) < 0) {
+    if (['jsonl', 'csv', 'xlsx', 'diagnostics', 'diff', 'bundle'].indexOf(format) < 0) {
       throw new Error('导出格式不受支持');
     }
-    const result = await api('/api/jobs/export', {
+    const payload = {
       job_id: queueState.selectedJobId,
       format: format,
-    });
+    };
+    if (format === 'diff' || format === 'bundle') {
+      const baseline = ($('queue-baseline-job').value || '').trim();
+      if (!baseline) throw new Error('导出 diff / bundle 前请先选择 baseline job。');
+      payload.baseline_job_id = baseline;
+    }
+    const filters = queueFilterState();
+    const dispositions = QUEUE_FILTERS[filters.kind] || [];
+    if (['jsonl', 'csv', 'xlsx', 'bundle'].indexOf(format) >= 0) {
+      if (dispositions.length) payload.dispositions = dispositions;
+      if (filters.query) payload.query = filters.query;
+      if (filters.providerIssues) payload.provider_issues = true;
+    }
+    const result = await api('/api/jobs/export', payload);
     if (!result || !result.export_id) throw new Error('导出响应缺少 export_id');
-    const downloadPath = '/api/jobs/export/' + encodeURIComponent(result.export_id) +
-      '/download?token=' + encodeURIComponent(TOKEN);
-    const link = document.createElement('a');
-    link.href = downloadPath;
-    link.download = result.filename || (result.export_id + '.' + format);
-    link.rel = 'noopener';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    const flash = $('queue-export-flash');
-    flash.hidden = false;
-    flash.textContent =
+    queueDownloadExport(result, format);
+    showToast(
       '已生成 ' + (result.filename || format.toUpperCase()) +
-      (result.rows == null ? '' : (' · ' + result.rows + ' 行'));
-    setTimeout(() => { flash.hidden = true; }, 3000);
+      (result.rows == null ? '' : ('，' + result.rows + ' 行')) + '。',
+      'success'
+    );
   } catch (err) {
     showError(err && err.message ? err.message : String(err));
   }
+}
+
+function queueDownloadExport(result, format) {
+  const downloadPath = '/api/jobs/export/' + encodeURIComponent(result.export_id) +
+    '/download?token=' + encodeURIComponent(TOKEN);
+  const link = document.createElement('a');
+  link.href = downloadPath;
+  link.download = result.filename || (result.export_id + '.' + format);
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 async function doQueueDiff() {
@@ -3350,7 +3941,7 @@ async function doQueueDiff() {
     clearError();
     if (!queueState.selectedJobId) throw new Error('请先打开任务结果');
     const baseline = ($('queue-baseline-job').value || '').trim();
-    if (!baseline) throw new Error('请选择 baseline job');
+    if (!baseline) throw new Error('请先选择 baseline job 再对比。');
     const result = await api('/api/jobs/diff', {
       job_id: queueState.selectedJobId,
       baseline_job_id: baseline,
@@ -3360,8 +3951,10 @@ async function doQueueDiff() {
     }
     $('queue-diff-result').hidden = false;
     $('queue-diff-stats').textContent =
-      '当前 ' + queueState.selectedJobId + ' · baseline ' + baseline;
+      '当前 ' + queueState.selectedJobId + ' · baseline ' + baseline +
+      (result.skipped ? ' · 跳过 ' + JSON.stringify(result.skipped) : '');
     renderJsonlViewer($('queue-diff-viewer'), JSON.stringify(result.diff || result));
+    showToast('已生成 diff 对比。', 'success');
   } catch (err) {
     showError(err && err.message ? err.message : String(err));
   }
@@ -3385,6 +3978,117 @@ document.querySelectorAll('[data-queue-export]').forEach((button) => {
 });
 document.querySelectorAll('input[name="queue-mode"]').forEach((el) => {
   el.addEventListener('change', updateQueueCredNote);
+});
+
+/* 结果工具栏：快捷筛选、关键字、分页、导出菜单与批量条 */
+document.querySelectorAll('[data-queue-filter]').forEach((button) => {
+  button.addEventListener('click', () => {
+    queueFilterState().kind = button.getAttribute('data-queue-filter');
+    queueReloadFromFilters();
+  });
+});
+const queueProviderFilterButton = $('queue-filter-provider-issues');
+if (queueProviderFilterButton) {
+  queueProviderFilterButton.addEventListener('click', () => {
+    const filters = queueFilterState();
+    filters.providerIssues = !filters.providerIssues;
+    queueReloadFromFilters();
+  });
+}
+const queueQueryInput = $('queue-query');
+if (queueQueryInput) {
+  let queueQueryTimer = null;
+  queueQueryInput.addEventListener('input', () => {
+    clearTimeout(queueQueryTimer);
+    queueQueryTimer = setTimeout(() => {
+      queueFilterState().query = (queueQueryInput.value || '').trim();
+      queueReloadFromFilters();
+    }, 320);
+  });
+  queueQueryInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      queueQueryInput.value = '';
+      queueFilterState().query = '';
+      queueReloadFromFilters();
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      clearTimeout(queueQueryTimer);
+      queueFilterState().query = (queueQueryInput.value || '').trim();
+      queueReloadFromFilters();
+    }
+  });
+}
+const queueClearFilterButton = $('queue-results-clear-filter');
+if (queueClearFilterButton) {
+  queueClearFilterButton.addEventListener('click', () => {
+    queueState.filters = { kind: 'all', query: '', providerIssues: false };
+    if (queueQueryInput) queueQueryInput.value = '';
+    queueReloadFromFilters();
+  });
+}
+const queueRefreshResultsButton = $('queue-results-refresh');
+if (queueRefreshResultsButton) {
+  queueRefreshResultsButton.addEventListener('click', () => {
+    queueLoadResults(queueState.resultOffset).catch((err) =>
+      showError(err && err.message ? err.message : String(err))
+    );
+  });
+}
+const queuePrevPage = $('queue-prev-page');
+if (queuePrevPage) {
+  queuePrevPage.addEventListener('click', () => {
+    const limit = queueState.resultLimit || 100;
+    const offset = Math.max(0, (queueState.resultOffset || 0) - limit);
+    queueLoadResults(offset).catch((err) => showError(err && err.message ? err.message : String(err)));
+  });
+}
+const queueNextPage = $('queue-next-page');
+if (queueNextPage) {
+  queueNextPage.addEventListener('click', () => {
+    const limit = queueState.resultLimit || 100;
+    const offset = (queueState.resultOffset || 0) + limit;
+    if (offset >= (queueState.resultTotal || 0)) return;
+    queueLoadResults(offset).catch((err) => showError(err && err.message ? err.message : String(err)));
+  });
+}
+const queuePageSize = $('queue-page-size');
+if (queuePageSize) {
+  queuePageSize.addEventListener('change', () => {
+    const value = Number(queuePageSize.value);
+    if (Number.isFinite(value) && value > 0) queueState.resultLimit = value;
+    queueReloadFromFilters();
+  });
+}
+const queueSelectAll = $('queue-select-all');
+if (queueSelectAll) {
+  queueSelectAll.addEventListener('change', () => {
+    const rows = queueState.resultRows || [];
+    queueState.selectedResultIds = new Set(
+      queueSelectAll.checked ? rows.map((row) => String(row.result_id)) : []
+    );
+    renderQueueResultRows(rows);
+  });
+}
+const queueBatchCopy = $('queue-batch-copy');
+if (queueBatchCopy) queueBatchCopy.addEventListener('click', doQueueBatchCopy);
+const queueBatchExport = $('queue-batch-export');
+if (queueBatchExport) queueBatchExport.addEventListener('click', doQueueBatchExport);
+const queueBatchClear = $('queue-batch-clear');
+if (queueBatchClear) {
+  queueBatchClear.addEventListener('click', () => {
+    queueState.selectedResultIds = new Set();
+    renderQueueResultRows(queueState.resultRows || []);
+  });
+}
+const queueExportMenuButton = $('queue-export-menu-button');
+if (queueExportMenuButton) {
+  queueExportMenuButton.addEventListener('click', () => {
+    const menu = $('queue-export-menu');
+    queueOpenExportMenu(!!menu && menu.hidden);
+  });
+}
+document.addEventListener('click', (event) => {
+  if (!event.target.closest || !event.target.closest('.menu-wrap')) queueOpenExportMenu(false);
 });
 
 bindSourceToggle('lookup');
