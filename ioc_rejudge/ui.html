@@ -196,7 +196,9 @@
   body[data-mode="queue"] .panel[data-mode="queue"]:not([hidden]),
   body[data-mode="share"] .panel[data-mode="share"]:not([hidden]),
   body[data-mode="ops"] .panel[data-mode="ops"]:not([hidden]) { display: block; }
-  body[data-mode="legacy"] .panel[data-mode="legacy"]:not([hidden]) { display: block; }
+  body[data-mode="legacy"] .panel[data-mode="legacy"]:not([hidden]),
+  body[data-mode="legacy"] .panel[data-mode="queue"]:not([hidden]),
+  body.has-legacy-workbench .panel[data-mode="legacy"]:not([hidden]) { display: block; }
   .panel[hidden] { display: none; }
   .panel h2 { font-size: 16px; line-height: 22px; font-weight: 600; margin: 0 0 var(--space-1); }
   .panel .hint { color: var(--text-secondary); font-size: 13px; line-height: 18px; margin: 0 0 var(--space-3); }
@@ -707,13 +709,63 @@
     .mode-nav { order: 3; width: 100%; overflow-x: auto; }
     .mode-nav a { height: 34px; }
     .topbar-meta { font-size: 11px; }
+    .topbar-meta .meta-item { max-width: 9rem; overflow: hidden; text-overflow: ellipsis; }
     main { padding: 0 var(--space-3) var(--space-8); }
     .side-panel { width: 100%; border-left: 0; }
     .side-panel-head { flex-wrap: wrap; }
     .side-panel-actions { width: 100%; margin-left: 0; justify-content: flex-start; }
+    button, .filter-chip { min-height: 44px; }
+    .icon-btn { height: auto; min-height: 44px; }
+    .menu button { min-height: 44px; }
+    .queue-query { width: 100%; margin-left: 0; }
+    .results-toolbar { position: static; }
+    .results-toolbar-actions { width: 100%; margin-left: 0; }
+    .batch-bar { position: sticky; bottom: var(--space-2); z-index: var(--z-sticky-header); }
     .table-wrap {
-      overflow: visible; border: 0; background: transparent;
+      overflow-x: auto; border: 0; background: transparent;
     }
+    .queue-results-wrap { max-height: none; overflow: visible; }
+    table.queue-results-table {
+      display: block; min-width: 0; width: 100%;
+    }
+    table.queue-results-table thead {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
+    table.queue-results-table tbody { display: grid; gap: var(--space-2); }
+    table.queue-results-table tbody tr {
+      display: block; border: 1px solid var(--line); border-radius: var(--radius-card);
+      background: var(--bg-surface); padding: var(--space-1) var(--space-3);
+    }
+    table.queue-results-table tbody tr:hover,
+    table.queue-results-table tbody tr:focus-visible {
+      background: var(--bg-elevated); outline: 2px solid var(--accent-hover); outline-offset: 1px;
+    }
+    table.queue-results-table tbody tr.is-selected {
+      background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent);
+    }
+    table.queue-results-table tbody td,
+    table.queue-results-table tbody td.wrap {
+      display: grid; grid-template-columns: minmax(6.5rem, 34%) minmax(0, 1fr);
+      gap: var(--space-2); min-width: 0; padding: 7px 0;
+      border-bottom: 1px solid var(--divider);
+      white-space: normal; overflow-wrap: anywhere; word-break: break-word;
+      max-width: none;
+    }
+    table.queue-results-table tbody td:last-child { border-bottom: 0; }
+    table.queue-results-table tbody td::before {
+      content: attr(data-label); color: var(--text-secondary); font-size: 12px;
+      font-weight: 500; line-height: 16px;
+    }
+    table.queue-results-table tbody td.cell-select { grid-template-columns: auto 1fr; }
+    table.queue-results-table tbody td.cell-select::before { content: none; }
+    table.queue-results-table tbody td.cell-summary { grid-template-columns: 1fr; }
+    table.queue-results-table tbody td.cell-summary::before { grid-column: 1; }
+    table.queue-results-table tbody tr td[colspan] {
+      display: block; border-bottom: 0; padding: var(--space-3) 0; text-align: center;
+    }
+    table.queue-results-table tbody tr td[colspan]::before { content: none; }
+    .ellipsis { white-space: normal; overflow-wrap: anywhere; }
     table.workbench-results-table {
       display: block; min-width: 0; width: 100%;
     }
@@ -998,7 +1050,7 @@
     <div class="result" id="queue-results-box" hidden>
       <div class="results-toolbar" id="queue-results-toolbar">
         <div class="results-toolbar-row">
-          <span class="stats results-headline" id="queue-results-stats">未选择任务</span>
+          <span class="stats results-headline" id="queue-results-stats" aria-live="polite">未选择任务</span>
           <div class="results-toolbar-actions">
             <button class="ghost icon-btn" type="button" id="queue-results-clear-filter" hidden>清除筛选</button>
             <button class="ghost icon-btn" type="button" id="queue-results-refresh">刷新结果</button>
@@ -1055,7 +1107,7 @@
         <button class="secondary icon-btn" type="button" data-queue-batch-review="approved">标记 approved</button>
         <button class="secondary icon-btn" type="button" data-queue-batch-review="rejected">标记 rejected</button>
         <button class="secondary icon-btn" type="button" data-queue-batch-review="pending">标记 pending</button>
-        <span class="stats" id="queue-batch-progress" hidden></span>
+        <span class="stats" id="queue-batch-progress" aria-live="polite" hidden></span>
         <button class="ghost icon-btn" type="button" id="queue-batch-clear">取消选择</button>
       </div>
       <div class="result" id="queue-diff-result" hidden>
@@ -3475,6 +3527,7 @@ function queueBuildRow(row, index) {
 
   const selectCell = document.createElement('td');
   selectCell.className = 'cell-select';
+  selectCell.dataset.label = '选择';
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
   checkbox.className = 'row-select';
@@ -3492,12 +3545,14 @@ function queueBuildRow(row, index) {
 
   const idCell = document.createElement('td');
   idCell.className = 'cell-id';
+  idCell.dataset.label = '#';
   idCell.textContent = resultId ? resultId.slice(-6) : String(index + 1);
   idCell.title = resultId;
   tr.appendChild(idCell);
 
   const iocCell = document.createElement('td');
   iocCell.className = 'cell-ioc';
+  iocCell.dataset.label = 'IOC';
   const iocText = document.createElement('span');
   iocText.className = 'ellipsis';
   iocText.textContent = String(row.ioc == null ? '' : row.ioc);
@@ -3507,6 +3562,7 @@ function queueBuildRow(row, index) {
 
   const conclusionCell = document.createElement('td');
   conclusionCell.className = 'cell-conclusion';
+  conclusionCell.dataset.label = '结论 / 处置';
   const conclusionWrap = document.createElement('div');
   conclusionWrap.className = 'conclusion-cell';
   const badge = document.createElement('span');
@@ -3525,11 +3581,13 @@ function queueBuildRow(row, index) {
 
   const routeCell = document.createElement('td');
   routeCell.className = 'cell-route';
+  routeCell.dataset.label = 'route';
   routeCell.textContent = String(row.route == null ? '—' : row.route);
   tr.appendChild(routeCell);
 
   const reviewCell = document.createElement('td');
   reviewCell.className = 'cell-review';
+  reviewCell.dataset.label = '人工标签';
   const overlay = row.review_overlay && typeof row.review_overlay === 'object' ? row.review_overlay : null;
   const label = overlay && overlay.label ? String(overlay.label) : '';
   const reviewBadge = document.createElement('span');
@@ -3541,16 +3599,19 @@ function queueBuildRow(row, index) {
 
   const confidenceCell = document.createElement('td');
   confidenceCell.className = 'cell-confidence';
+  confidenceCell.dataset.label = '置信度';
   confidenceCell.textContent = queueConfidenceText(row.confidence);
   tr.appendChild(confidenceCell);
 
   const providerCell = document.createElement('td');
   providerCell.className = 'cell-provider';
+  providerCell.dataset.label = '来源';
   providerCell.appendChild(queueProviderCell(row));
   tr.appendChild(providerCell);
 
   const urlCell = document.createElement('td');
   urlCell.className = 'cell-url';
+  urlCell.dataset.label = '保留 URL';
   const urlText = document.createElement('span');
   urlText.className = 'ellipsis';
   const retained = queueFirstRetainedUrl(row.retained_urls);
@@ -3561,6 +3622,7 @@ function queueBuildRow(row, index) {
 
   const summaryCell = document.createElement('td');
   summaryCell.className = 'cell-summary';
+  summaryCell.dataset.label = '摘要';
   const summary = document.createElement('span');
   summary.className = 'clamp-2';
   summary.textContent = String(row.reason || row.summary || row.review_suggestion || '');
@@ -4762,6 +4824,7 @@ async function doQueueDiff() {
 
 function maybeShowLegacyWorkbench() {
   if (!legacyWorkbenchEnabled()) return;
+  document.body.classList.add('has-legacy-workbench');
   const panel = $('workbench-panel');
   const nav = $('nav-workbench');
   if (panel) panel.hidden = false;

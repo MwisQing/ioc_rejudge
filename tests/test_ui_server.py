@@ -940,22 +940,40 @@ def test_ops_status_requires_session_token(ui):
     assert status_no_token == 403
 
 
-def test_ops_status_lists_recent_jobs_without_paths(ui):
-    url, token, _key, _bundles = ui
-    status, body = api_post(
-        url,
-        token,
-        "/api/jobs/enqueue",
-        {"content": "ops-status.example.invalid\n"},
+def test_ops_status_lists_recent_jobs_without_paths(tmp_path):
+    # 用独立 jobs 目录，避免污染仓库里的默认任务目录。
+    jobs_dir = tmp_path / "ops-jobs"
+    server, url = build_server(
+        tmp_path / "ops-key.json",
+        tmp_path / "ops-bundles",
+        port=0,
+        cache_dir=tmp_path / "ops-cache",
+        provider_env={},
+        jobs_dir=jobs_dir,
     )
-    assert status == 200, body
-    job_id = body["job"]["job_id"]
-    status, body = _ops_status(url, token)
-    assert status == 200, body
-    recent = body["history"]["jobs_recent"]
-    assert any(item["job_id"] == job_id for item in recent)
-    for item in recent:
-        assert set(item) == {"job_id", "mode", "state", "created_at"}
-    dumped = json.dumps(body)
-    assert "jobs_dir" not in dumped
-    assert ":\\\\" not in dumped
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        token = url.partition("?token=")[2]
+        status, body = api_post(
+            url.partition("?token=")[0],
+            token,
+            "/api/jobs/enqueue",
+            {"content": "ops-status.example.invalid\n"},
+        )
+        assert status == 200, body
+        job_id = body["job"]["job_id"]
+        status, body = _ops_status(url.partition("?token=")[0], token)
+        assert status == 200, body
+        recent = body["history"]["jobs_recent"]
+        assert any(item["job_id"] == job_id for item in recent)
+        for item in recent:
+            assert set(item) == {"job_id", "mode", "state", "created_at"}
+        dumped = json.dumps(body)
+        assert "jobs_dir" not in dumped
+        assert ":\\\\" not in dumped
+        assert str(jobs_dir) not in dumped
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

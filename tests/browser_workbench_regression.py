@@ -120,6 +120,9 @@ def main() -> int:
             cache_dir=root / "provider-cache",
             provider_env={},
             workbench_dir=root / "workbench",
+            # The retired workbench panel is opt-in since the redesign; the
+            # regression must request it explicitly.
+            legacy_workbench=True,
         )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()

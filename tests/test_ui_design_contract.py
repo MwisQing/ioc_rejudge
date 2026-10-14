@@ -122,6 +122,24 @@ def test_design_contract_queue_input_and_task_list():
     assert "queueImportFile" in page
 
 
+def test_design_contract_responsive_and_accessibility():
+    page = page_text()
+    # 切片 7：390 结果表转卡片、44px 触控目标、aria-live、reduced-motion。
+    assert "table.queue-results-table tbody tr" in page
+    assert "table.queue-results-table tbody td::before" in page
+    assert "content: attr(data-label)" in page
+    for label in ("IOC", "结论 / 处置", "人工标签", "置信度", "来源", "保留 URL", "摘要"):
+        assert f"dataset.label = '{label}'" in page, label
+    assert "min-height: 44px" in page
+    assert 'aria-live="polite"' in page
+    assert "aria-busy" in page
+    assert "prefers-reduced-motion: reduce" in page
+    assert "transition-duration: .01ms" in page
+    assert "QUEUE_RENDER_CHUNK_SIZE = 24" in page
+    assert "renderVersion" in page
+    assert "requestAnimationFrame(mount)" in page
+
+
 def test_design_contract_ops_panel():
     page = page_text()
     # 切片 6：运维模式首块仍是 #statusbar，后接健康、缓存、历史与 legacy 状态。
