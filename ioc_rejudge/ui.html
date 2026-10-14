@@ -494,6 +494,13 @@
     font-size: 11px; line-height: 14px; color: var(--text-secondary); font-family: var(--font-mono);
   }
   .row-select { width: 16px; height: 16px; }
+  .skeleton-block {
+    display: block; height: 12px; border-radius: var(--radius-badge);
+    background: var(--bg-elevated);
+  }
+  .skeleton-row td { padding: 9px 10px; }
+  .json-skeleton { display: grid; gap: var(--space-2); margin: var(--space-2) 0; }
+  .json-skeleton .skeleton-block { height: 18px; }
   .side-panel {
     position: fixed; top: 0; right: 0; bottom: 0; width: 480px; max-width: 100vw;
     z-index: var(--z-side-panel);
@@ -3646,6 +3653,40 @@ function queueBuildRow(row, index) {
   return tr;
 }
 
+function queueResultsSkeleton() {
+  const body = $('queue-results-body');
+  if (!body) return;
+  queueState.renderVersion += 1;
+  body.textContent = '';
+  body.setAttribute('aria-busy', 'true');
+  for (let index = 0; index < 8; index += 1) {
+    const tr = document.createElement('tr');
+    tr.className = 'skeleton-row';
+    for (let column = 0; column < 10; column += 1) {
+      const td = document.createElement('td');
+      const block = document.createElement('span');
+      block.className = 'skeleton-block';
+      td.appendChild(block);
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  }
+}
+
+function queueExplainSkeleton(container) {
+  if (!container) return;
+  container.textContent = '';
+  const host = document.createElement('div');
+  host.className = 'json-skeleton';
+  [70, 88, 54].forEach((width) => {
+    const bar = document.createElement('div');
+    bar.className = 'skeleton-block';
+    bar.style.width = width + '%';
+    host.appendChild(bar);
+  });
+  container.appendChild(host);
+}
+
 function renderQueueResultRows(rows) {
   const body = $('queue-results-body');
   if (!body) return;
@@ -3888,6 +3929,7 @@ async function queueLoadResults(offset) {
   const body = $('queue-results-body');
   if (body) body.setAttribute('aria-busy', 'true');
   const start = Math.max(0, offset || 0);
+  queueResultsSkeleton();
   const data = await apiGet('/api/jobs/results?' + queueResultsParams(start).toString());
   const rows = (data && data.rows) || [];
   queueState.resultRows = [];
@@ -4690,6 +4732,7 @@ async function doQueueExplain(resultId, trigger) {
     stateLine.textContent = '正在加载解释…';
   }
   $('queue-explain-viewer').textContent = '';
+  queueExplainSkeleton($('queue-explain-viewer'));
   try {
     const data = await api('/api/jobs/explain', {
       job_id: queueState.selectedJobId,
