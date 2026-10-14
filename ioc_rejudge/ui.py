@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -35,6 +37,7 @@ from urllib.parse import parse_qs, urlsplit
 import requests
 
 from ioc_rejudge.inputs import read_input_bundle
+from ioc_rejudge.input_adapters import TableAdapterError, adapt_table
 from ioc_rejudge.job_queue import (
     DEFAULT_JOBS_DIR,
     InvalidJobStateError,
@@ -42,6 +45,9 @@ from ioc_rejudge.job_queue import (
     JobsQueueError,
     UnifiedJobQueue,
 )
+# The UI import preview must report exactly what the queued job will report,
+# so it reuses the queue's own counters instead of re-implementing them.
+from ioc_rejudge.job_queue import _count_bare_input, _count_jsonl_input
 from ioc_rejudge.jobs_cli import JobExportError, export_job_results
 from ioc_rejudge.jobs_consumers import (
     JobsConsumerError,
@@ -74,6 +80,14 @@ from ioc_rejudge.workbench_backend import OfflineWorkbenchAdapter
 DEFAULT_PORT = 8731
 MAX_BUNDLES = 20
 MAX_BODY_BYTES = 32 * 1024 * 1024
+# /api/jobs/import carries base64, so its envelope is larger than the plain
+# JSON cap; the decoded file itself is still limited by MAX_IMPORT_BYTES.
+MAX_IMPORT_BODY_BYTES = 40 * 1024 * 1024
+# Decoded (not base64) file size cap for POST /api/jobs/import.
+MAX_IMPORT_BYTES = 24 * 1024 * 1024
+MAX_STAGED_IMPORTS = 20
+_IMPORT_SUFFIXES = {".txt": "txt", ".csv": "csv", ".jsonl": "jsonl", ".xlsx": "xlsx"}
+_IMPORT_ID_RE = re.compile(r"^import-[0-9a-f]{16}$")
 DEFAULT_CACHE_DIR = Path("provider-cache")
 DEFAULT_CREDENTIALS_FILE = Path("credentials.local.json")
 UI_JOBS_RUNNER_NAME = "ui-offline"
@@ -669,6 +683,16 @@ def _write_input_file(path: Path, content: str) -> None:
         raise ShareError(f"cannot write temporary input: {path}") from exc
 
 
+def _decode_import_text(data: bytes) -> str:
+    """Decode an imported text file the same way the CLI reads inputs."""
+    for encoding in ("utf-8-sig", "gbk"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise ShareError("file is not valid UTF-8 or GBK text")
+
+
 def _read_manifest(manifest: Path) -> dict | None:
     try:
         data = json.loads(manifest.read_text(encoding="utf-8"))
@@ -1069,12 +1093,13 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _read_json_body(self) -> dict:
+    def _read_json_body(self, limit: int | None = None) -> dict:
+        max_bytes = MAX_BODY_BYTES if limit is None else limit
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError as exc:
             raise ShareError("invalid Content-Length header") from exc
-        if length < 0 or length > MAX_BODY_BYTES:
+        if length < 0 or length > max_bytes:
             raise ShareError("request body is too large")
         raw = self.rfile.read(length) if length else b""
         if not raw:
@@ -1221,7 +1246,11 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             self._send_json(403, {"error": "forbidden"})
             return
         try:
-            body = self._read_json_body()
+            body = self._read_json_body(
+                limit=MAX_IMPORT_BODY_BYTES
+                if urlsplit(self.path).path == "/api/jobs/import"
+                else None
+            )
         except ShareError as exc:
             self._send_json(400, {"error": str(exc)})
             return
@@ -1243,6 +1272,7 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             "/api/workbench/diagnostics": self._handle_workbench_diagnostics,
             "/api/workbench/diff": self._handle_workbench_diff,
             "/api/jobs/enqueue": self._handle_jobs_enqueue,
+            "/api/jobs/import": self._handle_jobs_import,
             "/api/jobs/cancel": self._handle_jobs_cancel,
             "/api/jobs/run": self._handle_jobs_run,
             "/api/jobs/prune": self._handle_jobs_prune,
@@ -1405,21 +1435,181 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
         self._drain_request_body()
         self._send_json(404, {"error": "unknown jobs endpoint"})
 
-    def _handle_jobs_enqueue(self, body: dict) -> dict:
-        content = body.get("content")
-        if not isinstance(content, str):
-            raise ShareError("content must be a string")
-        if not content.strip():
-            raise ShareError("content is required")
+    # -- staged file imports (drag & drop) --------------------------------
+
+    def _staged_imports_dir(self) -> Path:
+        # Dot-prefixed so the queue's own list/prune walk never sees it.
+        return self.ui_state.jobs_dir / ".imports"
+
+    def _prune_staged_imports(self, keep: int = MAX_STAGED_IMPORTS) -> None:
+        directory = self._staged_imports_dir()
+        if not directory.is_dir():
+            return
+        try:
+            entries = [
+                child for child in directory.iterdir() if child.is_file()
+            ]
+            entries.sort(key=lambda child: child.stat().st_mtime, reverse=True)
+        except OSError:
+            return
+        for stale in entries[keep:]:
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+
+    def _load_staged_import(self, import_id: str) -> dict[str, Any]:
+        if not _IMPORT_ID_RE.fullmatch(import_id):
+            raise ShareError("import_id is invalid")
+        path = self._staged_imports_dir() / f"{import_id}.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ShareError("staged import not found; import the file again") from exc
+        if not isinstance(payload, dict):
+            raise ShareError("staged import not found; import the file again")
+        content = payload.get("content")
+        input_kind = payload.get("input_kind")
+        if not isinstance(content, str) or input_kind not in {"bare", "jsonl"}:
+            raise ShareError("staged import is incomplete; import the file again")
+        filename = payload.get("filename")
+        mode = payload.get("mode")
+        return {
+            "content": content,
+            "input_kind": input_kind,
+            "filename": filename if isinstance(filename, str) else "",
+            "mode": mode if mode in {"offline", "online"} else "",
+        }
+
+    def _handle_jobs_import(self, body: dict) -> dict:
         filename = body.get("filename")
-        if filename is not None and not isinstance(filename, str):
-            raise ShareError("filename must be a string")
+        if not isinstance(filename, str) or not filename.strip():
+            raise ShareError("filename is required")
+        label = Path(filename.replace("\\", "/")).name.strip()[:128]
+        suffix = Path(label).suffix.lower()
+        source_kind = _IMPORT_SUFFIXES.get(suffix)
+        if source_kind is None:
+            raise ShareError("unsupported file type; use .txt, .csv, .jsonl or .xlsx")
+        raw_b64 = body.get("content_base64")
+        if not isinstance(raw_b64, str) or not raw_b64.strip():
+            raise ShareError("content_base64 is required")
+        try:
+            data = base64.b64decode(raw_b64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ShareError("content_base64 is not valid base64") from exc
+        if not data:
+            raise ShareError("file is empty; nothing to import")
+        if len(data) > MAX_IMPORT_BYTES:
+            raise ShareError("file is larger than 24MB; split it and import again")
         raw_mode = body.get("mode", "offline")
         if raw_mode is None:
             raw_mode = "offline"
         if not isinstance(raw_mode, str) or raw_mode not in {"offline", "online"}:
             raise ShareError("mode must be offline or online")
         mode = raw_mode
+
+        imports_dir = self._staged_imports_dir()
+        imports_dir.mkdir(parents=True, exist_ok=True)
+        import_id = f"import-{secrets.token_hex(8)}"
+        staging_dir = Path(tempfile.mkdtemp(prefix="stage-", dir=str(imports_dir)))
+        extra_errors: list[str] = []
+        source_rows: int | None = None
+        try:
+            source_path = staging_dir / f"source{suffix}"
+            _write_complete_file(source_path, data)
+            if source_kind in {"csv", "xlsx"}:
+                try:
+                    adapted = adapt_table(source_path)
+                except TableAdapterError as exc:
+                    raise ShareError(str(exc)) from exc
+                # Keep every source row (including duplicates and rejects) so
+                # the queued job reports exactly the same counts as this preview.
+                content = "".join(f"{row.candidate_value}\n" for row in adapted.report.rows)
+                input_kind = "bare"
+                extra_errors = list(adapted.report.errors)
+                source_rows = adapted.report.total_rows
+            elif source_kind == "jsonl":
+                content = _decode_import_text(data)
+                input_kind = "jsonl"
+            else:
+                content = _decode_import_text(data)
+                input_kind = "bare"
+        finally:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
+        if not content.strip():
+            raise ShareError("file has no usable IOC rows")
+        if input_kind == "bare":
+            valid, duplicated, rejected, errors = _count_bare_input(content)
+        else:
+            valid, duplicated, rejected, errors = _count_jsonl_input(content)
+        merged_errors = list(errors)
+        for item in extra_errors:
+            if item not in merged_errors:
+                merged_errors.append(item)
+
+        record = {
+            "import_id": import_id,
+            "filename": label,
+            "source_kind": source_kind,
+            "input_kind": input_kind,
+            "mode": mode,
+            "size": len(data),
+            "created_at": _timestamp(),
+            "content": content,
+        }
+        _write_complete_file(
+            imports_dir / f"{import_id}.json",
+            json.dumps(record, ensure_ascii=False).encode("utf-8"),
+        )
+        self._prune_staged_imports()
+
+        response: dict[str, Any] = {
+            "ok": True,
+            "import_id": import_id,
+            "filename": label,
+            "source_kind": source_kind,
+            "input_kind": input_kind,
+            "mode": mode,
+            "size": len(data),
+            "valid": valid,
+            "duplicated": duplicated,
+            "rejected": rejected,
+            "errors": merged_errors[:20],
+        }
+        if source_rows is not None:
+            response["source_rows"] = source_rows
+        return response
+
+    def _handle_jobs_enqueue(self, body: dict) -> dict:
+        raw_mode = body.get("mode", "offline")
+        if raw_mode is None:
+            raw_mode = "offline"
+        if not isinstance(raw_mode, str) or raw_mode not in {"offline", "online"}:
+            raise ShareError("mode must be offline or online")
+        mode = raw_mode
+        import_id = body.get("import_id")
+        if import_id is not None:
+            if not isinstance(import_id, str) or not import_id.strip():
+                raise ShareError("import_id must be a non-empty string")
+            if body.get("content") is not None:
+                raise ShareError("import_id and content cannot be combined")
+            staged = self._load_staged_import(import_id.strip())
+            content = staged["content"]
+            input_kind = staged["input_kind"]
+            filename = staged["filename"]
+            if body.get("mode") is None and staged["mode"]:
+                mode = staged["mode"]
+        else:
+            content = body.get("content")
+            if not isinstance(content, str):
+                raise ShareError("content must be a string")
+            if not content.strip():
+                raise ShareError("content is required")
+            filename = body.get("filename")
+            if filename is not None and not isinstance(filename, str):
+                raise ShareError("filename must be a string")
+            input_kind = "bare"
         source = "ui"
         if isinstance(filename, str) and filename.strip():
             # Keep source short and path-free; only the basename label.
@@ -1430,7 +1620,7 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
         _jobs_recover_stale(queue)
         job = queue.create_job(
             content,
-            input_kind="bare",
+            input_kind=input_kind,
             mode=mode,
             providers=list(DEFAULT_PROVIDERS),
             preset="standard",

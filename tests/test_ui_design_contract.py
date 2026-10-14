@@ -44,6 +44,7 @@ def test_design_contract_locks_api_endpoints():
     expected_endpoints = (
         "/api/status",
         "/api/jobs/enqueue",
+        "/api/jobs/import",
         "/api/jobs/list",
         "/api/jobs/status",
         "/api/jobs/results",
@@ -99,3 +100,22 @@ def test_design_contract_keeps_queue_state_and_review_labels():
     assert "queueState.iocInfoEnabled ? 'online' : 'offline'" in page
     for label in ("approved", "rejected", "pending"):
         assert f'value="{label}"' in page
+
+
+def test_design_contract_queue_input_and_task_list():
+    page = page_text()
+    # 切片 2：拖放导入、模式选择、唯一主按钮与任务列表进度条。
+    assert 'id="queue-drop-zone"' in page
+    assert 'id="queue-file"' in page
+    assert 'accept=".txt,.csv,.jsonl,.xlsx"' in page
+    assert 'id="queue-file-clear"' in page
+    assert 'name="queue-mode"' in page
+    assert "queue-mode-row" in page
+    assert "queue-progress" in page
+    assert "queue-progress-fill" in page
+    assert "transform: scaleX(" in page
+    assert "24MB" in page
+    assert "showToast" in page
+    assert 'id="toast-host"' in page
+    assert "bindQueueDropZone" in page
+    assert "queueImportFile" in page

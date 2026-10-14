@@ -798,3 +798,144 @@ def test_ui_run_wires_progress_callback_and_clears(make_jobs_server, monkeypatch
     assert final_doc.get("updated_at")
     if started_at:
         assert final_doc["updated_at"] >= started_at
+
+
+# --- slice 2: staged file imports (drag & drop) ---------------------------
+
+
+def _import_payload(filename, data, mode="offline"):
+    import base64 as _b64
+
+    return {
+        "filename": filename,
+        "content_base64": _b64.b64encode(data).decode("ascii"),
+        "mode": mode,
+    }
+
+
+def test_jobs_import_txt_stages_and_enqueues(make_jobs_server):
+    url, token, jobs_dir, _cache, _server = make_jobs_server()
+    payload = _import_payload(
+        "paste.txt",
+        "alpha.example.invalid\nbeta.example.invalid\nalpha.example.invalid\nbroken value\n".encode("utf-8"),
+    )
+    status, body = api_post(url, token, "/api/jobs/import", payload)
+    assert status == 200, body
+    assert body.get("ok") is True
+    import_id = body.get("import_id")
+    assert isinstance(import_id, str) and import_id
+    assert body.get("filename") == "paste.txt"
+    assert body.get("input_kind") == "bare"
+    assert body.get("source_kind") == "txt"
+    assert body.get("valid") == 2
+    assert body.get("duplicated") == 1
+    assert body.get("rejected") == 1
+    assert body.get("errors")
+    dumped = json.dumps(body)
+    assert str(jobs_dir) not in dumped
+    assert ":\\\\" not in dumped and "/Users/" not in dumped
+
+    status, enqueued = api_post(
+        url, token, "/api/jobs/enqueue", {"import_id": import_id, "mode": "offline"}
+    )
+    assert status == 200, enqueued
+    job = enqueued["job"]
+    assert job["state"] == "queued"
+    assert job["input"]["valid"] == body["valid"]
+    assert job["input"]["duplicated"] == body["duplicated"]
+    assert job["input"]["rejected"] == body["rejected"]
+    assert "paste.txt" in json.dumps(job)
+    assert str(jobs_dir) not in json.dumps(job)
+
+    status, listed = api_get_json(url, token, "/api/jobs/list")
+    assert status == 200, listed
+    assert any(item["job_id"] == job["job_id"] for item in listed["jobs"])
+    # Staged imports live in a dot-directory the queue never lists as a job.
+    assert all(not item["job_id"].startswith(".") for item in listed["jobs"])
+
+
+def test_jobs_import_csv_adapts_and_enqueues(make_jobs_server):
+    url, token, jobs_dir, _cache, _server = make_jobs_server()
+    csv_text = "ioc,note\ncsv-one.example.invalid,a\ncsv-two.example.invalid,b\nnot a valid ioc!,c\n"
+    status, body = api_post(
+        url, token, "/api/jobs/import", _import_payload("iocs.csv", csv_text.encode("utf-8"))
+    )
+    assert status == 200, body
+    assert body.get("source_kind") == "csv"
+    assert body.get("input_kind") == "bare"
+    assert body.get("valid") == 2
+    assert body.get("rejected") == 1
+    assert body.get("source_rows") == 3
+
+    status, enqueued = api_post(url, token, "/api/jobs/enqueue", {"import_id": body["import_id"]})
+    assert status == 200, enqueued
+    job = enqueued["job"]
+    assert job["input"]["valid"] == 2
+    assert job["input"]["rejected"] == 1
+    stored = (jobs_dir / job["job_id"] / "input.txt").read_text(encoding="utf-8")
+    assert "csv-one.example.invalid" in stored
+
+
+def test_jobs_import_rejects_bad_type_size_and_empty(make_jobs_server):
+    url, token, _jobs, _cache, _server = make_jobs_server()
+    status, body = api_post(
+        url, token, "/api/jobs/import", _import_payload("payload.exe", b"binary")
+    )
+    assert status == 400, body
+    assert body.get("error")
+
+    status, body = api_post(
+        url, token, "/api/jobs/import", _import_payload("big.txt", b"a" * 10)
+    )
+    assert status == 200, body
+
+    oversized = b"x" * (25 * 1024 * 1024)
+    status, body = api_post(
+        url, token, "/api/jobs/import", _import_payload("huge.txt", oversized), timeout=120
+    )
+    assert status == 400, body
+    assert "24MB" in json.dumps(body) or "24MB" in str(body.get("error"))
+
+    status, body = api_post(url, token, "/api/jobs/import", _import_payload("empty.txt", b""))
+    assert status == 400, body
+    assert body.get("error")
+
+
+def test_jobs_import_requires_token_and_import_id_is_exclusive(make_jobs_server):
+    url, token, _jobs, _cache, _server = make_jobs_server()
+    status, body = api_post(
+        url, "wrong-token-value", "/api/jobs/import", _import_payload("x.txt", b"a.example.invalid\n")
+    )
+    assert status == 403, body
+
+    status, body = api_post(
+        url, token, "/api/jobs/import", _import_payload("x.txt", b"a.example.invalid\n")
+    )
+    assert status == 200, body
+    import_id = body["import_id"]
+
+    status, conflict = api_post(
+        url,
+        token,
+        "/api/jobs/enqueue",
+        {"import_id": import_id, "content": "other.example.invalid\n"},
+    )
+    assert status == 400, conflict
+    assert conflict.get("error")
+
+    status, missing = api_post(
+        url, token, "/api/jobs/enqueue", {"import_id": "import-0000000000000000"}
+    )
+    assert status == 400, missing
+    assert missing.get("error")
+
+    status, bad_id = api_post(url, token, "/api/jobs/enqueue", {"import_id": "../escape"})
+    assert status == 400, bad_id
+    assert bad_id.get("error")
+
+    # The legacy content contract keeps working unchanged.
+    status, legacy = api_post(
+        url, token, "/api/jobs/enqueue", {"content": "legacy.example.invalid\n", "filename": "paste.txt"}
+    )
+    assert status == 200, legacy
+    assert legacy["job"]["input"]["valid"] == 1

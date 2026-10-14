@@ -298,6 +298,64 @@
     display: block; color: var(--status-error); font-size: 11px; line-height: 14px;
     font-weight: 500; word-break: break-word;
   }
+  .panel-head { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  .panel-head-actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
+  .section-head { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-5); }
+  .section-title { font-size: 16px; line-height: 22px; font-weight: 600; margin: 0; }
+  .field-label {
+    font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.01em;
+    color: var(--text-secondary);
+  }
+  input[type="radio"], input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; flex: none; }
+  .queue-input { margin-top: var(--space-2); }
+  .queue-input textarea { min-height: 160px; }
+  .queue-mode-row { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin-top: var(--space-3); }
+  .queue-mode-row label.radio {
+    display: inline-flex; align-items: center; gap: var(--space-2); margin: 0;
+    font-size: 13px; line-height: 18px; font-weight: 400; letter-spacing: 0;
+    color: var(--text-primary); cursor: pointer;
+  }
+  .queue-file-row { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+  .queue-file-row[hidden] { display: none; }
+  .queue-file-row .stats { margin: 0; }
+  .queue-submit-row { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-3); flex-wrap: wrap; }
+  .queue-submit-row .stats { margin: 0; flex: 1 1 12rem; }
+  .queue-progress {
+    height: 4px; border-radius: var(--radius-progress); background: var(--bg-elevated);
+    overflow: hidden; min-width: 72px;
+  }
+  .queue-progress-fill {
+    display: block; height: 100%; width: 100%; background: var(--accent);
+    transform-origin: left center; transform: scaleX(0);
+    transition: transform var(--motion-state) var(--ease-standard);
+  }
+  .queue-progress-fill.is-failed { background: var(--status-error); }
+  .queue-progress-fill.is-done { background: var(--status-success); }
+  .queue-progress-text {
+    display: block; margin-top: var(--space-1); font-size: 11px; line-height: 14px;
+    color: var(--text-tertiary); font-variant-numeric: tabular-nums;
+  }
+  .queue-list-table .queue-job-id { font-family: var(--font-mono); font-size: 13px; }
+  .queue-list-table td { vertical-align: middle; }
+  .toast-host {
+    position: fixed; right: var(--space-5); bottom: var(--space-5); z-index: var(--z-toast);
+    display: flex; flex-direction: column; gap: var(--space-2);
+    max-width: min(420px, calc(100vw - var(--space-8)));
+    pointer-events: none;
+  }
+  .toast {
+    pointer-events: auto;
+    background: var(--bg-elevated); color: var(--text-primary);
+    border: 1px solid var(--line); border-left: 3px solid var(--text-secondary);
+    border-radius: var(--radius-control); box-shadow: var(--shadow-3);
+    padding: var(--space-2) var(--space-3); font-size: 13px; line-height: 18px;
+    opacity: 0; transform: translateY(4px);
+    transition: opacity var(--motion-modal) var(--ease-standard), transform var(--motion-modal) var(--ease-standard);
+  }
+  .toast.is-visible { opacity: 1; transform: translateY(0); }
+  .toast.is-success { border-left-color: var(--status-success); }
+  .toast.is-error { border-left-color: var(--status-error); }
+  .toast.is-info { border-left-color: var(--text-secondary); }
   #queue-panel button {
     background: var(--bg-surface); border-color: var(--line-strong); color: var(--text-primary);
   }
@@ -331,6 +389,14 @@
     display: inline-block; border: 1px solid var(--line); border-radius: var(--radius-badge);
     padding: 0 6px; font-size: 11px; line-height: 16px; color: var(--text-secondary); background: var(--bg-surface);
   }
+  .state-chip {
+    display: inline-block; border: 1px solid var(--line); border-radius: var(--radius-badge);
+    padding: 0 6px; font-size: 11px; line-height: 16px; font-weight: 500;
+    color: var(--text-secondary); background: var(--bg-surface); white-space: nowrap;
+  }
+  tr[data-job-id] .state-chip { color: var(--text-primary); }
+  .stats.is-error { color: var(--danger-fg); }
+  .queue-empty { color: var(--text-secondary); padding: var(--space-6) var(--space-3); text-align: center; }
   #key-panel .note { background: var(--bg-elevated); border-color: var(--line); color: var(--text-secondary); }
   body:not(.is-unlocked) .panel[data-mode].needs-key { display: none; }
   ul.bundles { list-style: none; margin: 0; padding: 0; font-size: 12px; line-height: 16px; color: var(--text-tertiary); }
@@ -657,38 +723,58 @@
   </section>
 
   <section class="panel" id="queue-panel" data-mode="queue">
-    <h2>统一任务队列（任务中心）</h2>
-    <p class="hint">粘贴裸 IOC 文本入队研判；结果表、解释、导出和对比都在这里查看。清理旧任务按保留策略执行（默认先确认）。不显示本机路径。</p>
-    <label for="queue-paste">粘贴裸 IOC 文本</label>
-    <textarea id="queue-paste" rows="6" placeholder="# 每行一个 IOC；空行与 # 注释会被忽略&#10;alpha.example.invalid&#10;beta.example.invalid"></textarea>
-    <div class="actions" style="margin-top:0.4rem">
-      <label><input type="radio" name="queue-mode" id="queue-mode-offline" value="offline"> 只用本机缓存</label>
-      <label><input type="radio" name="queue-mode" id="queue-mode-online" value="online"> 联网研判</label>
+    <div class="panel-head">
+      <h2 class="mode-title">研判队列</h2>
+      <div class="panel-head-actions">
+        <button class="secondary icon-btn" type="button" id="queue-refresh">刷新列表</button>
+        <button class="ghost icon-btn" type="button" id="queue-prune">清理旧任务</button>
+      </div>
     </div>
-    <div class="note" id="queue-cred-note">正在判断凭据…</div>
-    <div class="stats" id="queue-enqueue-preview">入队后显示有效 / 重复 / 拒绝计数</div>
-    <div class="actions">
-      <button type="button" id="queue-enqueue">入队</button>
-      <button class="secondary" type="button" id="queue-refresh">刷新列表</button>
-      <button class="secondary" type="button" id="queue-prune">清理旧任务</button>
-      <span class="flash" id="queue-flash" hidden></span>
+    <p class="hint" id="queue-status-line">尚无任务</p>
+
+    <div class="queue-input" aria-describedby="queue-cred-note">
+      <label for="queue-paste">粘贴裸 IOC，一行一个。空行与 # 注释会被忽略。</label>
+      <textarea id="queue-paste" rows="6" placeholder="# 每行一个 IOC；空行与 # 注释会被忽略&#10;alpha.example.invalid&#10;beta.example.invalid"></textarea>
+      <div class="drop-zone" id="queue-drop-zone" role="button" tabindex="0" aria-describedby="queue-file-status">
+        拖入 .txt / .csv / .jsonl / .xlsx，或点击选择文件
+      </div>
+      <input type="file" id="queue-file" accept=".txt,.csv,.jsonl,.xlsx" hidden>
+      <div class="queue-file-row" id="queue-file-row" hidden>
+        <span class="stats" id="queue-file-status"></span>
+        <button class="ghost icon-btn" type="button" id="queue-file-clear">移除文件</button>
+      </div>
+      <div class="queue-mode-row">
+        <span class="field-label">模式</span>
+        <label class="radio"><input type="radio" name="queue-mode" id="queue-mode-offline" value="offline"> 只用本机缓存</label>
+        <label class="radio"><input type="radio" name="queue-mode" id="queue-mode-online" value="online"> 联网研判</label>
+      </div>
+      <div class="note" id="queue-cred-note">正在判断凭据…</div>
+      <div class="queue-submit-row">
+        <div class="stats" id="queue-enqueue-preview">入队后显示有效 / 重复 / 拒绝计数</div>
+        <button type="button" id="queue-enqueue">入队</button>
+      </div>
     </div>
-    <div class="stats" id="queue-status-line">尚无任务</div>
+
+    <div id="queue-kpi" class="queue-kpi" hidden></div>
+
+    <div class="section-head">
+      <h3 class="section-title">任务列表</h3>
+    </div>
     <div class="table-wrap">
-      <table>
+      <table class="queue-list-table">
         <thead>
           <tr>
-            <th>job_id</th>
+            <th>任务</th>
+            <th>模式</th>
             <th>状态</th>
-            <th>结论摘要</th>
-            <th>时间</th>
+            <th>进度</th>
+            <th>更新时间</th>
             <th>操作</th>
           </tr>
         </thead>
         <tbody id="queue-list"></tbody>
       </table>
     </div>
-    <div id="queue-kpi" class="queue-kpi" hidden></div>
     <div class="result" id="queue-results-box" hidden>
       <div class="stats" id="queue-results-stats"></div>
       <div class="actions">
@@ -900,6 +986,7 @@
     </div>
   </section>
 </main>
+<div class="toast-host" id="toast-host" aria-live="polite" aria-atomic="false"></div>
 <script>
 'use strict';
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
@@ -1021,6 +1108,10 @@ function initShell() {
   const initialMode = modeFromHash() || readStore().mode || 'queue';
   if (initialMode !== 'queue') activateMode(initialMode, { replace: true, keepScroll: true });
   else applyMode('queue', { keepScroll: true });
+  const storedJobId = readStore()['queue.selectedJobId'];
+  if (storedJobId && !queueState.selectedJobId) {
+    queueState.selectedJobId = String(storedJobId);
+  }
   window.addEventListener('popstate', () => {
     applyMode(modeFromHash() || readStore().mode || 'queue');
   });
@@ -1063,6 +1154,8 @@ const queueState = {
   selectedResultId: '',
   resultRows: [],
   iocInfoEnabled: false,
+  selectedFile: null,
+  stagedImport: null,
 };
 
 const WORKBENCH_STATE_LABELS = {
@@ -1162,6 +1255,26 @@ async function withBusy(button, busyText, work) {
 function flash(id, message) {
   const el = $(id); el.textContent = message; el.hidden = false;
   setTimeout(() => { el.hidden = true; }, 5000);
+}
+
+function showToast(message, kind) {
+  const host = $('toast-host');
+  if (!host || !message) return null;
+  const toast = document.createElement('div');
+  toast.className = 'toast is-' + (kind === 'success' || kind === 'error' ? kind : 'info');
+  toast.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  toast.textContent = message;
+  host.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('is-visible'));
+  let timer = setTimeout(dismiss, 4000);
+  function dismiss() {
+    clearTimeout(timer);
+    toast.classList.remove('is-visible');
+    setTimeout(() => toast.remove(), 320);
+  }
+  toast.addEventListener('mouseenter', () => clearTimeout(timer));
+  toast.addEventListener('mouseleave', () => { timer = setTimeout(dismiss, 2000); });
+  return toast;
 }
 
 function workbenchStateLabel(state) {
@@ -2592,6 +2705,141 @@ function queueSelectedMode() {
   return 'offline';
 }
 
+const QUEUE_FILE_MAX_BYTES = 24 * 1024 * 1024;
+const QUEUE_FILE_TYPES = ['.txt', '.csv', '.jsonl', '.xlsx'];
+
+function queueFileSuffix(name) {
+  const lower = String(name || '').toLowerCase();
+  const dot = lower.lastIndexOf('.');
+  return dot >= 0 ? lower.slice(dot) : '';
+}
+
+function queueSetFileStatus(text, isError) {
+  const row = $('queue-file-row');
+  const status = $('queue-file-status');
+  if (!row || !status) return;
+  if (!text) {
+    row.hidden = true;
+    status.textContent = '';
+    status.classList.remove('is-error');
+    return;
+  }
+  row.hidden = false;
+  status.textContent = text;
+  status.classList.toggle('is-error', !!isError);
+}
+
+function queueReadFileBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : '');
+    };
+    reader.onerror = () => reject(new Error('读取文件失败，请重试。'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function queueClearFile(message) {
+  queueState.stagedImport = null;
+  queueState.selectedFile = null;
+  const input = $('queue-file');
+  if (input) input.value = '';
+  const paste = $('queue-paste');
+  if (paste) paste.disabled = false;
+  queueSetFileStatus('');
+  $('queue-enqueue-preview').textContent = '入队后显示有效 / 重复 / 拒绝计数';
+  if (message) showToast(message, 'info');
+}
+
+async function queueImportFile(file) {
+  if (!file) return;
+  const label = file.name || '未命名文件';
+  const suffix = queueFileSuffix(label);
+  const paste = $('queue-paste');
+  if (QUEUE_FILE_TYPES.indexOf(suffix) < 0) {
+    queueState.stagedImport = null;
+    queueState.selectedFile = null;
+    if (paste) paste.disabled = false;
+    queueSetFileStatus('不支持的文件类型：' + label + '。请使用 .txt / .csv / .jsonl / .xlsx。', true);
+    return;
+  }
+  if (!file.size) {
+    queueState.stagedImport = null;
+    queueState.selectedFile = null;
+    if (paste) paste.disabled = false;
+    queueSetFileStatus('文件是空的，没有可入队的 IOC。', true);
+    return;
+  }
+  if (file.size > QUEUE_FILE_MAX_BYTES) {
+    queueState.stagedImport = null;
+    queueState.selectedFile = null;
+    if (paste) paste.disabled = false;
+    queueSetFileStatus('文件超过 24MB，请拆分后重试。', true);
+    return;
+  }
+  queueState.selectedFile = file;
+  queueState.stagedImport = null;
+  if (paste) paste.disabled = true;
+  queueSetFileStatus('正在解析 ' + label + ' …');
+  try {
+    const contentBase64 = await queueReadFileBase64(file);
+    const result = await api(
+      '/api/jobs/import',
+      { filename: label, content_base64: contentBase64, mode: queueSelectedMode() },
+      120000
+    );
+    queueState.stagedImport = result;
+    queueSetFileStatus(
+      label + ' · 有效 ' + result.valid + ' · 重复 ' + result.duplicated + ' · 拒绝 ' + result.rejected
+    );
+    $('queue-enqueue-preview').textContent =
+      '文件已就绪：有效 ' + result.valid + ' · 重复 ' + result.duplicated + ' · 拒绝 ' + result.rejected;
+    showToast(
+      '已解析 ' + label + '：有效 ' + result.valid + '，重复 ' + result.duplicated + '，拒绝 ' + result.rejected + '。',
+      result.rejected ? 'info' : 'success'
+    );
+  } catch (err) {
+    queueState.stagedImport = null;
+    if (paste) paste.disabled = false;
+    queueSetFileStatus((err && err.message) || '文件解析失败，请重试。', true);
+  }
+}
+
+function bindQueueDropZone() {
+  const zone = $('queue-drop-zone');
+  const input = $('queue-file');
+  if (!zone || !input) return;
+  zone.addEventListener('click', () => input.click());
+  zone.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+      event.preventDefault();
+      input.click();
+    }
+  });
+  input.addEventListener('change', () => {
+    const file = input.files && input.files[0];
+    if (file) queueImportFile(file);
+  });
+  ['dragenter', 'dragover'].forEach((name) => {
+    zone.addEventListener(name, (event) => {
+      event.preventDefault();
+      zone.classList.add('dragover');
+    });
+  });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    zone.classList.remove('dragover');
+    const files = event.dataTransfer && event.dataTransfer.files;
+    if (files && files.length) queueImportFile(files[0]);
+  });
+  const clear = $('queue-file-clear');
+  if (clear) clear.addEventListener('click', () => queueClearFile('已移除文件，可以粘贴 IOC 文本。'));
+}
+
 function updateQueueCredNote() {
   const note = $('queue-cred-note');
   if (!note) return;
@@ -2715,22 +2963,50 @@ function renderQueueResultRows(rows) {
   });
 }
 
+function queueProgressInfo(job) {
+  const state = (job && job.state) || '';
+  const progress = job && job.runner_progress && typeof job.runner_progress === 'object'
+    ? job.runner_progress
+    : null;
+  const text = progress && progress.text ? String(progress.text) : '';
+  if (state === 'queued') return { ratio: 0, text: '等待运行', tone: '' };
+  if (state === 'running') {
+    const match = /(\d+)\s*\/\s*(\d+)/.exec(text);
+    const total = match ? Number(match[2]) : 0;
+    const done = match ? Number(match[1]) : 0;
+    const ratio = total > 0 ? Math.min(1, done / total) : 0;
+    return { ratio: ratio, text: text || '运行中', tone: '' };
+  }
+  if (state === 'cancelling') return { ratio: 0, text: '正在取消', tone: '' };
+  if (state === 'succeeded') return { ratio: 1, text: '100%', tone: 'is-done' };
+  if (state === 'failed') {
+    const error = job && job.error ? String(job.error) : '';
+    const short = error.length > 80 ? error.slice(0, 80) + '…' : error;
+    return { ratio: 0, text: short || '进度未知', tone: 'is-failed' };
+  }
+  if (state === 'cancelled') return { ratio: 0, text: '已取消', tone: '' };
+  return { ratio: 0, text: '—', tone: '' };
+}
+
 function renderQueueList() {
   const body = $('queue-list');
   const jobs = queueState.jobs || [];
   if (!jobs.length) {
-    body.innerHTML = '<tr><td colspan="5" class="wrap">尚无任务。粘贴 IOC 后点「入队」。</td></tr>';
-    $('queue-status-line').textContent = '尚无任务';
+    body.innerHTML = '<tr><td colspan="6" class="wrap queue-empty">还没有任务。粘贴 IOC 或拖入 CSV，然后点入队。</td></tr>';
+    $('queue-status-line').textContent = '还没有任务。粘贴 IOC 或拖入 CSV，然后点入队。';
     renderQueueKpi(null);
     fillQueueBaselineOptions('');
     return;
   }
-  $('queue-status-line').textContent = '共 ' + jobs.length + ' 个任务';
+  const runningCount = jobs.filter((job) => job.state === 'running').length;
+  $('queue-status-line').textContent =
+    '共 ' + jobs.length + ' 个任务' + (runningCount ? '，' + runningCount + ' 个运行中' : '');
   body.innerHTML = jobs.map((job) => {
     const jobId = job.job_id || '';
     const state = job.state || '';
     const mode = job.mode || 'offline';
-    const created = queueLocalTime(job.created_at || job.updated_at || '');
+    const updated = queueLocalTime(job.updated_at || job.created_at || '');
+    const info = queueProgressInfo(job);
     let summary = queueSummaryText(job);
     let runLog = '';
     const progress = job.runner_progress && typeof job.runner_progress === 'object'
@@ -2740,31 +3016,39 @@ function renderQueueList() {
       summary = state === 'running' ? String(progress.text) : summary;
       const log = Array.isArray(progress.log) ? progress.log : [];
       if (log.length) {
-        runLog = '<div class="queue-run-log">' + log.map((entry) =>
+        const tail = log.slice(-2);
+        runLog = '<div class="queue-run-log">' + tail.map((entry) =>
           queueEscape((entry && entry.updated_at ? entry.updated_at + ' · ' : '') + (entry && entry.text ? entry.text : ''))
         ).join('<br>') + '</div>';
       }
     }
-    const canCancel = state === 'queued';
+    const canCancel = state === 'queued' || state === 'running';
     const canRun = state === 'queued';
     const canResults = state === 'succeeded' || state === 'failed';
     const actions = [];
     if (canRun) {
-      actions.push('<button type="button" data-queue-run="' + queueEscape(jobId) + '">运行</button>');
+      actions.push('<button class="secondary icon-btn" type="button" data-queue-run="' + queueEscape(jobId) + '">运行</button>');
     }
     if (canCancel) {
-      actions.push('<button class="secondary" type="button" data-queue-cancel="' + queueEscape(jobId) + '">取消</button>');
+      actions.push('<button class="secondary icon-btn" type="button" data-queue-cancel="' + queueEscape(jobId) + '">取消</button>');
     }
     if (canResults) {
-      actions.push('<button class="secondary" type="button" data-queue-results="' + queueEscape(jobId) + '">结果</button>');
+      actions.push('<button class="secondary icon-btn" type="button" data-queue-results="' + queueEscape(jobId) + '">结果</button>');
     }
+    const detail = state === 'running' ? (runLog || '') : (runLog || '<div class="queue-run-log">' + queueEscape(summary) + '</div>');
     return (
       '<tr data-job-id="' + queueEscape(jobId) + '">' +
-      '<td class="wrap">' + queueEscape(jobId) +
-        ' <span class="mode-label">' + queueEscape(mode === 'online' ? '联网' : '只用缓存') + '</span></td>' +
-      '<td>' + queueEscape(queueStateLabel(state)) + '</td>' +
-      '<td class="wrap">' + queueEscape(summary) + runLog + '</td>' +
-      '<td class="wrap">' + queueEscape(created) + '</td>' +
+      '<td class="wrap"><span class="queue-job-id">' + queueEscape(jobId) + '</span>' + detail + '</td>' +
+      '<td><span class="mode-label">' + queueEscape(mode === 'online' ? '联网' : '只用缓存') + '</span></td>' +
+      '<td><span class="state-chip">' + queueEscape(queueStateLabel(state)) + '</span></td>' +
+      '<td class="wrap">' +
+        '<div class="queue-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' +
+          Math.round(info.ratio * 100) + '">' +
+          '<span class="queue-progress-fill ' + info.tone + '" style="transform: scaleX(' + info.ratio + ')"></span>' +
+        '</div>' +
+        '<span class="queue-progress-text">' + queueEscape(info.text) + '</span>' +
+      '</td>' +
+      '<td class="wrap">' + queueEscape(updated) + '</td>' +
       '<td>' + (actions.join(' ') || '—') + '</td>' +
       '</tr>'
     );
@@ -2778,7 +3062,16 @@ function renderQueueList() {
   body.querySelectorAll('[data-queue-results]').forEach((button) => {
     button.addEventListener('click', () => doQueueResults(button.getAttribute('data-queue-results')));
   });
-  const selected = jobs.find((job) => job.job_id === queueState.selectedJobId) || null;
+  let selected = jobs.find((job) => job.job_id === queueState.selectedJobId) || null;
+  if (!selected) {
+    const previous = queueState.selectedJobId;
+    selected = jobs.find((job) => job.state === 'succeeded') || jobs[0] || null;
+    queueState.selectedJobId = selected ? selected.job_id : '';
+    patchStore({ 'queue.selectedJobId': queueState.selectedJobId });
+    if (previous && queueState.selectedJobId && previous !== queueState.selectedJobId) {
+      showToast('上次任务已不可见，已切换到最新任务。', 'info');
+    }
+  }
   renderQueueKpi(selected);
   fillQueueBaselineOptions(queueState.selectedJobId || '');
 }
@@ -2831,28 +3124,36 @@ async function refreshQueueList(silent) {
 }
 
 async function doQueueEnqueue() {
+  const button = $('queue-enqueue');
   try {
     clearError();
-    const content = $('queue-paste').value || '';
-    if (!content.trim()) throw new Error('请先粘贴 IOC 文本');
     const mode = queueSelectedMode();
-    const result = await api('/api/jobs/enqueue', {
-      content: content,
-      filename: 'paste.txt',
-      mode: mode,
-    });
+    let payload;
+    if (queueState.stagedImport) {
+      payload = { import_id: queueState.stagedImport.import_id, mode: mode };
+    } else {
+      const content = $('queue-paste').value || '';
+      if (!content.trim()) throw new Error('粘贴 IOC 或拖入 CSV 后再入队。');
+      payload = { content: content, filename: 'paste.txt', mode: mode };
+    }
+    const result = await withBusy(button, '正在入队…', () => api('/api/jobs/enqueue', payload));
     const job = result && result.job ? result.job : {};
     const input = job.input && typeof job.input === 'object' ? job.input : {};
+    const valid = input.valid != null ? input.valid : 0;
+    const duplicated = input.duplicated != null ? input.duplicated : 0;
+    const rejected = input.rejected != null ? input.rejected : 0;
     $('queue-enqueue-preview').textContent =
-      '有效 ' + (input.valid != null ? input.valid : 0) +
-      ' · 重复 ' + (input.duplicated != null ? input.duplicated : 0) +
-      ' · 拒绝 ' + (input.rejected != null ? input.rejected : 0) +
-      (job.mode ? (' · ' + job.mode) : '') +
+      '有效 ' + valid + ' · 重复 ' + duplicated + ' · 拒绝 ' + rejected +
       (job.job_id ? (' · job_id ' + job.job_id) : '');
-    const flash = $('queue-flash');
-    flash.hidden = false;
-    flash.textContent = '已入队';
-    setTimeout(() => { flash.hidden = true; }, 2000);
+    showToast(
+      '已入队 ' + valid + ' 个 IOC，重复 ' + duplicated + ' 个，拒绝 ' + rejected + ' 个。',
+      rejected ? 'info' : 'success'
+    );
+    if (queueState.stagedImport) {
+      queueClearFile('');
+    } else {
+      $('queue-paste').value = '';
+    }
     await refreshQueueList(true);
   } catch (err) {
     showError(err && err.message ? err.message : String(err));
@@ -2869,10 +3170,7 @@ async function doQueuePrune() {
     const removed = (dry && dry.removed) || [];
     const freed = dry && dry.freed_bytes != null ? dry.freed_bytes : 0;
     if (!removed.length) {
-      const flash = $('queue-flash');
-      flash.hidden = false;
-      flash.textContent = '无需清理（kept=' + ((dry && dry.kept) != null ? dry.kept : '?') + '）';
-      setTimeout(() => { flash.hidden = true; }, 2500);
+      showToast('没有可清理的旧任务（保留 ' + ((dry && dry.kept) != null ? dry.kept : '?') + ' 个）。', 'info');
       return;
     }
     const ok = window.confirm(
@@ -2884,12 +3182,11 @@ async function doQueuePrune() {
     if (applied && applied.ok === false) {
       throw new Error(applied.error || '清理失败');
     }
-    const flash = $('queue-flash');
-    flash.hidden = false;
-    flash.textContent =
-      '已清理 ' + (((applied && applied.removed) || []).length) +
-      ' 个 · freed=' + ((applied && applied.freed_bytes) != null ? applied.freed_bytes : 0);
-    setTimeout(() => { flash.hidden = true; }, 3000);
+    showToast(
+      '已清理 ' + (((applied && applied.removed) || []).length) + ' 个旧任务，释放 ' +
+      ((applied && applied.freed_bytes) != null ? applied.freed_bytes : 0) + ' 字节。',
+      'success'
+    );
     await refreshQueueList(true);
   } catch (err) {
     showError(err && err.message ? err.message : String(err));
@@ -2904,12 +3201,12 @@ async function doQueueRun(jobId) {
     if (result && result.ok === false) {
       throw new Error(result.error || '无法运行任务');
     }
-    const flash = $('queue-flash');
-    flash.hidden = false;
-    flash.textContent = result && result.running_job_id && result.running_job_id !== jobId
-      ? ('已有任务运行中: ' + result.running_job_id)
-      : '已启动运行';
-    setTimeout(() => { flash.hidden = true; }, 2500);
+    showToast(
+      result && result.running_job_id && result.running_job_id !== jobId
+        ? ('已有任务在运行：' + result.running_job_id + '。当前任务保持排队。')
+        : '已启动运行。',
+      'info'
+    );
     await refreshQueueList(true);
     queueSchedulePoll();
   } catch (err) {
@@ -2925,10 +3222,10 @@ async function doQueueCancel(jobId) {
     if (result && result.ok === false) {
       throw new Error(result.error || '取消失败');
     }
-    const flash = $('queue-flash');
-    flash.hidden = false;
-    flash.textContent = '已取消';
-    setTimeout(() => { flash.hidden = true; }, 2000);
+    showToast(
+      result && result.action === 'requested' ? '已请求取消，任务会在当前来源结束后停止。' : '已取消。',
+      'info'
+    );
     await refreshQueueList(true);
   } catch (err) {
     showError(err && err.message ? err.message : String(err));
@@ -2941,6 +3238,7 @@ async function doQueueResults(jobId) {
     if (!jobId) throw new Error('缺少 job_id');
     queueState.selectedJobId = jobId;
     queueState.selectedResultId = '';
+    patchStore({ 'queue.selectedJobId': jobId, 'queue.selectedResultId': '' });
     const data = await apiGet('/api/jobs/results?job_id=' + encodeURIComponent(jobId));
     const rows = (data && data.rows) || [];
     $('queue-results-box').hidden = false;
@@ -3093,6 +3391,7 @@ bindSourceToggle('lookup');
 bindSourceToggle('create');
 bindSourceToggle('restore');
 bindSourceToggle('scan');
+bindQueueDropZone();
 initShell();
 maybeShowLegacyWorkbench();
 workbenchSyncControls();
