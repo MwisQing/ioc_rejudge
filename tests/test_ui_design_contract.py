@@ -138,6 +138,12 @@ def test_design_contract_responsive_and_accessibility():
     assert "QUEUE_RENDER_CHUNK_SIZE = 24" in page
     assert "renderVersion" in page
     assert "requestAnimationFrame(mount)" in page
+    # 静态骨架屏与内联 SVG 图标系统（零外部资源）。
+    assert "queueResultsSkeleton" in page
+    assert "queueExplainSkeleton" in page
+    assert "skeleton-block" in page
+    assert 'id="icon-sprite"' in page
+    assert 'id="icon-alert"' in page
 
 
 def test_design_contract_ops_panel():
