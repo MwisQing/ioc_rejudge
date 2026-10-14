@@ -551,6 +551,32 @@
     font-size: 12px; color: var(--text-secondary);
   }
   .shortcut-list dd { margin: 0; color: var(--text-primary); }
+  .ops-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: var(--space-4); margin-top: var(--space-4);
+  }
+  .ops-block {
+    border: 1px solid var(--divider); border-radius: var(--radius-card);
+    padding: var(--space-3) var(--space-4);
+  }
+  .ops-block .section-title { margin-bottom: var(--space-2); }
+  .ops-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+  .ops-check { display: flex; align-items: baseline; gap: var(--space-2); font-size: 13px; line-height: 18px; }
+  .ops-check-name { color: var(--text-secondary); font-size: 12px; min-width: 5rem; }
+  .ops-check-detail { color: var(--text-primary); }
+  .state-chip.is-ok { color: var(--status-success); }
+  .state-chip.is-warn { color: var(--accent); }
+  .state-chip.is-error { color: var(--status-error); }
+  .ops-providers, .ops-jobs {
+    list-style: none; margin: var(--space-2) 0 0; padding: 0;
+    display: grid; gap: var(--space-1); font-size: 12px; line-height: 16px;
+    color: var(--text-secondary); font-variant-numeric: tabular-nums;
+  }
+  .ops-providers[hidden], .ops-jobs[hidden] { display: none; }
+  .ops-providers li, .ops-jobs li {
+    display: flex; gap: var(--space-2); align-items: baseline; flex-wrap: wrap;
+  }
+  .ops-providers .ops-value, .ops-jobs .ops-value { color: var(--text-primary); font-family: var(--font-mono); }
   #queue-panel #queue-enqueue {
     background: var(--accent); border-color: var(--accent); color: var(--accent-ink);
   }
@@ -1202,6 +1228,13 @@
   </div>
 
   <section class="panel" id="ops-panel" data-mode="ops">
+    <div class="panel-head">
+      <h2 class="mode-title">运维状态</h2>
+      <div class="panel-head-actions">
+        <button class="secondary icon-btn" type="button" id="ops-refresh">刷新状态</button>
+      </div>
+    </div>
+    <p class="hint" id="ops-state-line">进入运维模式时读取一次，不自动轮询。</p>
     <div class="statusbar" id="statusbar">
       <span id="status-key">正在加载…</span>
       <span class="badge" id="status-unlocked">未解锁</span>
@@ -1209,6 +1242,31 @@
       <ul class="bundles" id="status-bundles" title="仅展示最近任务；更早的任务仍保存在本机，粘贴对应云端回复仍可自动还原"></ul>
       <button class="secondary" type="button" id="lock-btn">清除口令</button>
       <span class="flash" id="lock-flash" hidden></span>
+    </div>
+    <div class="ops-grid" id="ops-blocks" aria-busy="false">
+      <div class="ops-block">
+        <h3 class="section-title">服务状态</h3>
+        <div class="stats" id="ops-server-stats">尚未读取。</div>
+      </div>
+      <div class="ops-block">
+        <h3 class="section-title">服务健康</h3>
+        <ul class="ops-checks" id="ops-health"></ul>
+      </div>
+      <div class="ops-block">
+        <h3 class="section-title">缓存统计</h3>
+        <div class="stats" id="ops-cache-stats">尚未读取。</div>
+        <button class="ghost icon-btn" type="button" id="ops-cache-toggle" aria-expanded="false" aria-controls="ops-cache-providers">按 provider 展开</button>
+        <ul class="ops-providers" id="ops-cache-providers" hidden></ul>
+      </div>
+      <div class="ops-block">
+        <h3 class="section-title">任务与 bundle 历史</h3>
+        <div class="stats" id="ops-history-stats">尚未读取。</div>
+        <ul class="ops-jobs" id="ops-history-jobs"></ul>
+      </div>
+      <div class="ops-block">
+        <h3 class="section-title">legacy workbench</h3>
+        <div class="stats" id="ops-workbench-stats">尚未读取。</div>
+      </div>
     </div>
   </section>
 </main>
@@ -1354,6 +1412,7 @@ function applyMode(mode, options) {
     link.setAttribute('aria-current', link.dataset.mode === next ? 'page' : 'false');
   });
   patchStore({ mode: next });
+  if (next === 'ops') loadOpsStatus();
   if (!opts.keepScroll) {
     window.scrollTo(0, 0);
   }
@@ -4219,6 +4278,157 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
+/* ---- 运维面板 ------------------------------------------------------ */
+const OPS_CHECK_LABELS = {
+  configuration: '配置检查',
+  credentials: 'IOC Info 凭据',
+  cache_write: '缓存目录',
+  recent_errors: '最近错误',
+};
+
+function opsUptime(seconds) {
+  const total = Number(seconds) || 0;
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const pad = (value) => String(value).padStart(2, '0');
+  return pad(hours) + ':' + pad(minutes);
+}
+
+function opsBytes(value) {
+  const bytes = Number(value) || 0;
+  if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+  if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return bytes + ' B';
+}
+
+function opsCheckChip(state) {
+  const chip = document.createElement('span');
+  const kind = state === 'ok' ? 'is-ok' : (state === 'warn' ? 'is-warn' : 'is-error');
+  chip.className = 'state-chip ' + kind;
+  chip.textContent = state === 'ok' ? '通过' : (state === 'warn' ? '警告' : '错误');
+  return chip;
+}
+
+function renderOpsStatus(data) {
+  const server = (data && data.server) || {};
+  $('ops-server-stats').textContent =
+    '服务：运行中 · 版本 ' + (server.version || 'unknown') +
+    ' · 已运行 ' + opsUptime(server.uptime_seconds);
+
+  const health = (data && data.health) || {};
+  const checks = Array.isArray(health.checks) ? health.checks : [];
+  const healthList = $('ops-health');
+  healthList.textContent = '';
+  if (!checks.length) {
+    const li = document.createElement('li');
+    li.className = 'ops-check';
+    li.textContent = '暂无服务状态。';
+    healthList.appendChild(li);
+  }
+  checks.forEach((check) => {
+    const li = document.createElement('li');
+    li.className = 'ops-check';
+    li.appendChild(opsCheckChip(check.state));
+    const name = document.createElement('span');
+    name.className = 'ops-check-name';
+    name.textContent = OPS_CHECK_LABELS[check.name] || String(check.name || '检查');
+    li.appendChild(name);
+    const detail = document.createElement('span');
+    detail.className = 'ops-check-detail';
+    detail.textContent = String(check.detail || '');
+    li.appendChild(detail);
+    healthList.appendChild(li);
+  });
+
+  const cache = (data && data.cache) || {};
+  $('ops-cache-stats').textContent =
+    '条目 ' + Number(cache.items || 0).toLocaleString('zh-CN') +
+    ' · 占用 ' + opsBytes(cache.bytes) +
+    ' · 最近更新 ' + (cache.updated_at ? queueLocalTime(cache.updated_at) : '—');
+  const providers = cache.by_provider && typeof cache.by_provider === 'object' ? cache.by_provider : {};
+  const providerList = $('ops-cache-providers');
+  providerList.textContent = '';
+  const names = Object.keys(providers).sort();
+  if (!names.length) {
+    const li = document.createElement('li');
+    li.textContent = '还没有缓存条目。';
+    providerList.appendChild(li);
+  }
+  names.forEach((name) => {
+    const li = document.createElement('li');
+    const label = document.createElement('span');
+    label.textContent = name;
+    li.appendChild(label);
+    const value = document.createElement('span');
+    value.className = 'ops-value';
+    value.textContent = opsBytes(providers[name]);
+    li.appendChild(value);
+    providerList.appendChild(li);
+  });
+
+  const history = (data && data.history) || {};
+  const recent = Array.isArray(history.jobs_recent) ? history.jobs_recent : [];
+  $('ops-history-stats').textContent =
+    '最近任务 ' + recent.length + ' 个 · bundle 共 ' + Number(history.bundle_total || 0) +
+    ' 个（当前窗口显示 ' + Number(history.bundles_recent || 0) + ' 个）';
+  const jobList = $('ops-history-jobs');
+  jobList.textContent = '';
+  if (!recent.length) {
+    const li = document.createElement('li');
+    li.textContent = '还没有任务。';
+    jobList.appendChild(li);
+  }
+  recent.forEach((job) => {
+    const li = document.createElement('li');
+    const id = document.createElement('span');
+    id.className = 'ops-value';
+    id.textContent = String(job.job_id || '');
+    li.appendChild(id);
+    const meta = document.createElement('span');
+    meta.textContent =
+      (job.mode === 'online' ? '联网' : '只用缓存') + ' · ' + queueStateLabel(job.state) +
+      ' · ' + queueLocalTime(job.created_at);
+    li.appendChild(meta);
+    jobList.appendChild(li);
+  });
+
+  const workbench = (data && data.workbench) || {};
+  $('ops-workbench-stats').textContent = workbench.enabled
+    ? 'legacy workbench 已启用，本窗口可直接打开 #workbench-panel。'
+    : (workbench.configured
+      ? '未启用。携带 legacy_workbench=1 时可打开 #workbench-panel。'
+      : '未配置 legacy workbench。');
+}
+
+async function loadOpsStatus() {
+  const blocks = $('ops-blocks');
+  const button = $('ops-refresh');
+  const line = $('ops-state-line');
+  if (blocks) blocks.setAttribute('aria-busy', 'true');
+  if (line) line.textContent = '正在读取服务状态…';
+  try {
+    const data = await apiGet('/api/ops/status');
+    renderOpsStatus(data);
+    if (line) {
+      line.textContent = '上次刷新 ' + queueLocalTime(new Date().toISOString()) +
+        '（进入运维模式时读取一次，不自动轮询）';
+    }
+  } catch (err) {
+    if (line) {
+      line.textContent = '服务状态不可用：' + (err && err.message ? err.message : String(err)) +
+        '。请确认 start-server.bat 已运行。';
+    }
+    ['ops-server-stats', 'ops-cache-stats', 'ops-history-stats', 'ops-workbench-stats'].forEach((id) => {
+      const element = $(id);
+      if (element) element.textContent = '—';
+    });
+  } finally {
+    if (blocks) blocks.setAttribute('aria-busy', 'false');
+    if (button) button.disabled = false;
+  }
+}
+
 function queueSchedulePoll() {
   if (queueState.pollTimer) clearTimeout(queueState.pollTimer);
   const running = (queueState.jobs || []).some((job) => job.state === 'running');
@@ -4700,6 +4910,26 @@ if (confirmOk) confirmOk.addEventListener('click', () => resolveConfirm(true));
 bindOverlay($('queue-detail-panel'));
 bindOverlay($('shortcuts-dialog'));
 bindOverlay($('confirm-dialog'));
+
+/* 运维面板 */
+const opsRefreshButton = $('ops-refresh');
+if (opsRefreshButton) {
+  opsRefreshButton.addEventListener('click', () => {
+    opsRefreshButton.disabled = true;
+    loadOpsStatus();
+  });
+}
+const opsCacheToggle = $('ops-cache-toggle');
+if (opsCacheToggle) {
+  opsCacheToggle.addEventListener('click', () => {
+    const list = $('ops-cache-providers');
+    if (!list) return;
+    const open = list.hidden;
+    list.hidden = !open;
+    opsCacheToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    opsCacheToggle.textContent = open ? '收起 provider 明细' : '按 provider 展开';
+  });
+}
 
 bindSourceToggle('lookup');
 bindSourceToggle('create');

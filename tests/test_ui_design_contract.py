@@ -43,6 +43,7 @@ def test_design_contract_locks_api_endpoints():
     page = page_text()
     expected_endpoints = (
         "/api/status",
+        "/api/ops/status",
         "/api/jobs/enqueue",
         "/api/jobs/import",
         "/api/jobs/list",
@@ -119,6 +120,32 @@ def test_design_contract_queue_input_and_task_list():
     assert 'id="toast-host"' in page
     assert "bindQueueDropZone" in page
     assert "queueImportFile" in page
+
+
+def test_design_contract_ops_panel():
+    page = page_text()
+    # 切片 6：运维模式首块仍是 #statusbar，后接健康、缓存、历史与 legacy 状态。
+    for element_id in (
+        "ops-panel",
+        "ops-refresh",
+        "ops-state-line",
+        "ops-blocks",
+        "ops-server-stats",
+        "ops-health",
+        "ops-cache-stats",
+        "ops-cache-toggle",
+        "ops-cache-providers",
+        "ops-history-stats",
+        "ops-history-jobs",
+        "ops-workbench-stats",
+    ):
+        assert f'id="{element_id}"' in page, element_id
+    assert "loadOpsStatus" in page
+    assert "renderOpsStatus" in page
+    assert "aria-busy" in page
+    assert "按 provider 展开" in page
+    assert "legacy workbench" in page
+    assert "不自动轮询" in page
 
 
 def test_design_contract_detail_panel_and_dialogs():

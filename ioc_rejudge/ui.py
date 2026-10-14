@@ -30,6 +30,7 @@ import threading
 import time
 import webbrowser
 import zipfile
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,7 @@ import requests
 
 from ioc_rejudge.inputs import read_input_bundle
 from ioc_rejudge.input_adapters import TableAdapterError, adapt_table
+from ioc_rejudge.cache_admin import CacheAdminError, cache_stats
 from ioc_rejudge.job_queue import (
     DEFAULT_JOBS_DIR,
     InvalidJobStateError,
@@ -180,6 +182,35 @@ def _read_job_result_rows(queue: UnifiedJobQueue, job_id: str) -> list[dict[str,
         if isinstance(row, dict):
             rows.append(row)
     return rows
+
+
+def _read_version() -> str:
+    version_path = Path(__file__).resolve().parent.parent / "VERSION"
+    try:
+        return version_path.read_text(encoding="utf-8").strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
+def _directory_writable(path: Path) -> bool:
+    """Probe writability with a tiny temp file; never raises."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / f".write-probe-{secrets.token_hex(4)}"
+        probe.write_bytes(b"ok")
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def _parse_iso_time(value: Any) -> float | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.strip().replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 def _unique_export_path(export_dir: Path, stem: str, suffix: str) -> Path:
@@ -1126,6 +1157,7 @@ class UiState:
         # Opaque export_id -> on-disk path under jobs_dir (never exposed to clients).
         self.job_exports: dict[str, Path] = {}
         self.legacy_workbench: bool = False
+        self.started_at: float = time.time()
 
     @property
     def unlocked(self) -> bool:
@@ -1259,6 +1291,12 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             self._send_json(403, {"error": "forbidden"})
             return
         if path.startswith("/api/"):
+            if path == "/api/ops/status":
+                try:
+                    self._send_json(200, self._handle_ops_status())
+                except Exception as exc:  # never leak a stack trace to the page
+                    self._send_json(500, {"error": f"internal error: {exc}"})
+                return
             if path.startswith(_JOBS_API_PREFIX):
                 try:
                     self._handle_jobs_get(path)
@@ -2391,6 +2429,151 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     # -- api handlers -----------------------------------------------------
+
+    # -- ops status (read-only) -------------------------------------------
+
+    def _ops_cache_payload(self, state: UiState) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "items": 0,
+            "bytes": 0,
+            "updated_at": None,
+            "by_provider": {},
+        }
+        cache_dir = Path(state.cache_dir)
+        try:
+            stats = cache_stats(cache_dir)
+        except (CacheAdminError, OSError):
+            return payload
+        total = stats.get("total") if isinstance(stats.get("total"), dict) else {}
+        payload["items"] = int(total.get("valid_entries") or 0)
+        payload["bytes"] = int(total.get("bytes") or 0)
+        latest: str | None = None
+        sections = stats.get("sections")
+        if isinstance(sections, dict):
+            for section in sections.values():
+                if not isinstance(section, dict):
+                    continue
+                stamp = section.get("latest_entry_utc")
+                if isinstance(stamp, str) and stamp and (latest is None or stamp > latest):
+                    latest = stamp
+        payload["updated_at"] = latest
+        by_provider: dict[str, int] = {}
+        try:
+            for child in sorted(cache_dir.iterdir()):
+                if not child.is_dir() or child.name.startswith("."):
+                    continue
+                size = 0
+                for shard in child.glob("cache_*.jsonl"):
+                    try:
+                        size += shard.stat().st_size
+                    except OSError:
+                        continue
+                by_provider[child.name] = size
+        except OSError:
+            by_provider = {}
+        payload["by_provider"] = by_provider
+        return payload
+
+    def _ops_health_payload(self, state: UiState, failed_recent: int) -> dict[str, Any]:
+        checks: list[dict[str, str]] = []
+        if self.page_path.is_file() and _directory_writable(Path(state.job_queue.root)):
+            checks.append(
+                {"name": "configuration", "state": "ok", "detail": "配置检查通过"}
+            )
+        else:
+            checks.append(
+                {
+                    "name": "configuration",
+                    "state": "error",
+                    "detail": "页面文件或任务目录不可用，请重新解压安装包",
+                }
+            )
+        checks.append(
+            {
+                "name": "credentials",
+                "state": "ok" if state.ioc_info_enabled else "warn",
+                "detail": (
+                    "IOC Info 凭据已加载"
+                    if state.ioc_info_enabled
+                    else "未检测到 IOC Info 凭据：联网来源会跳过或只读本机缓存"
+                ),
+            }
+        )
+        if _directory_writable(Path(state.cache_dir)):
+            checks.append(
+                {"name": "cache_write", "state": "ok", "detail": "缓存目录可写"}
+            )
+        else:
+            checks.append(
+                {
+                    "name": "cache_write",
+                    "state": "error",
+                    "detail": "缓存目录不可写，请检查本机权限",
+                }
+            )
+        checks.append(
+            {
+                "name": "recent_errors",
+                "state": "ok" if failed_recent == 0 else "warn",
+                "detail": "最近 24 小时失败任务 " + str(failed_recent) + " 个",
+            }
+        )
+        states = [check["state"] for check in checks]
+        overall = "error" if "error" in states else ("warn" if "warn" in states else "ok")
+        return {"status": overall, "checks": checks}
+
+    def _handle_ops_status(self) -> dict[str, Any]:
+        """Read-only ops snapshot; never returns paths, credentials or tokens."""
+        state = self.ui_state
+        queue = state.job_queue
+        _jobs_recover_stale(queue)
+        try:
+            jobs = queue.list_jobs()
+        except Exception:
+            jobs = []
+        recent_jobs: list[dict[str, Any]] = []
+        for job in jobs[:10]:
+            if not isinstance(job, dict):
+                continue
+            recent_jobs.append(
+                {
+                    "job_id": job.get("job_id", ""),
+                    "mode": job.get("mode", ""),
+                    "state": job.get("state", ""),
+                    "created_at": job.get("created_at", ""),
+                }
+            )
+        cutoff = time.time() - 24 * 3600
+        failed_recent = 0
+        for job in jobs:
+            if not isinstance(job, dict) or job.get("state") != "failed":
+                continue
+            stamp = _parse_iso_time(job.get("updated_at") or job.get("created_at"))
+            if stamp is not None and stamp >= cutoff:
+                failed_recent += 1
+        started = getattr(state, "started_at", None)
+        uptime = max(0, int(time.time() - started)) if isinstance(started, (int, float)) else 0
+        adapter = state.workbench_adapter
+        return {
+            "ok": True,
+            "server": {
+                "state": "running",
+                "version": _read_version(),
+                "uptime_seconds": uptime,
+            },
+            "health": self._ops_health_payload(state, failed_recent),
+            "cache": self._ops_cache_payload(state),
+            "history": {
+                "jobs_recent": recent_jobs,
+                "bundle_total": _count_bundles(state.bundles_dir),
+                "bundles_recent": len(_list_bundles(state.bundles_dir, limit=5)),
+            },
+            "workbench": {
+                "configured": adapter is not None,
+                "backend_available": type(adapter) is not LocalWorkbenchAdapter,
+                "enabled": bool(state.legacy_workbench),
+            },
+        }
 
     def _handle_status(self, body: dict) -> dict:
         state = self.ui_state

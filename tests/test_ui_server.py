@@ -876,3 +876,86 @@ def test_share_panels_keep_redaction_contract():
     assert "bindSourceToggle('create')" in page
     assert "bindSourceToggle('restore')" in page
     assert "bindSourceToggle('scan')" in page
+
+
+
+def _ops_status(url, token, *, timeout=10):
+    request = urllib.request.Request(url + "/api/ops/status")
+    request.add_header("Authorization", "Bearer " + token)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
+
+
+def test_ops_status_endpoint_is_read_only_and_path_free(ui):
+    url, token, key_path, _bundles = ui
+    status, body = _ops_status(url, token)
+    assert status == 200, body
+    assert body["ok"] is True
+    server = body["server"]
+    assert server["state"] == "running"
+    assert isinstance(server["uptime_seconds"], int)
+    assert server["version"]
+    health = body["health"]
+    assert health["status"] in {"ok", "warn", "error"}
+    assert [check["name"] for check in health["checks"]] == [
+        "configuration",
+        "credentials",
+        "cache_write",
+        "recent_errors",
+    ]
+    for check in health["checks"]:
+        assert check["state"] in {"ok", "warn", "error"}
+        assert check["detail"]
+    cache = body["cache"]
+    assert isinstance(cache["items"], int)
+    assert isinstance(cache["bytes"], int)
+    assert isinstance(cache["by_provider"], dict)
+    history = body["history"]
+    assert isinstance(history["jobs_recent"], list)
+    assert isinstance(history["bundle_total"], int)
+    assert isinstance(history["bundles_recent"], int)
+    assert set(body["workbench"]) == {"configured", "backend_available", "enabled"}
+    dumped = json.dumps(body)
+    assert str(key_path) not in dumped
+    assert "jobs_dir" not in dumped
+    assert "cache_path" not in dumped
+    assert ":\\\\" not in dumped and "/Users/" not in dumped
+
+
+def test_ops_status_requires_session_token(ui):
+    url, _token, _key, _bundles = ui
+    status, body = _ops_status(url, "wrong-token-value")
+    assert status == 403, body
+    assert body["error"] == "forbidden"
+    parsed = urllib.parse.urlsplit(url)
+    connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=10)
+    connection.request("GET", "/api/ops/status")
+    response = connection.getresponse()
+    status_no_token = response.status
+    response.read()
+    connection.close()
+    assert status_no_token == 403
+
+
+def test_ops_status_lists_recent_jobs_without_paths(ui):
+    url, token, _key, _bundles = ui
+    status, body = api_post(
+        url,
+        token,
+        "/api/jobs/enqueue",
+        {"content": "ops-status.example.invalid\n"},
+    )
+    assert status == 200, body
+    job_id = body["job"]["job_id"]
+    status, body = _ops_status(url, token)
+    assert status == 200, body
+    recent = body["history"]["jobs_recent"]
+    assert any(item["job_id"] == job_id for item in recent)
+    for item in recent:
+        assert set(item) == {"job_id", "mode", "state", "created_at"}
+    dumped = json.dumps(body)
+    assert "jobs_dir" not in dumped
+    assert ":\\\\" not in dumped
