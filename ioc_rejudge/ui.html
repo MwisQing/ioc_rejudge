@@ -222,6 +222,25 @@
   input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--status-error); }
   .row { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: center; }
   .row label { display: inline-flex; gap: var(--space-1); align-items: center; margin: 0; }
+  .segmented {
+    display: inline-flex; align-items: center; gap: 2px;
+    background: var(--bg-surface); border: 1px solid var(--line);
+    border-radius: var(--radius-control); padding: 2px; margin-bottom: var(--space-2);
+  }
+  .segmented label {
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    margin: 0; padding: 0 var(--space-3); height: 30px; border-radius: 4px;
+    font-size: 13px; line-height: 18px; font-weight: 400; letter-spacing: 0;
+    color: var(--text-secondary); cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+  }
+  .segmented label:hover { color: var(--text-primary); }
+  .segmented label:has(input:checked) {
+    background: var(--accent-soft); color: var(--text-primary);
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+  .segmented label:has(input:focus-visible) { outline: 2px solid var(--accent-hover); outline-offset: 1px; }
+  .segmented input[type="radio"] { width: 14px; height: 14px; }
   button {
     display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1);
     height: 36px; padding: 0 var(--space-4);
@@ -773,7 +792,7 @@
     <h2>查询 IOC Info</h2>
     <p class="hint">丢入 IOC（每行一个）或本机文件；默认用 7 天缓存，没有缓存再走 IOC Info 接口。查询结果是明文，发给云端前请先「脱敏并复制」。缺凭据时请用 <code>--credentials-file credentials.local.json</code> 启动，或在本终端设置 <code>IOC_INFO_API_KEY</code>。</p>
     <div class="note" id="lookup-cred-note" hidden>当前没有 IOC Info 凭据：只能读本机 7 天缓存。请关掉本页，在有 credentials.local.json 的目录用 --credentials-file 重新启动。</div>
-    <div class="row">
+    <div class="segmented" role="radiogroup" aria-label="输入方式">
       <label><input type="radio" name="lookup-src" value="paste" checked> 粘贴文本</label>
       <label><input type="radio" name="lookup-src" value="path"> 本机文件路径</label>
     </div>
@@ -807,7 +826,7 @@
   <section class="panel needs-key" id="create-panel" data-mode="share">
     <h2>生成脱敏包</h2>
     <p class="hint">粘贴研判结果 JSONL（或填写本机文件路径），生成可发给云端 AI 的脱敏内容并复制到剪贴板。</p>
-    <div class="row">
+    <div class="segmented" role="radiogroup" aria-label="输入方式">
       <label><input type="radio" name="create-src" value="paste" checked> 粘贴文本</label>
       <label><input type="radio" name="create-src" value="path"> 本机文件路径</label>
     </div>
@@ -844,7 +863,7 @@
   <section class="panel needs-key" id="restore-panel" data-mode="share">
     <h2>还原 AI 返回</h2>
     <p class="hint">粘贴云端 AI 返回的 JSONL（每行需带 bundle_id），自动匹配本地 bundle 并还原真实值；原样粘回脱敏包内容也可以验证还原。顶部仅展示最近任务，更早任务的清单与还原记录仍保留在本机，只要粘贴对应回复即可再次匹配。</p>
-    <div class="row">
+    <div class="segmented" role="radiogroup" aria-label="输入方式">
       <label><input type="radio" name="restore-src" value="paste" checked> 粘贴文本</label>
       <label><input type="radio" name="restore-src" value="path"> 本机文件路径</label>
     </div>
@@ -877,7 +896,7 @@
   <section class="panel" id="scan-panel" data-mode="share">
     <h2>残留扫描</h2>
     <p class="hint">对任意 JSONL 做脱敏残留检查；finding_count 应为 0 才可以外发。</p>
-    <div class="row">
+    <div class="segmented" role="radiogroup" aria-label="输入方式">
       <label><input type="radio" name="scan-src" value="paste" checked> 粘贴文本</label>
       <label><input type="radio" name="scan-src" value="path"> 本机文件路径</label>
     </div>
@@ -2246,20 +2265,26 @@ async function refreshStatus() {
 
 async function doKey() {
   clearError();
+  const button = $('key-btn');
   try {
     const passphrase = $('key-passphrase').value;
-    if (!passphrase) throw new Error('请输入口令');
+    if (!passphrase) throw new Error('请输入口令。');
     const force = $('key-force').checked;
-    if (force && keyExists !== false && !window.confirm('确认覆盖本机已有 key？旧 key 将无法还原此前的 bundle。')) {
-      return;
+    if (force && keyExists !== false) {
+      const ok = await confirmDialog(
+        '确认覆盖本机已有 key？旧 key 将无法还原此前的 bundle。',
+        { okText: '覆盖 key', danger: true }
+      );
+      if (!ok) return;
     }
-    await api('/api/key', {
-      passphrase: passphrase,
-      generate: $('key-generate').checked,
-      force: force,
-    });
+    await withBusy(button, '正在解锁…', () => api('/api/key', {
+        passphrase: passphrase,
+        generate: $('key-generate').checked,
+        force: force,
+      }));
     $('key-passphrase').value = '';
     await refreshStatus();
+    showToast('share key 已解锁。', 'success');
   } catch (err) { showError(err.message); }
 }
 
@@ -2268,6 +2293,11 @@ async function doLock() {
   const button = $('lock-btn');
   const typed = ($('key-passphrase').value || '').length > 0;
   try {
+    const ok = await confirmDialog(
+      '清除本机记住的口令？清除后下次打开需要重新输入。',
+      { okText: '清除口令', danger: true }
+    );
+    if (!ok) return;
     const result = await withBusy(button, '清除中…', () => api('/api/lock', {}));
     $('key-passphrase').value = '';
     $('key-generate').checked = false;
@@ -2333,7 +2363,12 @@ async function doSanitizeCopy() {
   clearError();
   try {
     const lookupCompactText = $('lookup-output').value;
-    if (!lookupCompactText.trim()) throw new Error('请先查询 IOC Info');
+    if (!lookupCompactText.trim()) throw new Error('请先查询 IOC Info。');
+    const confirmed = await confirmDialog(
+      '将把脱敏内容复制到剪贴板，用于发给云端 AI。确认复制？',
+      { okText: '脱敏并复制', danger: false }
+    );
+    if (!confirmed) return;
     const payload = { content: lookupCompactText };
     const namesPath = $('create-names').value.trim();
     if (namesPath) payload.names_path = namesPath;
@@ -2355,11 +2390,12 @@ async function doSanitizeCopy() {
 
 async function doCreate() {
   clearError();
+  const button = $('create-btn');
   try {
     const payload = collectInput('create');
     const namesPath = $('create-names').value.trim();
     if (namesPath) payload.names_path = namesPath;
-    const result = await api('/api/create', payload);
+    const result = await withBusy(button, '生成中…', () => api('/api/create', payload));
     applyCreateResult(result);
     await copyText(result.text, $('create-output'), 'create-flash');
     await refreshStatus();
@@ -2368,9 +2404,10 @@ async function doCreate() {
 
 async function doRestore() {
   clearError();
+  const button = $('restore-btn');
   try {
     const payload = collectInput('restore');
-    const result = await api('/api/restore', payload);
+    const result = await withBusy(button, '还原中…', () => api('/api/restore', payload));
     $('restore-stats').textContent =
       '匹配 bundle ' + result.matched_bundle_id + ' · 还原 ' + result.rows + ' 行';
     showCompactResult('restore', result.text);
@@ -2384,18 +2421,36 @@ async function doRestorePlainCopy() {
   await copyText($('restore-output').value, $('restore-output'), 'restore-flash');
 }
 
-async function doScan() {
+async function doCreateCopy() {
   clearError();
   try {
+    const text = $('create-output').value;
+    if (!text.trim()) throw new Error('请先生成脱敏包。');
+    const confirmed = await confirmDialog(
+      '将把脱敏内容复制到剪贴板，用于发给云端 AI。确认复制？',
+      { okText: '复制脱敏内容', danger: false }
+    );
+    if (!confirmed) return;
+    await copyText(text, $('create-output'), 'create-flash', '已复制一行一个脱敏 JSON');
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  }
+}
+
+async function doScan() {
+  clearError();
+  const button = $('scan-btn');
+  try {
     const payload = collectInput('scan');
-    const result = await api('/api/scan', payload);
+    const result = await withBusy(button, '扫描中…', () => api('/api/scan', payload));
     const counts = Object.keys(result.finding_counts || {});
     const detail = counts.length
       ? '（' + counts.map((code) => code + ' x' + result.finding_counts[code]).join('、') + '）'
       : '';
-    $('scan-stats').textContent =
-      '行数 ' + result.rows + ' · 残留敏感项 ' + result.finding_count + detail +
-      (result.finding_count === 0 ? ' — 可以外发' : ' — 存在残留，禁止外发');
+    $('scan-stats').textContent = result.finding_count === 0
+      ? '结论：未发现残留，可以外发。行数 ' + result.rows + '，finding_count 0'
+      : '结论：发现 ' + result.finding_count + ' 个残留，禁止外发。行数 ' + result.rows + detail;
+    $('scan-stats').classList.toggle('is-error', result.finding_count !== 0);
     $('scan-result').hidden = false;
   } catch (err) { showError(err.message); }
 }
@@ -2874,9 +2929,7 @@ $('lookup-btn').addEventListener('click', doLookup);
 $('lookup-sanitize').addEventListener('click', doSanitizeCopy);
 $('lookup-copy').addEventListener('click', doLookupPlainCopy);
 $('create-btn').addEventListener('click', doCreate);
-$('create-copy').addEventListener('click', () =>
-  copyText($('create-output').value, $('create-output'), 'create-flash')
-);
+$('create-copy').addEventListener('click', doCreateCopy);
 $('restore-btn').addEventListener('click', doRestore);
 $('restore-copy').addEventListener('click', doRestorePlainCopy);
 $('scan-btn').addEventListener('click', doScan);

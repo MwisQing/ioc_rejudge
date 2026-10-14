@@ -827,3 +827,52 @@ def test_lookup_does_not_block_status(make_server, tmp_path):
     assert result.get("lookup") is not None
     lookup_status, lookup_body = result["lookup"]
     assert lookup_status == 200, lookup_body
+
+
+def test_share_panels_keep_redaction_contract():
+    """切片 5：脱敏协作面板保留安全文案、二次确认与结论措辞。"""
+    page = (Path(__file__).parents[1] / "ioc_rejudge" / "ui.html").read_text(
+        encoding="utf-8"
+    )
+    for element_id in (
+        "key-panel",
+        "key-passphrase",
+        "key-generate",
+        "key-force",
+        "key-btn",
+        "lookup-panel",
+        "lookup-btn",
+        "lookup-sanitize",
+        "lookup-copy",
+        "create-panel",
+        "create-btn",
+        "create-copy",
+        "restore-panel",
+        "restore-btn",
+        "restore-copy",
+        "scan-panel",
+        "scan-btn",
+        "scan-stats",
+    ):
+        assert f'id="{element_id}"' in page, element_id
+    assert "脱敏并复制" in page
+    assert "勿发给云端" in page
+    assert "明文" in page
+    assert "ss1:" in page
+    assert "confirmDialog" in page
+    assert "确认覆盖本机已有 key" in page
+    assert "清除本机记住的口令" in page
+    assert "结论：未发现残留，可以外发" in page
+    assert "禁止外发" in page
+    assert "本机 key 同目录" in page
+    assert "credentials.local.json" in page
+    assert "IOC_INFO_API_KEY" in page
+    # 输入方式保持 content / input_path 两个老入口。
+    for prefix in ("lookup", "create", "restore", "scan"):
+        assert f'name="{prefix}-src"' in page
+        assert f'id="{prefix}-content"' in page
+        assert f'id="{prefix}-path"' in page
+    assert "bindSourceToggle('lookup')" in page
+    assert "bindSourceToggle('create')" in page
+    assert "bindSourceToggle('restore')" in page
+    assert "bindSourceToggle('scan')" in page
