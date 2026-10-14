@@ -119,3 +119,47 @@ def test_design_contract_queue_input_and_task_list():
     assert 'id="toast-host"' in page
     assert "bindQueueDropZone" in page
     assert "queueImportFile" in page
+
+
+def test_design_contract_detail_panel_and_dialogs():
+    page = page_text()
+    # 切片 4：解释 side panel、快捷键说明与确认对话框。
+    for element_id in (
+        "queue-detail-panel",
+        "queue-detail-close",
+        "queue-detail-prev",
+        "queue-detail-next",
+        "queue-detail-nav-status",
+        "queue-explain-viewer",
+        "queue-review-label",
+        "queue-review-reviewer",
+        "queue-review-note",
+        "shortcuts-dialog",
+        "shortcuts-close",
+        "confirm-dialog",
+        "confirm-cancel",
+        "confirm-ok",
+    ):
+        assert f'id="{element_id}"' in page, element_id
+    assert 'role="dialog"' in page
+    assert 'aria-modal="true"' in page
+    assert "setBackgroundInert" in page
+    assert "trapFocus" in page
+    assert "confirmDialog" in page
+    assert "window.confirm" in page
+    assert "openQueueDetail" in page
+    assert "queueDetailNavigate" in page
+    assert "queuePendingNavigate" in page
+    assert "doQueueBatchReview" in page
+    assert "data-queue-batch-review" in page
+    # 快捷键：J/K、Enter、A/R/P、Ctrl+Enter、N、E、D、?、1-5、/
+    assert "event.key === 'Enter'" in page
+    assert "'ArrowDown'" in page
+    assert "'ArrowUp'" in page
+    assert "queueSetReviewLabel('approved')" in page
+    assert "queueSetReviewLabel('rejected')" in page
+    assert "queueSetReviewLabel('pending')" in page
+    assert "queueApplyQuickFilter" in page
+    assert "openShortcutsDialog" in page
+    assert "queueDetailOpen()" in page
+    assert "resolveConfirm(false)" in page

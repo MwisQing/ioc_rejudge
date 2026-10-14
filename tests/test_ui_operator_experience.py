@@ -127,6 +127,26 @@ def test_page_uses_local_minutes_and_raw_json():
     assert "renderJsonlViewer($('queue-explain-viewer'), JSON.stringify(explanation))" in page
 
 
+def test_page_explain_side_panel_and_review_contract():
+    page = page_text()
+    # 切片 4：解释与复核收进 side panel，保留行内 JSON 树与复核提交。
+    assert 'id="queue-detail-panel"' in page
+    panel_markup = page.split('id="queue-detail-panel"', 1)[1][:160]
+    assert "hidden" in panel_markup
+    assert "renderJsonlViewer($('queue-explain-viewer'), JSON.stringify(explanation))" in page
+    assert "openQueueDetail('explain'" in page
+    assert "openQueueDetail('diff'" in page
+    assert "queueUpdateRowSelection" in page
+    assert "解释加载失败" in page
+    assert "复核已提交，系统结论未覆盖" in page
+    assert "details.open = false" in page
+    assert "上一条" in page
+    assert "下一条" in page
+    assert "当前页第 " in page
+    assert "setBackgroundInert" in page
+    assert "trapFocus" in page
+
+
 def test_page_json_defaults_and_single_toggle():
     page = page_text()
     assert "JSON_COLLAPSED_KEYS" in page

@@ -473,6 +473,65 @@
     font-size: 11px; line-height: 14px; color: var(--text-secondary); font-family: var(--font-mono);
   }
   .row-select { width: 16px; height: 16px; }
+  .side-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 480px; max-width: 100vw;
+    z-index: var(--z-side-panel);
+    background: var(--bg-elevated); border-left: 1px solid var(--line);
+    box-shadow: var(--shadow-2);
+    display: flex; flex-direction: column;
+    transform: translateX(8px); opacity: 0;
+    transition: transform var(--motion-panel) var(--ease-standard), opacity var(--motion-panel) var(--ease-standard);
+  }
+  .side-panel[hidden] { display: none; }
+  .side-panel.is-open { transform: translateX(0); opacity: 1; }
+  .side-panel-head {
+    position: sticky; top: 0; display: flex; align-items: flex-start; gap: var(--space-3);
+    padding: var(--space-4); border-bottom: 1px solid var(--divider); background: var(--bg-elevated);
+  }
+  .side-panel-heading { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .side-panel-label {
+    font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.01em; color: var(--text-secondary);
+  }
+  .side-panel-title {
+    margin: 0; font-family: var(--font-mono); font-size: 14px; line-height: 20px;
+    font-weight: 500; overflow-wrap: anywhere;
+  }
+  .side-panel-actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
+  .side-panel-body {
+    flex: 1; overflow-y: auto; padding: var(--space-4);
+    display: flex; flex-direction: column; gap: var(--space-3);
+  }
+  .detail-state { color: var(--text-secondary); font-size: 13px; line-height: 18px; }
+  .detail-state.is-error { color: var(--danger-fg); }
+  .review-form { border-top: 1px solid var(--divider); padding-top: var(--space-3); margin-top: var(--space-2); }
+  .review-form .actions { margin-top: var(--space-2); }
+  .modal {
+    position: fixed; inset: 0; z-index: var(--z-modal);
+    background: rgba(8, 10, 12, .55);
+    display: flex; align-items: center; justify-content: center; padding: var(--space-5);
+  }
+  .modal[hidden] { display: none; }
+  .modal-card {
+    width: min(440px, 100%); max-height: 90vh; overflow-y: auto;
+    background: var(--bg-elevated); border: 1px solid var(--line);
+    border-radius: var(--radius-panel); box-shadow: var(--shadow-3);
+    padding: var(--space-5);
+  }
+  .modal-title { margin: 0 0 var(--space-2); font-size: 16px; line-height: 22px; font-weight: 600; }
+  .modal-body {
+    margin: 0 0 var(--space-4); font-size: 14px; line-height: 20px;
+    color: var(--text-secondary); white-space: pre-wrap;
+  }
+  .modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
+  button.danger { background: var(--danger-fg); border-color: var(--danger-fg); color: var(--bg-surface); }
+  button.danger:hover:not(:disabled) { border-color: var(--danger-fg); filter: brightness(.94); }
+  .shortcut-list { margin: 0; display: grid; gap: var(--space-1); font-size: 13px; line-height: 18px; }
+  .shortcut-list > div { display: flex; gap: var(--space-3); align-items: baseline; }
+  .shortcut-list dt {
+    flex: none; min-width: 7.5rem; font-family: var(--font-mono);
+    font-size: 12px; color: var(--text-secondary);
+  }
+  .shortcut-list dd { margin: 0; color: var(--text-primary); }
   #queue-panel #queue-enqueue {
     background: var(--accent); border-color: var(--accent); color: var(--accent-ink);
   }
@@ -604,6 +663,9 @@
     .mode-nav a { height: 34px; }
     .topbar-meta { font-size: 11px; }
     main { padding: 0 var(--space-3) var(--space-8); }
+    .side-panel { width: 100%; border-left: 0; }
+    .side-panel-head { flex-wrap: wrap; }
+    .side-panel-actions { width: 100%; margin-left: 0; justify-content: flex-start; }
     .table-wrap {
       overflow: visible; border: 0; background: transparent;
     }
@@ -945,6 +1007,10 @@
         <span class="stats" id="queue-batch-count">已选 0 行</span>
         <button class="secondary icon-btn" type="button" id="queue-batch-copy">复制 IOC</button>
         <button class="secondary icon-btn" type="button" id="queue-batch-export">导出选中</button>
+        <button class="secondary icon-btn" type="button" data-queue-batch-review="approved">标记 approved</button>
+        <button class="secondary icon-btn" type="button" data-queue-batch-review="rejected">标记 rejected</button>
+        <button class="secondary icon-btn" type="button" data-queue-batch-review="pending">标记 pending</button>
+        <span class="stats" id="queue-batch-progress" hidden></span>
         <button class="ghost icon-btn" type="button" id="queue-batch-clear">取消选择</button>
       </div>
       <div class="result" id="queue-diff-result" hidden>
@@ -969,30 +1035,6 @@
           </thead>
           <tbody id="queue-results-body"></tbody>
         </table>
-      </div>
-      <div class="result" id="queue-explain-box" hidden>
-        <h3>解释与复核 <span class="stats" id="queue-selected-result"></span></h3>
-        <div class="json-viewer" id="queue-explain-viewer"></div>
-        <div class="review-grid">
-          <div>
-            <label for="queue-review-label">复核标签</label>
-            <select id="queue-review-label">
-              <option value="approved">approved</option>
-              <option value="rejected">rejected</option>
-              <option value="pending">pending</option>
-            </select>
-          </div>
-          <div>
-            <label for="queue-review-reviewer">复核人</label>
-            <input type="text" id="queue-review-reviewer" autocomplete="off">
-          </div>
-        </div>
-        <label for="queue-review-note">复核备注</label>
-        <textarea id="queue-review-note" rows="2"></textarea>
-        <div class="actions">
-          <button type="button" id="queue-review-submit">提交复核</button>
-          <span class="flash" id="queue-review-flash" hidden></span>
-        </div>
       </div>
       <div class="json-viewer" id="queue-results-viewer" hidden></div>
     </div>
@@ -1151,6 +1193,89 @@
     </div>
   </section>
 </main>
+<aside class="side-panel" id="queue-detail-panel" role="dialog" aria-modal="true" aria-labelledby="queue-detail-title" tabindex="-1" hidden>
+  <div class="side-panel-head">
+    <div class="side-panel-heading">
+      <span class="side-panel-label" id="queue-detail-kicker">解释详情</span>
+      <h3 class="side-panel-title" id="queue-detail-title">result_id</h3>
+      <span class="stats" id="queue-detail-nav-status">未选择结果</span>
+    </div>
+    <div class="side-panel-actions">
+      <button class="secondary icon-btn" type="button" id="queue-detail-prev" disabled>上一条</button>
+      <button class="secondary icon-btn" type="button" id="queue-detail-next" disabled>下一条</button>
+      <button class="ghost icon-btn" type="button" id="queue-detail-close" aria-label="关闭解释详情">关闭</button>
+    </div>
+  </div>
+  <div class="side-panel-body">
+    <div class="result" id="queue-explain-box" hidden>
+      <div class="json-viewer" id="queue-explain-viewer"></div>
+      <div class="detail-state" id="queue-explain-state" hidden></div>
+      <div class="review-form">
+        <div class="review-grid">
+          <div>
+            <label for="queue-review-label">复核标签</label>
+            <select id="queue-review-label">
+              <option value="approved">approved</option>
+              <option value="rejected">rejected</option>
+              <option value="pending">pending</option>
+            </select>
+          </div>
+          <div>
+            <label for="queue-review-reviewer">复核人</label>
+            <input type="text" id="queue-review-reviewer" autocomplete="off">
+          </div>
+        </div>
+        <label for="queue-review-note">复核备注</label>
+        <textarea id="queue-review-note" rows="2"></textarea>
+        <div class="actions">
+          <button type="button" id="queue-review-submit">提交复核</button>
+          <span class="stats" id="queue-selected-result"></span>
+          <span class="flash" id="queue-review-flash" hidden></span>
+        </div>
+        <p class="stats">人工复核只追加 overlay，不覆盖系统结论。Ctrl+Enter 提交。</p>
+      </div>
+    </div>
+    <div class="result" id="queue-diff-result" hidden>
+      <div class="stats" id="queue-diff-stats"></div>
+      <div class="json-viewer" id="queue-diff-viewer"></div>
+    </div>
+  </div>
+</aside>
+
+<div class="modal" id="shortcuts-dialog" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title" hidden>
+  <div class="modal-card">
+    <h3 class="modal-title" id="shortcuts-title">键盘快捷键</h3>
+    <dl class="shortcut-list">
+      <div><dt>/</dt><dd>聚焦结果关键字</dd></div>
+      <div><dt>1 2 3 4 5</dt><dd>全部 / 待复核 / 灰 / 误报 / 黑</dd></div>
+      <div><dt>Shift+P</dt><dd>Provider 异常筛选</dd></div>
+      <div><dt>J / ↓</dt><dd>下一行</dd></div>
+      <div><dt>K / ↑</dt><dd>上一行</dd></div>
+      <div><dt>Enter</dt><dd>打开当前行解释</dd></div>
+      <div><dt>A / R / P</dt><dd>复核标签 approved / rejected / pending</dd></div>
+      <div><dt>Ctrl+Enter</dt><dd>提交复核</dd></div>
+      <div><dt>N / Shift+N</dt><dd>下一条 / 上一条待复核</dd></div>
+      <div><dt>E</dt><dd>打开导出菜单</dd></div>
+      <div><dt>D</dt><dd>对比 baseline</dd></div>
+      <div><dt>Esc</dt><dd>关闭浮层或清除关键字</dd></div>
+      <div><dt>?</dt><dd>打开本说明</dd></div>
+    </dl>
+    <div class="modal-actions">
+      <button type="button" id="shortcuts-close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
+  <div class="modal-card">
+    <h3 class="modal-title" id="confirm-title">确认操作</h3>
+    <p class="modal-body" id="confirm-message"></p>
+    <div class="modal-actions">
+      <button class="secondary" type="button" id="confirm-cancel">取消</button>
+      <button class="danger" type="button" id="confirm-ok">确认</button>
+    </div>
+  </div>
+</div>
 <div class="toast-host" id="toast-host" aria-live="polite" aria-atomic="false"></div>
 <script>
 'use strict';
@@ -3330,7 +3455,20 @@ function queueBuildRow(row, index) {
   summaryCell.appendChild(summary);
   tr.appendChild(summaryCell);
 
-  tr.addEventListener('click', () => doQueueExplain(resultId));
+  tr.addEventListener('click', () => doQueueExplain(resultId, tr));
+  tr.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      doQueueExplain(resultId, tr);
+    } else if (event.key === ' ') {
+      event.preventDefault();
+      if (!queueState.selectedResultIds) queueState.selectedResultIds = new Set();
+      if (queueState.selectedResultIds.has(resultId)) queueState.selectedResultIds.delete(resultId);
+      else queueState.selectedResultIds.add(resultId);
+      checkbox.checked = queueState.selectedResultIds.has(resultId);
+      queueUpdateBatchBar();
+    }
+  });
   return tr;
 }
 
@@ -3342,6 +3480,7 @@ function renderQueueResultRows(rows) {
   const version = queueState.renderVersion;
   body.textContent = '';
   body.setAttribute('aria-busy', 'true');
+  queueState.rowElements = new Map();
   if (!rows || !rows.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
@@ -3362,7 +3501,9 @@ function renderQueueResultRows(rows) {
     const fragment = document.createDocumentFragment();
     const end = Math.min(cursor + QUEUE_RENDER_CHUNK_SIZE, rows.length);
     for (; cursor < end; cursor += 1) {
-      fragment.appendChild(queueBuildRow(rows[cursor], cursor));
+      const rowElement = queueBuildRow(rows[cursor], cursor);
+      queueState.rowElements.set(String(rows[cursor].result_id), rowElement);
+      fragment.appendChild(rowElement);
     }
     body.appendChild(fragment);
     if (cursor < rows.length) {
@@ -3652,6 +3793,379 @@ async function doQueueBatchExport() {
   }
 }
 
+/* ---- 浮层（side panel / 对话框）与焦点管理 ------------------------- */
+let overlayTrigger = null;
+let overlayOpen = null;
+let confirmResolve = null;
+
+function setBackgroundInert(inert) {
+  [document.querySelector('.topbar'), $('main')].forEach((element) => {
+    if (!element) return;
+    if (inert) element.setAttribute('inert', '');
+    else element.removeAttribute('inert');
+  });
+}
+
+function overlayFocusables(container) {
+  return Array.from(
+    container.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
+    )
+  ).filter((element) => element.offsetParent !== null || element === document.activeElement);
+}
+
+function trapFocus(container, event) {
+  if (event.key !== 'Tab') return;
+  const focusable = overlayFocusables(container);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function prefersReducedMotion() {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch (err) {
+    return false;
+  }
+}
+
+function openOverlay(element, trigger) {
+  if (!element) return;
+  if (!overlayOpen) overlayTrigger = trigger || document.activeElement;
+  element.hidden = false;
+  requestAnimationFrame(() => element.classList.add('is-open'));
+  overlayOpen = element;
+  setBackgroundInert(true);
+  if (element.getAttribute('tabindex') === '-1') element.focus();
+  else {
+    const target = overlayFocusables(element)[0];
+    if (target) target.focus();
+  }
+}
+
+function closeOverlay(element) {
+  const target = element || overlayOpen;
+  if (!target) return;
+  target.classList.remove('is-open');
+  const hide = () => { target.hidden = true; };
+  if (target.classList.contains('side-panel') && !prefersReducedMotion()) setTimeout(hide, 200);
+  else hide();
+  if (overlayOpen === target) {
+    overlayOpen = null;
+    setBackgroundInert(false);
+    const trigger = overlayTrigger;
+    overlayTrigger = null;
+    if (trigger && document.contains(trigger) && typeof trigger.focus === 'function') {
+      trigger.focus();
+    }
+  }
+}
+
+function confirmDialog(message, options) {
+  const opts = options || {};
+  const dialog = $('confirm-dialog');
+  if (!dialog) return Promise.resolve(window.confirm(message));
+  if (confirmResolve) confirmResolve(false);
+  $('confirm-message').textContent = message;
+  $('confirm-ok').textContent = opts.okText || '确认';
+  $('confirm-cancel').textContent = opts.cancelText || '取消';
+  const okButton = $('confirm-ok');
+  okButton.classList.toggle('danger', opts.danger !== false);
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    openOverlay(dialog);
+    $('confirm-cancel').focus();
+  });
+}
+
+function resolveConfirm(value) {
+  const resolve = confirmResolve;
+  confirmResolve = null;
+  closeOverlay($('confirm-dialog'));
+  if (resolve) resolve(!!value);
+}
+
+function bindOverlay(element) {
+  if (!element) return;
+  element.addEventListener('keydown', (event) => trapFocus(element, event));
+}
+
+/* ---- 解释详情 side panel ------------------------------------------ */
+function queueDetailOpen() {
+  const panel = $('queue-detail-panel');
+  return !!panel && !panel.hidden;
+}
+
+function openQueueDetail(mode, trigger) {
+  const panel = $('queue-detail-panel');
+  if (!panel) return;
+  const nextMode = mode === 'diff' ? 'diff' : 'explain';
+  panel.dataset.panelMode = nextMode;
+  const explain = $('queue-explain-box');
+  const diff = $('queue-diff-result');
+  if (explain) explain.hidden = nextMode !== 'explain';
+  if (diff) diff.hidden = nextMode !== 'diff';
+  $('queue-detail-kicker').textContent = nextMode === 'diff' ? 'diff 对比' : '解释详情';
+  if (!queueDetailOpen()) openOverlay(panel, trigger);
+}
+
+function closeQueueDetail() {
+  const panel = $('queue-detail-panel');
+  if (!panel || panel.hidden) return;
+  closeOverlay(panel);
+  // 结果行在复核后会重新挂载；此时把焦点交回当前选中行。
+  if (!document.activeElement || document.activeElement === document.body) {
+    const row = queueRowElement(queueState.selectedResultId);
+    if (row && document.contains(row)) row.focus();
+  }
+}
+
+function queueSelectedIndex() {
+  const rows = queueState.resultRows || [];
+  return rows.findIndex((row) => String(row.result_id) === queueState.selectedResultId);
+}
+
+function queueUpdateDetailNav() {
+  const rows = queueState.resultRows || [];
+  const index = queueSelectedIndex();
+  const status = $('queue-detail-nav-status');
+  if (status) {
+    status.textContent = index < 0
+      ? '当前页第 0 / ' + rows.length + ' 条'
+      : '当前页第 ' + (index + 1) + ' / ' + rows.length + ' 条';
+  }
+  const prev = $('queue-detail-prev');
+  const next = $('queue-detail-next');
+  if (prev) prev.disabled = index <= 0;
+  if (next) next.disabled = index < 0 || index >= rows.length - 1;
+}
+
+function queueRowElement(resultId) {
+  const elements = queueState.rowElements;
+  if (elements && elements.has(resultId)) return elements.get(resultId);
+  return null;
+}
+
+function queueUpdateRowSelection() {
+  const body = $('queue-results-body');
+  if (!body) return;
+  body.querySelectorAll('tr.queue-row').forEach((row) => {
+    row.classList.toggle(
+      'is-selected',
+      row.getAttribute('data-queue-result-id') === queueState.selectedResultId
+    );
+  });
+}
+
+function queueDetailNavigate(direction) {
+  const rows = queueState.resultRows || [];
+  if (!rows.length) return;
+  const index = queueSelectedIndex();
+  const nextIndex = index + (direction > 0 ? 1 : -1);
+  if (nextIndex < 0 || nextIndex >= rows.length) {
+    showToast('已经是当前页' + (direction > 0 ? '最后' : '第一') + '一条。', 'info');
+    return;
+  }
+  const resultId = String(rows[nextIndex].result_id);
+  doQueueExplain(resultId, queueRowElement(resultId));
+}
+
+function queuePendingNavigate(direction) {
+  const rows = queueState.resultRows || [];
+  if (!rows.length) return;
+  const start = queueSelectedIndex();
+  const step = direction > 0 ? 1 : -1;
+  for (let index = start + step; index >= 0 && index < rows.length; index += step) {
+    if (String(rows[index].conclusion) === '待复核') {
+      const resultId = String(rows[index].result_id);
+      doQueueExplain(resultId, queueRowElement(resultId));
+      return;
+    }
+  }
+  showToast('当前页没有更多待复核行。', 'info');
+}
+
+async function doQueueBatchReview(label) {
+  const selected = Array.from(queueState.selectedResultIds || []);
+  if (!selected.length) return;
+  if (['approved', 'rejected', 'pending'].indexOf(label) < 0) return;
+  if (!queueState.selectedJobId) {
+    showError('请先打开任务结果。');
+    return;
+  }
+  const progress = $('queue-batch-progress');
+  const reviewer = ($('queue-review-reviewer').value || '').trim();
+  const note = $('queue-review-note').value || '';
+  const failures = [];
+  if (progress) {
+    progress.hidden = false;
+    progress.textContent = '0 / ' + selected.length;
+  }
+  for (let index = 0; index < selected.length; index += 1) {
+    const resultId = selected[index];
+    try {
+      const result = await api('/api/jobs/review', {
+        job_id: queueState.selectedJobId,
+        result_id: resultId,
+        label: label,
+        note: note,
+        reviewer: reviewer,
+      });
+      if (!result || result.ok === false) {
+        throw new Error((result && result.error) || '复核失败');
+      }
+    } catch (err) {
+      failures.push(resultId + '：' + (err && err.message ? err.message : String(err)));
+    }
+    if (progress) progress.textContent = (index + 1) + ' / ' + selected.length;
+  }
+  if (progress) progress.hidden = true;
+  if (failures.length) {
+    showError('批量复核有 ' + failures.length + ' 条失败：' + failures.slice(0, 3).join('；'));
+  } else {
+    showToast('已提交 ' + selected.length + ' 条复核，系统结论未覆盖。', 'success');
+  }
+  await queueLoadResults(queueState.resultOffset);
+}
+
+/* ---- 键盘快捷键（设计第 6.1 节） ---------------------------------- */
+function isTypingTarget(target) {
+  if (!target || !target.tagName) return false;
+  const tag = String(target.tagName).toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable === true;
+}
+
+function queueVisible() {
+  return document.body.dataset.mode === 'queue';
+}
+
+function queueApplyQuickFilter(kind) {
+  if (!queueState.selectedJobId || !QUEUE_FILTERS[kind]) return;
+  queueFilterState().kind = kind;
+  queueReloadFromFilters();
+}
+
+function queueSetReviewLabel(label) {
+  const select = $('queue-review-label');
+  if (!select || ['approved', 'rejected', 'pending'].indexOf(label) < 0) return;
+  select.value = label;
+  showToast('复核标签已设为 ' + label + '，Ctrl+Enter 提交。', 'info');
+}
+
+function openShortcutsDialog() {
+  const dialog = $('shortcuts-dialog');
+  if (!dialog) return;
+  openOverlay(dialog);
+  const close = $('shortcuts-close');
+  if (close) close.focus();
+  try { localStorage.setItem('ioc-rejudge-shortcuts-seen', '1'); } catch (err) { /* 忽略 */ }
+}
+
+document.addEventListener('keydown', (event) => {
+  const confirmDialogEl = $('confirm-dialog');
+  const shortcutsDialogEl = $('shortcuts-dialog');
+  const confirmOpen = !!confirmDialogEl && !confirmDialogEl.hidden;
+  const shortcutsOpen = !!shortcutsDialogEl && !shortcutsDialogEl.hidden;
+  if (event.key === 'Escape') {
+    if (confirmOpen) {
+      event.preventDefault();
+      resolveConfirm(false);
+      return;
+    }
+    if (shortcutsOpen) {
+      event.preventDefault();
+      closeOverlay(shortcutsDialogEl);
+      return;
+    }
+    if (queueDetailOpen()) {
+      event.preventDefault();
+      closeQueueDetail();
+      return;
+    }
+    if (isTypingTarget(event.target)) event.target.blur();
+    return;
+  }
+  if (confirmOpen) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      resolveConfirm(true);
+    }
+    return;
+  }
+  if (shortcutsOpen) return;
+  if (isTypingTarget(event.target) || event.altKey) return;
+  if (event.ctrlKey || event.metaKey) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      doQueueReview();
+    }
+    return;
+  }
+  if (!queueVisible()) return;
+  const key = event.key;
+  if (key === '/') {
+    event.preventDefault();
+    const input = $('queue-query');
+    if (input) input.focus();
+    return;
+  }
+  if (key === '?') {
+    event.preventDefault();
+    openShortcutsDialog();
+    return;
+  }
+  if (key === '1' || key === '2' || key === '3' || key === '4' || key === '5') {
+    const kinds = { '1': 'all', '2': 'review', '3': 'gray', '4': 'false_positive', '5': 'block' };
+    event.preventDefault();
+    queueApplyQuickFilter(kinds[key]);
+    return;
+  }
+  if (key === 'P' && event.shiftKey) {
+    event.preventDefault();
+    const providerButton = $('queue-filter-provider-issues');
+    if (providerButton) providerButton.click();
+    return;
+  }
+  if (key === 'j' || key === 'ArrowDown') {
+    event.preventDefault();
+    queueDetailNavigate(1);
+    return;
+  }
+  if (key === 'k' || key === 'ArrowUp') {
+    event.preventDefault();
+    queueDetailNavigate(-1);
+    return;
+  }
+  if (key === 'Enter') {
+    if (!queueState.selectedResultId) return;
+    event.preventDefault();
+    doQueueExplain(queueState.selectedResultId, queueRowElement(queueState.selectedResultId));
+    return;
+  }
+  if (key === 'a') { queueSetReviewLabel('approved'); return; }
+  if (key === 'r') { queueSetReviewLabel('rejected'); return; }
+  if (key === 'p') { queueSetReviewLabel('pending'); return; }
+  if (key === 'n') { queuePendingNavigate(1); return; }
+  if (key === 'N') { queuePendingNavigate(-1); return; }
+  if (key === 'e') {
+    event.preventDefault();
+    queueOpenExportMenu(true);
+    return;
+  }
+  if (key === 'd') {
+    event.preventDefault();
+    doQueueDiff();
+  }
+});
+
 function queueSchedulePoll() {
   if (queueState.pollTimer) clearTimeout(queueState.pollTimer);
   const running = (queueState.jobs || []).some((job) => job.state === 'running');
@@ -3816,8 +4330,7 @@ async function doQueueResults(jobId) {
     queueState.selectedResultId = '';
     queueState.selectedResultIds = new Set();
     patchStore({ 'queue.selectedJobId': jobId, 'queue.selectedResultId': '' });
-    $('queue-explain-box').hidden = true;
-    $('queue-diff-result').hidden = true;
+    closeQueueDetail();
     queueState.resultOffset = 0;
     await queueLoadResults(0);
     const selected = (queueState.jobs || []).find((job) => job.job_id === jobId) || null;
@@ -3828,20 +4341,37 @@ async function doQueueResults(jobId) {
   }
 }
 
-async function doQueueExplain(resultId) {
+async function doQueueExplain(resultId, trigger) {
+  clearError();
+  if (!queueState.selectedJobId) {
+    showError('请先打开任务结果。');
+    return;
+  }
+  if (!resultId) {
+    showError('缺少 result_id。');
+    return;
+  }
+  queueState.selectedResultId = resultId;
+  patchStore({ 'queue.selectedResultId': resultId });
+  queueUpdateRowSelection();
+  openQueueDetail('explain', trigger || queueRowElement(resultId));
+  $('queue-selected-result').textContent = resultId;
+  $('queue-detail-title').textContent = resultId;
+  queueUpdateDetailNav();
+  const stateLine = $('queue-explain-state');
+  if (stateLine) {
+    stateLine.hidden = false;
+    stateLine.classList.remove('is-error');
+    stateLine.textContent = '正在加载解释…';
+  }
+  $('queue-explain-viewer').textContent = '';
   try {
-    clearError();
-    if (!queueState.selectedJobId) throw new Error('请先打开任务结果');
-    if (!resultId) throw new Error('缺少 result_id');
-    queueState.selectedResultId = resultId;
-    renderQueueResultRows(queueState.resultRows);
     const data = await api('/api/jobs/explain', {
       job_id: queueState.selectedJobId,
       result_id: resultId,
     });
     const explanation = (data && data.explanation) || data || {};
-    $('queue-explain-box').hidden = false;
-    $('queue-selected-result').textContent = resultId;
+    if (stateLine) stateLine.hidden = true;
     renderJsonlViewer($('queue-explain-viewer'), JSON.stringify(explanation));
     const review = explanation.review && typeof explanation.review === 'object'
       ? explanation.review
@@ -3855,33 +4385,38 @@ async function doQueueExplain(resultId) {
       if (review.reviewer != null) $('queue-review-reviewer').value = String(review.reviewer || '');
     }
   } catch (err) {
-    showError(err && err.message ? err.message : String(err));
+    if (stateLine) {
+      stateLine.hidden = false;
+      stateLine.classList.add('is-error');
+      stateLine.textContent =
+        '解释加载失败：' + (err && err.message ? err.message : String(err)) + '。请重试；继续失败时先查看任务诊断。';
+    }
   }
 }
 
 async function doQueueReview() {
+  const button = $('queue-review-submit');
   try {
     clearError();
-    if (!queueState.selectedJobId) throw new Error('请先打开任务结果');
-    if (!queueState.selectedResultId) throw new Error('请先点击一条结果查看解释');
+    if (!queueState.selectedJobId) throw new Error('请先打开任务结果。');
+    if (!queueState.selectedResultId) throw new Error('请先选择一条结果。');
     const label = ($('queue-review-label').value || '').trim();
-    if (!label) throw new Error('请选择复核标签');
-    const result = await api('/api/jobs/review', {
+    if (['approved', 'rejected', 'pending'].indexOf(label) < 0) {
+      throw new Error('复核标签必须是 approved、rejected 或 pending。');
+    }
+    const result = await withBusy(button, '正在提交…', () => api('/api/jobs/review', {
       job_id: queueState.selectedJobId,
       result_id: queueState.selectedResultId,
       label: label,
       note: $('queue-review-note').value || '',
       reviewer: $('queue-review-reviewer').value || '',
-    });
+    }));
     if (!result || result.ok === false) {
-      throw new Error((result && result.error) || '复核失败');
+      throw new Error((result && result.error) || '复核失败。');
     }
-    const flash = $('queue-review-flash');
-    flash.hidden = false;
-    flash.textContent = '人工复核 overlay 已追加；系统结论未覆盖';
-    setTimeout(() => { flash.hidden = true; }, 2500);
-    await doQueueResults(queueState.selectedJobId);
-    await doQueueExplain(queueState.selectedResultId);
+    showToast('复核已提交，系统结论未覆盖。', 'success');
+    await queueLoadResults(queueState.resultOffset);
+    queueUpdateDetailNav();
   } catch (err) {
     showError(err && err.message ? err.message : String(err));
   }
@@ -3954,6 +4489,8 @@ async function doQueueDiff() {
       '当前 ' + queueState.selectedJobId + ' · baseline ' + baseline +
       (result.skipped ? ' · 跳过 ' + JSON.stringify(result.skipped) : '');
     renderJsonlViewer($('queue-diff-viewer'), JSON.stringify(result.diff || result));
+    $('queue-detail-title').textContent = queueState.selectedJobId + ' ↔ ' + baseline;
+    openQueueDetail('diff');
     showToast('已生成 diff 对比。', 'success');
   } catch (err) {
     showError(err && err.message ? err.message : String(err));
@@ -4090,6 +4627,26 @@ if (queueExportMenuButton) {
 document.addEventListener('click', (event) => {
   if (!event.target.closest || !event.target.closest('.menu-wrap')) queueOpenExportMenu(false);
 });
+
+/* 解释 side panel、批量复核与对话框 */
+const queueDetailClose = $('queue-detail-close');
+if (queueDetailClose) queueDetailClose.addEventListener('click', closeQueueDetail);
+const queueDetailPrev = $('queue-detail-prev');
+if (queueDetailPrev) queueDetailPrev.addEventListener('click', () => queueDetailNavigate(-1));
+const queueDetailNext = $('queue-detail-next');
+if (queueDetailNext) queueDetailNext.addEventListener('click', () => queueDetailNavigate(1));
+document.querySelectorAll('[data-queue-batch-review]').forEach((button) => {
+  button.addEventListener('click', () => doQueueBatchReview(button.getAttribute('data-queue-batch-review')));
+});
+const shortcutsClose = $('shortcuts-close');
+if (shortcutsClose) shortcutsClose.addEventListener('click', () => closeOverlay($('shortcuts-dialog')));
+const confirmCancel = $('confirm-cancel');
+if (confirmCancel) confirmCancel.addEventListener('click', () => resolveConfirm(false));
+const confirmOk = $('confirm-ok');
+if (confirmOk) confirmOk.addEventListener('click', () => resolveConfirm(true));
+bindOverlay($('queue-detail-panel'));
+bindOverlay($('shortcuts-dialog'));
+bindOverlay($('confirm-dialog'));
 
 bindSourceToggle('lookup');
 bindSourceToggle('create');
