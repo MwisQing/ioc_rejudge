@@ -1,0 +1,2751 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IOC share 助手（旧版）</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --ink: #1f2430;
+    --muted: #6b7280;
+    --line: #d9dde3;
+    --accent: #2563eb;
+    --accent-ink: #ffffff;
+    --danger-bg: #fde8e8;
+    --danger-ink: #9f1d1d;
+    --ok: #0f7b4f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px 12px 48px;
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  main { max-width: 1080px; margin: 0 auto; }
+  header { max-width: 980px; margin: 0 auto 16px; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  .statusbar {
+    display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 14px; font-size: 13px; color: var(--muted);
+  }
+  .statusbar b { color: var(--ink); font-weight: 600; }
+  .mode-nav {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;
+  }
+  .mode-nav a {
+    color: var(--accent); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 10px; text-decoration: none; background: var(--card);
+    font-size: 13px;
+  }
+  .mode-nav a:hover, .mode-nav a:focus-visible {
+    border-color: var(--accent); outline: none;
+  }
+  .badge {
+    display: inline-block; padding: 1px 10px; border-radius: 999px;
+    font-size: 12px; border: 1px solid var(--line); color: var(--muted);
+  }
+  body.is-unlocked .badge { color: var(--ok); border-color: var(--ok); }
+  .panel {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px; margin-top: 14px;
+  }
+  .panel h2 { font-size: 16px; margin: 0 0 4px; }
+  .panel .hint { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+  label { display: block; margin: 8px 0 4px; font-size: 13px; }
+  textarea, input[type="text"], input[type="password"] {
+    width: 100%; border: 1px solid var(--line); border-radius: 6px;
+    padding: 8px 10px; font: 13px/1.5 ui-monospace, Consolas, monospace;
+    background: #fbfcfd; color: var(--ink);
+  }
+  textarea { min-height: 120px; resize: vertical; }
+  textarea[readonly] { background: #f2f4f7; }
+  .row { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+  .row label { display: inline-flex; gap: 6px; align-items: center; margin: 0; }
+  button {
+    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
+    border-radius: 6px; padding: 7px 18px; font-size: 14px; cursor: pointer;
+  }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .error {
+    background: var(--danger-bg); color: var(--danger-ink);
+    border: 1px solid #f1b8b8; border-radius: 8px; padding: 10px 14px;
+    margin-top: 16px; white-space: pre-wrap;
+    position: sticky; top: 8px; z-index: 20;
+  }
+  .result { margin-top: 12px; }
+  .result[hidden], .error[hidden], .flash[hidden] { display: none; }
+  .flash { color: var(--ok); font-size: 13px; margin-left: 12px; }
+  .bundle-id {
+    font: 600 15px/1.4 ui-monospace, Consolas, monospace;
+    background: #eef2ff; border: 1px dashed #b6c4f5; border-radius: 6px;
+    padding: 6px 10px; display: inline-block; margin: 4px 0;
+    user-select: all;
+  }
+  .stats { color: var(--muted); font-size: 13px; margin: 6px 0; }
+  .note {
+    background: #fffbeb; border: 1px solid #f2e2ab; color: #7a5b0a;
+    border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-top: 10px;
+  }
+  .actions { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .queue-kpi {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+    gap: 6px; margin: 8px 0 4px;
+  }
+  .queue-kpi .kpi-card {
+    background: #f8fafc; border: 1px solid var(--line); border-radius: 6px;
+    padding: 4px 6px; text-align: center;
+  }
+  .queue-kpi .kpi-card .kpi-label { display: block; color: var(--muted); font-size: 11px; line-height: 1.4; }
+  .queue-kpi .kpi-card .kpi-value { display: block; font-size: 14px; font-weight: 600; color: var(--ink); line-height: 1.3; }
+  .queue-kpi .kpi-card .kpi-detail { display: block; color: var(--danger-ink); font-size: 11px; line-height: 1.3; word-break: break-word; }
+  #queue-panel button {
+    background: transparent; color: var(--accent);
+  }
+  #queue-panel #queue-enqueue {
+    background: var(--accent); color: var(--accent-ink);
+  }
+  .queue-results-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .queue-results-table th, .queue-results-table td {
+    border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top;
+  }
+  .queue-results-table tr.queue-row { cursor: pointer; }
+  .queue-results-table tr.queue-row:hover { background: #f1f5f9; }
+  .queue-results-table tr.queue-row.is-selected { background: #eef2ff; }
+  .queue-row-review { color: var(--muted); font-size: 12px; }
+  .queue-run-log {
+    color: var(--muted); font-size: 11px; margin-top: 4px;
+    white-space: normal; overflow-wrap: anywhere;
+  }
+  .mode-label {
+    display: inline-block; border: 1px solid var(--line); border-radius: 999px;
+    padding: 0 6px; font-size: 11px; color: var(--muted); background: #f8fafc;
+  }
+  #key-panel .note { background: #eff6ff; border-color: #bfd4fb; color: #1e4f9c; }
+  body:not(.is-unlocked) .needs-key { display: none; }
+  ul.bundles { list-style: none; margin: 0; padding: 0; font-size: 13px; color: var(--muted); }
+  ul.bundles li { font-family: ui-monospace, Consolas, monospace; }
+  .json-viewer { margin-top: 8px; }
+  .json-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px; }
+  .json-toolbar button { padding: 4px 12px; font-size: 13px; }
+  .json-card {
+    border: 1px solid var(--line); border-radius: 6px;
+    padding: 8px 10px; margin-top: 8px; background: #fbfcfd;
+  }
+  .json-card-summary { font-weight: 600; font-size: 13px; margin-bottom: 4px; word-break: break-all; }
+  .json-branch { margin-left: 4px; }
+  details.json-branch > summary {
+    cursor: pointer;
+    font: 12px/1.5 ui-monospace, Consolas, monospace;
+    color: var(--ink);
+  }
+  details.json-branch > .json-branch-body {
+    display: block;
+    overflow: hidden;
+    height: auto;
+    transition: height 180ms ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    details.json-branch,
+    details.json-branch > .json-branch-body {
+      transition: none !important;
+      animation: none !important;
+    }
+  }
+  .json-leaf {
+    margin-left: 16px;
+    font: 12px/1.5 ui-monospace, Consolas, monospace;
+    word-break: break-all;
+  }
+  .json-key { color: var(--muted); }
+  .json-string { color: #0f5c2e; }
+  .json-string.truncated { cursor: pointer; text-decoration: underline dotted; }
+  .json-scalar { color: var(--ink); }
+  .json-raw {
+    margin: 4px 0 0; white-space: pre-wrap; word-break: break-all;
+    font: 12px/1.5 ui-monospace, Consolas, monospace; color: var(--danger-ink);
+  }
+  .compact-source { margin-top: 10px; }
+  .compact-source label { color: var(--muted); font-size: 12px; }
+  .compact-source textarea { min-height: 64px; font-size: 12px; }
+  .bundle-meta { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .table-wrap {
+    overflow-x: auto; border: 1px solid var(--line); border-radius: 6px;
+    margin-top: 8px; background: #fbfcfd;
+  }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; }
+  th, td {
+    text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line);
+    font-size: 13px; vertical-align: top; white-space: nowrap;
+  }
+  th { background: #f2f4f7; font-weight: 600; }
+  td.wrap { white-space: normal; word-break: break-word; min-width: 180px; }
+  tbody tr:hover { background: #f7f9fc; cursor: pointer; }
+  .unavailable {
+    background: #fff1f2; border: 1px solid #f4b7bc; color: #991b1b;
+    border-radius: 6px; padding: 8px 10px; margin: 8px 0 0;
+  }
+  .drop-zone {
+    border: 1px dashed #9aa5b1; border-radius: 6px; padding: 12px 14px;
+    margin-top: 8px; background: #fbfcfd; color: var(--muted);
+    text-align: center; cursor: pointer;
+  }
+  .drop-zone.dragover, .drop-zone:focus-visible {
+    border-color: var(--accent); background: #eff6ff; color: var(--accent);
+    outline: none;
+  }
+  .drop-zone[aria-disabled="true"] { cursor: not-allowed; opacity: .6; }
+  .review-grid {
+    display: grid; grid-template-columns: 1fr; gap: 0;
+  }
+  @media (max-width: 719px) {
+    .table-wrap {
+      overflow: visible; border: 0; background: transparent;
+    }
+    table.workbench-results-table {
+      display: block; min-width: 0; width: 100%;
+    }
+    table.workbench-results-table thead {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
+    table.workbench-results-table tbody {
+      display: grid; gap: 10px;
+    }
+    table.workbench-results-table tbody tr {
+      display: block; border: 1px solid var(--line); border-radius: 6px;
+      background: #fbfcfd; padding: 4px 10px;
+    }
+    table.workbench-results-table tbody tr:hover,
+    table.workbench-results-table tbody tr:focus-visible {
+      background: #f0f6ff; outline: 2px solid #9fc2f5; outline-offset: 1px;
+    }
+    table.workbench-results-table tbody td,
+    table.workbench-results-table tbody td.wrap {
+      display: grid; grid-template-columns: minmax(6.5rem, 34%) minmax(0, 1fr);
+      gap: 8px; min-width: 0; padding: 7px 0; border-bottom: 1px solid var(--line);
+      white-space: normal; overflow-wrap: anywhere; word-break: break-word;
+    }
+    table.workbench-results-table tbody td:last-child { border-bottom: 0; }
+    table.workbench-results-table tbody td::before {
+      content: attr(data-label); color: var(--muted); font-size: 12px;
+      font-weight: 600; line-height: 1.4;
+    }
+    table.workbench-results-table tbody td:first-child { font-weight: 600; }
+    table.workbench-results-table tbody td:first-child::after { content: none; }
+    table.workbench-results-table tbody tr td[colspan] {
+      display: block; border-bottom: 0; padding: 12px 0; text-align: center;
+    }
+    table.workbench-results-table tbody tr td[colspan]::before { content: none; }
+  }
+  @media (min-width: 720px) {
+    .review-grid { grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  }
+  @media (max-width: 390px) {
+    body { padding: 12px 8px 32px; }
+    .panel { padding: 12px; }
+    .actions { gap: 6px; }
+    button { padding: 6px 10px; font-size: 13px; }
+    .queue-kpi { grid-template-columns: repeat(3, 1fr); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>IOC share 助手</h1>
+  <div class="statusbar" id="statusbar">
+    <span id="status-key">正在加载…</span>
+    <span class="badge" id="status-unlocked">未解锁</span>
+    <span style="margin-left: auto;"></span>
+    <ul class="bundles" id="status-bundles" title="仅展示最近任务；更早的任务仍保存在本机，粘贴对应云端回复仍可自动还原"></ul>
+    <button class="secondary" type="button" id="lock-btn">清除口令</button>
+    <span class="flash" id="lock-flash" hidden></span>
+  </div>
+  <nav class="mode-nav" aria-label="页面模式">
+    <a href="#queue-panel">队列（任务中心）</a>
+    <a href="#workbench-panel" id="nav-workbench" hidden>研判工作台</a>
+    <a href="#create-panel">脱敏协作</a>
+    <a href="#statusbar">运维状态</a>
+    <button class="secondary" type="button" id="ui-version-toggle">切到新版</button>
+  </nav>
+</header>
+<main>
+  <div class="error" id="error-bar" hidden></div>
+
+  <section class="panel" id="key-panel">
+    <h2>解锁 share key</h2>
+    <p class="hint" id="key-panel-hint">口令可永久保存在本机 key 同目录；下次打开自动解锁。「清除口令」会忘掉本机记住的口令。</p>
+    <div id="key-form">
+      <label for="key-passphrase">key 口令（非空即可）</label>
+      <input type="password" id="key-passphrase" autocomplete="off">
+      <div class="row" style="margin-top: 8px;">
+        <label><input type="checkbox" id="key-generate"> 生成新 key</label>
+        <label><input type="checkbox" id="key-force"> 覆盖已存在的 key 文件</label>
+      </div>
+      <div class="note" id="key-hint" hidden></div>
+      <div class="actions">
+        <button type="button" id="key-btn">解锁 / 创建</button>
+      </div>
+    </div>
+    <div class="note" id="key-unlocked-note" hidden>已用本机记住的口令自动解锁，无需再次输入。</div>
+  </section>
+
+  <section class="panel" id="lookup-panel">
+    <h2>查询 IOC Info</h2>
+    <p class="hint">丢入 IOC（每行一个）或本机文件；默认用 7 天缓存，没有缓存再走 IOC Info 接口。查询结果是明文，发给云端前请先「脱敏并复制」。缺凭据时请用 <code>--credentials-file credentials.local.json</code> 启动，或在本终端设置 <code>IOC_INFO_API_KEY</code>。</p>
+    <div class="note" id="lookup-cred-note" hidden>当前没有 IOC Info 凭据：只能读本机 7 天缓存。请关掉本页，在有 credentials.local.json 的目录用 --credentials-file 重新启动。</div>
+    <div class="row">
+      <label><input type="radio" name="lookup-src" value="paste" checked> 粘贴文本</label>
+      <label><input type="radio" name="lookup-src" value="path"> 本机文件路径</label>
+    </div>
+    <div id="lookup-paste">
+      <label for="lookup-content">IOC 列表（每行一个）</label>
+      <textarea id="lookup-content" placeholder="lookup.example.invalid"></textarea>
+    </div>
+    <div id="lookup-file" hidden>
+      <label for="lookup-path">文件路径</label>
+      <input type="text" id="lookup-path" placeholder="D:\iocs.txt">
+    </div>
+    <div class="actions">
+      <button type="button" id="lookup-btn">查询 IOC Info</button>
+      <span class="flash" id="lookup-flash" hidden></span>
+    </div>
+    <div class="result" id="lookup-result" hidden>
+      <div class="stats" id="lookup-stats"></div>
+      <div class="json-viewer" id="lookup-viewer"></div>
+      <div class="compact-source">
+        <label for="lookup-output">compact JSONL（复制源）</label>
+        <textarea id="lookup-output" readonly></textarea>
+      </div>
+      <div class="actions">
+        <button type="button" id="lookup-sanitize">脱敏并复制</button>
+        <button class="secondary" type="button" id="lookup-copy">复制明文（未脱敏，勿发给云端）</button>
+      </div>
+      <div class="note">「脱敏并复制」需要先解锁 share key；成功后复制一行一个脱敏 JSON，并把结果展示在下方「生成脱敏包」结果区。明文结果勿直接发给云端。</div>
+    </div>
+  </section>
+
+  <section class="panel needs-key" id="create-panel">
+    <h2>生成脱敏包</h2>
+    <p class="hint">粘贴研判结果 JSONL（或填写本机文件路径），生成可发给云端 AI 的脱敏内容并复制到剪贴板。</p>
+    <div class="row">
+      <label><input type="radio" name="create-src" value="paste" checked> 粘贴文本</label>
+      <label><input type="radio" name="create-src" value="path"> 本机文件路径</label>
+    </div>
+    <div id="create-paste">
+      <label for="create-content">JSONL 内容</label>
+      <textarea id="create-content" placeholder='{"ioc": "...", "conclusion": "..."}'></textarea>
+    </div>
+    <div id="create-file" hidden>
+      <label for="create-path">文件路径</label>
+      <input type="text" id="create-path" placeholder="D:\outputs\result.jsonl">
+    </div>
+    <label for="create-names">人员姓名文件路径（可选，自由文本中的姓名需逐行列出）</label>
+    <input type="text" id="create-names" placeholder="D:\names.txt">
+    <div class="actions">
+      <button type="button" id="create-btn">生成脱敏包</button>
+      <span class="flash" id="create-flash" hidden></span>
+    </div>
+    <div class="result" id="create-result" hidden>
+      <div class="stats" id="create-stats"></div>
+      <div class="json-viewer" id="create-viewer"></div>
+      <div class="bundle-meta">bundle_id（连同脱敏内容一并提供给云端 AI）：</div>
+      <div class="bundle-id" id="create-bundle-id"></div>
+      <div class="compact-source">
+        <label for="create-output">compact JSONL（复制源）</label>
+        <textarea id="create-output" readonly></textarea>
+      </div>
+      <div class="actions">
+        <button class="secondary" type="button" id="create-copy">复制脱敏内容</button>
+      </div>
+      <div class="note">发给云端 AI 时请附带要求：返回的每行 JSON 顶层需原样加入上面的 bundle_id；ss1: 开头的 token 保持原样，不要改写、截断或翻译。</div>
+    </div>
+  </section>
+
+  <section class="panel needs-key" id="restore-panel">
+    <h2>还原 AI 返回</h2>
+    <p class="hint">粘贴云端 AI 返回的 JSONL（每行需带 bundle_id），自动匹配本地 bundle 并还原真实值；原样粘回脱敏包内容也可以验证还原。顶部仅展示最近任务，更早任务的清单与还原记录仍保留在本机，只要粘贴对应回复即可再次匹配。</p>
+    <div class="row">
+      <label><input type="radio" name="restore-src" value="paste" checked> 粘贴文本</label>
+      <label><input type="radio" name="restore-src" value="path"> 本机文件路径</label>
+    </div>
+    <div id="restore-paste">
+      <label for="restore-content">AI 返回的 JSONL</label>
+      <textarea id="restore-content" placeholder='{"bundle_id": "...", "ioc": "ss1:...", "proposed_label": "..."}'></textarea>
+    </div>
+    <div id="restore-file" hidden>
+      <label for="restore-path">文件路径</label>
+      <input type="text" id="restore-path" placeholder="D:\cloud-review.jsonl">
+    </div>
+    <div class="actions">
+      <button type="button" id="restore-btn">还原</button>
+      <span class="flash" id="restore-flash" hidden></span>
+    </div>
+    <div class="result" id="restore-result" hidden>
+      <div class="stats" id="restore-stats"></div>
+      <div class="json-viewer" id="restore-viewer"></div>
+      <div class="compact-source">
+        <label for="restore-output">compact JSONL（复制源）</label>
+        <textarea id="restore-output" readonly></textarea>
+      </div>
+      <div class="actions">
+        <button class="secondary" type="button" id="restore-copy">复制还原结果</button>
+      </div>
+      <div class="note">还原结果包含真实 IOC 与真实身份值，只能在本机使用；不要把还原后的内容再发回云端。</div>
+    </div>
+  </section>
+
+  <section class="panel" id="scan-panel">
+    <h2>残留扫描</h2>
+    <p class="hint">对任意 JSONL 做脱敏残留检查；finding_count 应为 0 才可以外发。</p>
+    <div class="row">
+      <label><input type="radio" name="scan-src" value="paste" checked> 粘贴文本</label>
+      <label><input type="radio" name="scan-src" value="path"> 本机文件路径</label>
+    </div>
+    <div id="scan-paste">
+      <label for="scan-content">JSONL 内容</label>
+      <textarea id="scan-content"></textarea>
+    </div>
+    <div id="scan-file" hidden>
+      <label for="scan-path">文件路径</label>
+      <input type="text" id="scan-path">
+    </div>
+    <div class="actions">
+      <button type="button" id="scan-btn">扫描</button>
+    </div>
+    <div class="result" id="scan-result" hidden>
+      <div class="stats" id="scan-stats"></div>
+    </div>
+  </section>
+
+  <section class="panel" id="queue-panel">
+    <h2>统一任务队列（任务中心）</h2>
+    <p class="hint">粘贴裸 IOC 文本入队研判；结果表、解释、导出和对比都在这里查看。清理旧任务按保留策略执行（默认先确认）。不显示本机路径。</p>
+    <label for="queue-paste">粘贴裸 IOC 文本</label>
+    <textarea id="queue-paste" rows="6" placeholder="# 每行一个 IOC；空行与 # 注释会被忽略&#10;alpha.example.invalid&#10;beta.example.invalid"></textarea>
+    <div class="actions" style="margin-top:0.4rem">
+      <label><input type="radio" name="queue-mode" id="queue-mode-offline" value="offline"> 只用本机缓存</label>
+      <label><input type="radio" name="queue-mode" id="queue-mode-online" value="online"> 联网研判</label>
+    </div>
+    <div class="note" id="queue-cred-note">正在判断凭据…</div>
+    <div class="stats" id="queue-enqueue-preview">入队后显示有效 / 重复 / 拒绝计数</div>
+    <div class="actions">
+      <button type="button" id="queue-enqueue">入队</button>
+      <button class="secondary" type="button" id="queue-refresh">刷新列表</button>
+      <button class="secondary" type="button" id="queue-prune">清理旧任务</button>
+      <span class="flash" id="queue-flash" hidden></span>
+    </div>
+    <div class="stats" id="queue-status-line">尚无任务</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>job_id</th>
+            <th>状态</th>
+            <th>结论摘要</th>
+            <th>时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="queue-list"></tbody>
+      </table>
+    </div>
+    <div id="queue-kpi" class="queue-kpi" hidden></div>
+    <div class="result" id="queue-results-box" hidden>
+      <div class="stats" id="queue-results-stats"></div>
+      <div class="actions">
+        <button class="secondary" type="button" id="queue-export-jsonl" data-queue-export="jsonl">导出 JSONL</button>
+        <button class="secondary" type="button" id="queue-export-csv" data-queue-export="csv">导出 CSV</button>
+        <button class="secondary" type="button" id="queue-export-xlsx" data-queue-export="xlsx">导出 XLSX</button>
+        <span class="flash" id="queue-export-flash" hidden></span>
+      </div>
+      <div class="actions">
+        <label for="queue-baseline-job" style="margin:0">baseline job</label>
+        <select id="queue-baseline-job" style="min-width:12rem;max-width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;"></select>
+        <button class="secondary" type="button" id="queue-diff">对比 baseline</button>
+      </div>
+      <div class="result" id="queue-diff-result" hidden>
+        <div class="stats" id="queue-diff-stats"></div>
+        <div class="json-viewer" id="queue-diff-viewer"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="queue-results-table">
+          <thead>
+            <tr>
+              <th>result_id</th>
+              <th>IOC</th>
+              <th>结论</th>
+              <th>人工标签</th>
+            </tr>
+          </thead>
+          <tbody id="queue-results-body"></tbody>
+        </table>
+      </div>
+      <div class="result" id="queue-explain-box" hidden>
+        <h3>解释与复核 <span class="stats" id="queue-selected-result"></span></h3>
+        <div class="json-viewer" id="queue-explain-viewer"></div>
+        <div class="review-grid">
+          <div>
+            <label for="queue-review-label">复核标签</label>
+            <select id="queue-review-label">
+              <option value="approved">approved</option>
+              <option value="rejected">rejected</option>
+              <option value="pending">pending</option>
+            </select>
+          </div>
+          <div>
+            <label for="queue-review-reviewer">复核人</label>
+            <input type="text" id="queue-review-reviewer" autocomplete="off">
+          </div>
+        </div>
+        <label for="queue-review-note">复核备注</label>
+        <textarea id="queue-review-note" rows="2"></textarea>
+        <div class="actions">
+          <button type="button" id="queue-review-submit">提交复核</button>
+          <span class="flash" id="queue-review-flash" hidden></span>
+        </div>
+      </div>
+      <div class="json-viewer" id="queue-results-viewer" hidden></div>
+    </div>
+  </section>
+
+  <section class="panel" id="workbench-panel" hidden>
+    <h2>研判工作台</h2>
+    <p class="hint">导入受控 staging 后启动研判任务；任务、解释、复核和导出由本机后端 adapter 提供。后端能力未合并时，页面会明确显示 unavailable，不会伪造成功。</p>
+    <div class="unavailable" id="workbench-status" hidden></div>
+
+    <label for="workbench-paste">粘贴裸 IOC 文本</label>
+    <textarea id="workbench-paste" rows="6" placeholder="# 每行一个 IOC；空行与 # 注释会被忽略&#10;alpha.example.invalid&#10;10.0.0.1"></textarea>
+    <div class="stats" id="workbench-paste-preview">粘贴后可预览有效 / 重复 / 拒绝计数</div>
+    <div class="actions">
+      <button type="button" id="workbench-paste-import">解析并入队预览</button>
+      <button type="button" id="workbench-paste-start" disabled>一键入队研判</button>
+    </div>
+
+    <label for="workbench-file">研判输入 JSONL</label>
+    <input type="file" id="workbench-file" accept=".jsonl,.json,application/json,text/plain">
+    <div class="drop-zone" id="workbench-drop-zone" role="button" tabindex="0" aria-describedby="workbench-file-status">
+      拖入单个 JSONL 文件，或点击这里选择文件
+    </div>
+    <div class="stats" id="workbench-file-status">未选择文件</div>
+    <div class="actions">
+      <button type="button" id="workbench-import">导入 staging</button>
+      <button class="secondary" type="button" id="workbench-start" disabled>启动任务</button>
+      <button class="secondary" type="button" id="workbench-refresh" disabled>刷新状态</button>
+      <button class="secondary" type="button" id="workbench-cancel" disabled>取消任务</button>
+    </div>
+
+    <div class="result" id="workbench-task-result" hidden>
+      <div class="stats" id="workbench-task-stats"></div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="workbench-dispositions">结论筛选（逗号分隔，可空）</label>
+        <input type="text" id="workbench-dispositions" placeholder="block,review,gray,false_positive">
+      </div>
+      <div>
+        <label for="workbench-query">关键字</label>
+        <input type="text" id="workbench-query" placeholder="IOC / 证据关键字">
+      </div>
+    </div>
+    <div class="actions" id="workbench-quick-filters" aria-label="快捷筛选">
+      <span class="stats">快捷筛选</span>
+      <button class="secondary" type="button" id="workbench-filter-all" data-workbench-disposition="" aria-pressed="false">全部</button>
+      <button class="secondary" type="button" id="workbench-filter-block" data-workbench-disposition="block" aria-pressed="false">黑</button>
+      <button class="secondary" type="button" id="workbench-filter-review" data-workbench-disposition="review" aria-pressed="false">待复核</button>
+      <button class="secondary" type="button" id="workbench-filter-gray" data-workbench-disposition="gray" aria-pressed="false">灰</button>
+      <button class="secondary" type="button" id="workbench-filter-false-positive" data-workbench-disposition="false_positive" aria-pressed="false">误报</button>
+      <button class="secondary" type="button" id="workbench-filter-provider-issues" disabled aria-pressed="false" aria-describedby="workbench-provider-filter-status">Provider 异常</button>
+    </div>
+    <div class="actions">
+      <button class="secondary" type="button" id="workbench-results" disabled>加载结果</button>
+      <button class="secondary" type="button" id="workbench-prev-page" disabled>上一页</button>
+      <span class="stats" id="workbench-page-status">第 0 / 0 页 · 共 0 行</span>
+      <button class="secondary" type="button" id="workbench-next-page" disabled>下一页</button>
+      <button class="secondary" type="button" id="workbench-diagnostics" disabled>查看诊断</button>
+      <button class="secondary" type="button" id="workbench-summary" disabled>运行摘要</button>
+      <label for="workbench-export-format">导出格式</label>
+      <select id="workbench-export-format">
+        <option value="jsonl">JSONL</option>
+        <option value="csv">CSV</option>
+        <option value="xlsx">Excel (.xlsx)</option>
+        <option value="diagnostics">诊断</option>
+        <option value="diff">Diff</option>
+        <option value="bundle">Bundle</option>
+      </select>
+      <button class="secondary" type="button" id="workbench-export" disabled>导出</button>
+      <span class="flash" id="workbench-export-flash" hidden></span>
+    </div>
+    <div class="stats" id="workbench-export-preview">当前筛选预计导出 0 行</div>
+
+    <div class="result" id="workbench-diagnostics-result" hidden>
+      <div class="stats" id="workbench-diagnostics-stats"></div>
+      <div class="json-viewer" id="workbench-diagnostics-viewer"></div>
+    </div>
+
+    <div class="result" id="workbench-summary-result" hidden>
+      <div class="stats" id="workbench-summary-stats"></div>
+      <div class="json-viewer" id="workbench-summary-viewer"></div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="workbench-baseline-task">baseline task_id（可选）</label>
+        <input type="text" id="workbench-baseline-task" placeholder="task-…">
+      </div>
+      <div class="actions">
+        <button class="secondary" type="button" id="workbench-diff" disabled>对比 baseline</button>
+      </div>
+    </div>
+    <div class="stats" id="workbench-provider-filter-status">Provider 异常筛选会匹配 error、disabled、failed、timeout 和缺失必要来源；no_data 不视为失败。</div>
+    <div class="result" id="workbench-diff-result" hidden>
+      <div class="stats" id="workbench-diff-stats"></div>
+      <div class="json-viewer" id="workbench-diff-viewer"></div>
+    </div>
+
+    <div class="result" id="workbench-results-result" hidden>
+      <div class="stats" id="workbench-results-stats"></div>
+      <div class="table-wrap">
+        <table class="workbench-results-table" aria-live="polite">
+          <thead><tr><th>result_id</th><th>IOC</th><th>结论 / 处置</th><th>route</th><th>复核建议</th><th>置信度</th><th>缺失来源</th><th>provider 状态</th><th>保留 URL</th><th>摘要</th></tr></thead>
+          <tbody id="workbench-results-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="actions" id="workbench-detail-navigation">
+      <button class="secondary" type="button" id="workbench-prev-result" disabled>上一条</button>
+      <span class="stats" id="workbench-detail-nav-status">未选择结果</span>
+      <button class="secondary" type="button" id="workbench-next-result" disabled>下一条</button>
+    </div>
+
+    <div class="result" id="workbench-detail-result" hidden>
+      <h3>解释详情 <span class="stats" id="workbench-selected-result"></span></h3>
+      <div class="json-viewer" id="workbench-detail-viewer"></div>
+      <div class="review-grid">
+        <div>
+          <label for="workbench-decision">复核结论</label>
+          <select id="workbench-decision">
+            <option value="approved">approved</option>
+            <option value="rejected">rejected</option>
+            <option value="pending">pending</option>
+          </select>
+        </div>
+        <div>
+          <label for="workbench-reviewer">复核人</label>
+          <input type="text" id="workbench-reviewer" autocomplete="off">
+        </div>
+      </div>
+      <label for="workbench-reason">复核理由</label>
+      <textarea id="workbench-reason" rows="3"></textarea>
+      <div class="actions">
+        <button type="button" id="workbench-review" disabled>提交复核</button>
+        <span class="flash" id="workbench-flash" hidden></span>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+'use strict';
+/* Version switch: on a bare URL (no explicit ui param) honor the remembered
+   version; an explicit ui param always wins and never redirects. */
+(function bootstrapUiVersion() {
+  const UI_VERSION_KEY = 'ioc-rejudge-ui-version';
+  const params = new URLSearchParams(location.search);
+  if (params.has('ui')) return;
+  let stored = 'new';
+  try { stored = localStorage.getItem(UI_VERSION_KEY) || 'new'; } catch (err) { stored = 'new'; }
+  if (stored !== 'legacy' && stored !== 'new') stored = 'new';
+  if (stored === 'new') return;
+  const target = new URL(location.href);
+  target.searchParams.set('ui', stored);
+  history.replaceState(null, '', target.toString());
+  location.replace(target.toString());
+})();
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+const $ = (id) => document.getElementById(id);
+const LONG_STRING = 160;
+const WORKBENCH_RENDER_CHUNK_SIZE = 24;
+let keyExists = null;
+const workbenchState = {
+  configured: true,
+  backendAvailable: true,
+  importId: '',
+  importMeta: null,
+  taskId: '',
+  task: null,
+  selectedResultId: '',
+  resultRows: [],
+  resultTotal: 0,
+  resultOffset: 0,
+  resultLimit: 100,
+  resultsLoaded: false,
+  providerIssues: false,
+  pollTimer: null,
+  refreshInFlight: false,
+  selectedFile: null,
+  renderVersion: 0,
+  capabilities: {
+    diagnostics: true,
+    summary: true,
+    diff: true,
+    bundle: true,
+  },
+};
+
+const queueState = {
+  jobs: [],
+  pollTimer: null,
+  refreshInFlight: false,
+  selectedJobId: '',
+  selectedResultId: '',
+  resultRows: [],
+  iocInfoEnabled: false,
+};
+
+const WORKBENCH_STATE_LABELS = {
+  queued: '排队中',
+  pending: '等待中',
+  running: '运行中',
+  succeeded: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+  cancelling: '正在取消',
+};
+
+function withSessionToken(path) {
+  const sep = path.indexOf('?') >= 0 ? '&' : '?';
+  return path + sep + 'token=' + encodeURIComponent(TOKEN);
+}
+
+async function api(path, payload, timeoutMs) {
+  const limit = timeoutMs == null ? 45000 : timeoutMs;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), limit);
+  let response;
+  try {
+    response = await fetch(withSessionToken(path), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload || {}),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+      throw new Error('查询超时（' + Math.round(limit / 1000) + ' 秒）。请到启动 UI 的黑色窗口按 Ctrl+C 停掉再重新运行，不要只刷新网页。');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+  let data = null;
+  try { data = await response.json(); } catch (err) { data = null; }
+  if (!response.ok) {
+    if (response.status === 403) {
+      throw new Error('会话令牌无效或请求被拒绝：请从启动命令打印的 URL 重新打开本页面。');
+    }
+    const err = new Error(data && data.error ? data.error : ('HTTP ' + response.status));
+    err.status = response.status;
+    err.unavailable = response.status === 501;
+    throw err;
+  }
+  return data;
+}
+
+async function apiGet(path, timeoutMs) {
+  const limit = timeoutMs == null ? 45000 : timeoutMs;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), limit);
+  let response;
+  try {
+    response = await fetch(withSessionToken(path), {
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+      throw new Error('查询超时（' + Math.round(limit / 1000) + ' 秒）');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+  let data = null;
+  try { data = await response.json(); } catch (err) { data = null; }
+  if (!response.ok) {
+    if (response.status === 403) {
+      throw new Error('会话令牌无效或请求被拒绝：请从启动命令打印的 URL 重新打开本页面。');
+    }
+    const err = new Error(data && data.error ? data.error : ('HTTP ' + response.status));
+    err.status = response.status;
+    err.unavailable = response.status === 501;
+    throw err;
+  }
+  return data;
+}
+
+function showError(message) {
+  const bar = $('error-bar');
+  bar.textContent = message;
+  bar.hidden = false;
+  if (bar.scrollIntoView) bar.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+function clearError() { $('error-bar').hidden = true; }
+async function withBusy(button, busyText, work) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = busyText;
+  try { return await work(); }
+  finally { button.disabled = false; button.textContent = original; }
+}
+function flash(id, message) {
+  const el = $(id); el.textContent = message; el.hidden = false;
+  setTimeout(() => { el.hidden = true; }, 5000);
+}
+
+function workbenchStateLabel(state) {
+  return WORKBENCH_STATE_LABELS[state] || (state ? String(state) : '未知');
+}
+
+function workbenchSetAvailability(configured, backendAvailable) {
+  workbenchState.configured = configured !== false;
+  workbenchState.backendAvailable = backendAvailable !== false;
+  const status = $('workbench-status');
+  if (!workbenchState.configured) {
+    status.textContent = '研判工作台未配置：当前页面不会伪造任务、结果或导出成功。';
+    status.hidden = false;
+  } else if (!workbenchState.backendAvailable) {
+    status.textContent = '研判后端不可用：当前最多只能尝试导入 staging，任务、结果、复核和导出不会显示成功状态。';
+    status.hidden = false;
+  } else {
+    status.textContent = '';
+    status.hidden = true;
+  }
+  workbenchSyncControls();
+}
+
+function workbenchMarkCapabilityUnavailable(capability, message) {
+  if (Object.prototype.hasOwnProperty.call(workbenchState.capabilities, capability)) {
+    workbenchState.capabilities[capability] = false;
+  }
+  const text = (capability || 'workbench') + ' unavailable' + (message ? ': ' + message : '');
+  if (capability === 'diagnostics') {
+    $('workbench-diagnostics-stats').textContent = text;
+    $('workbench-diagnostics-result').hidden = false;
+  } else if (capability === 'summary') {
+    $('workbench-summary-stats').textContent = text;
+    $('workbench-summary-result').hidden = false;
+  } else if (capability === 'diff') {
+    $('workbench-diff-stats').textContent = text;
+    $('workbench-diff-result').hidden = false;
+  } else {
+    flash('workbench-export-flash', text);
+  }
+  workbenchSyncControls();
+}
+
+function workbenchError(err, capability) {
+  showError(err && err.message ? err.message : String(err));
+  const unavailable = err && (err.unavailable || err.status === 404);
+  if (unavailable && capability) {
+    workbenchMarkCapabilityUnavailable(capability, err.message);
+  } else if (unavailable) {
+    workbenchSetAvailability(workbenchState.configured, false);
+  }
+}
+
+function workbenchSyncQuickFilter() {
+  const raw = ($('workbench-dispositions').value || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const selected = raw.length === 1 ? raw[0] : null;
+  document.querySelectorAll('[data-workbench-disposition]').forEach((button) => {
+    button.setAttribute(
+      'aria-pressed',
+      button.dataset.workbenchDisposition === (selected || '') ? 'true' : 'false'
+    );
+  });
+  $('workbench-filter-provider-issues').setAttribute(
+    'aria-pressed', workbenchState.providerIssues ? 'true' : 'false'
+  );
+}
+
+function workbenchSafeSummary(value, key) {
+  if (key && /(?:path|secret|token|password|credential|authorization|api[_-]?key)/i.test(key)) {
+    return '[redacted]';
+  }
+  if (Array.isArray(value)) return value.map((item) => workbenchSafeSummary(item));
+  if (value && typeof value === 'object') {
+    const safe = {};
+    Object.keys(value).forEach((childKey) => {
+      safe[childKey] = workbenchSafeSummary(value[childKey], childKey);
+    });
+    return safe;
+  }
+  if (typeof value === 'string' && (/^[A-Za-z]:[\\/]/.test(value) || value.startsWith('/'))) {
+    return '[path redacted]';
+  }
+  return value;
+}
+
+function workbenchUpdateExportPreview() {
+  const format = $('workbench-export-format').value;
+  const baseline = $('workbench-baseline-task').value.trim();
+  const filterText = [];
+  const filters = workbenchFilters();
+  if (filters.dispositions) filterText.push('处置 ' + filters.dispositions.join(', '));
+  if (filters.query) filterText.push('关键字 ' + filters.query);
+  if (filters.provider_issues) filterText.push('Provider 异常/缺失');
+  const count = workbenchState.resultsLoaded
+    ? workbenchState.resultTotal
+    : '未知（请先加载结果）';
+  let text = '当前筛选预计导出 ' + count + ' · 格式 ' + format;
+  text += filterText.length ? ' · ' + filterText.join(' · ') : ' · 未筛选';
+  if (['diff', 'bundle'].includes(format)) {
+    text += baseline ? ' · baseline ' + baseline : ' · 需要 baseline task_id';
+  }
+  $('workbench-export-preview').textContent = text;
+}
+
+function workbenchSyncControls() {
+  const taskState = workbenchState.task && workbenchState.task.state;
+  const taskActive = ['queued', 'pending', 'running', 'cancelling'].includes(taskState);
+  const taskReady = taskState === 'succeeded';
+  const taskCapable = workbenchState.configured && workbenchState.backendAvailable;
+  const pageLimit = workbenchState.resultLimit > 0 ? workbenchState.resultLimit : 100;
+  const hasMoreBefore = workbenchState.resultOffset > 0;
+  const hasMoreAfter = workbenchState.resultOffset + workbenchState.resultRows.length < workbenchState.resultTotal;
+  const selectedIndex = workbenchState.resultRows.findIndex(
+    (row) => workbenchCell(row.result_id) === workbenchState.selectedResultId
+  );
+  const currentPage = workbenchState.resultTotal
+    ? Math.floor(workbenchState.resultOffset / pageLimit) + 1
+    : 0;
+  const totalPages = workbenchState.resultTotal
+    ? Math.ceil(workbenchState.resultTotal / pageLimit)
+    : 0;
+  $('workbench-import').disabled = !workbenchState.configured;
+  if ($('workbench-paste-import')) {
+    $('workbench-paste-import').disabled = !workbenchState.configured;
+  }
+  if ($('workbench-paste-start')) {
+    $('workbench-paste-start').disabled =
+      !taskCapable || !workbenchState.importId || !!workbenchState.taskId;
+  }
+  $('workbench-start').disabled = !taskCapable || !workbenchState.importId || !!workbenchState.taskId;
+  $('workbench-refresh').disabled = !taskCapable || !workbenchState.taskId;
+  $('workbench-cancel').disabled = !taskCapable || !workbenchState.taskId || !taskActive;
+  $('workbench-results').disabled = !taskCapable || !workbenchState.taskId || !taskReady;
+  $('workbench-prev-page').disabled = !taskCapable || !workbenchState.taskId || !taskReady || !hasMoreBefore;
+  $('workbench-next-page').disabled = !taskCapable || !workbenchState.taskId || !taskReady || !hasMoreAfter;
+  document.querySelectorAll('[data-workbench-disposition]').forEach((button) => {
+    button.disabled = !taskCapable || !workbenchState.taskId || !taskReady;
+  });
+  $('workbench-filter-provider-issues').disabled =
+    !taskCapable || !workbenchState.taskId || !taskReady;
+  $('workbench-diagnostics').disabled = !taskCapable || !workbenchState.taskId;
+  $('workbench-summary').disabled = !taskCapable || !workbenchState.taskId;
+  $('workbench-diagnostics').disabled = $('workbench-diagnostics').disabled || !workbenchState.capabilities.diagnostics;
+  $('workbench-summary').disabled = $('workbench-summary').disabled || !workbenchState.capabilities.summary;
+  document.querySelectorAll('#workbench-export-format option').forEach((option) => {
+    option.disabled = Object.prototype.hasOwnProperty.call(workbenchState.capabilities, option.value)
+      && !workbenchState.capabilities[option.value];
+  });
+  $('workbench-export-format').disabled = !taskCapable || !workbenchState.taskId || !taskReady;
+  const exportFormat = $('workbench-export-format').value;
+  const needsBaseline = ['diff', 'bundle'].includes(exportFormat);
+  const baselineReady = !needsBaseline || !!$('workbench-baseline-task').value.trim();
+  const exportCapabilityReady = !Object.prototype.hasOwnProperty.call(workbenchState.capabilities, exportFormat)
+    || workbenchState.capabilities[exportFormat];
+  $('workbench-export').disabled = !taskCapable || !workbenchState.taskId || !taskReady
+    || !baselineReady || !exportCapabilityReady;
+  $('workbench-drop-zone').setAttribute('aria-disabled', workbenchState.configured ? 'false' : 'true');
+  $('workbench-diff').disabled = !taskCapable || !workbenchState.taskId || !taskReady
+    || !workbenchState.capabilities.diff || !$('workbench-baseline-task').value.trim();
+  $('workbench-review').disabled = !taskCapable || !workbenchState.taskId || !taskReady || !workbenchState.selectedResultId;
+  $('workbench-prev-result').disabled = !taskCapable || !taskReady || selectedIndex <= 0;
+  $('workbench-next-result').disabled = !taskCapable || !taskReady || selectedIndex < 0 || selectedIndex >= workbenchState.resultRows.length - 1;
+  $('workbench-page-status').textContent =
+    '第 ' + currentPage + ' / ' + totalPages + ' 页 · 共 ' + workbenchState.resultTotal + ' 行';
+  $('workbench-detail-nav-status').textContent = selectedIndex < 0
+    ? '未选择结果'
+    : '当前第 ' + (selectedIndex + 1) + ' / ' + workbenchState.resultRows.length + ' 条';
+  workbenchSyncQuickFilter();
+  workbenchUpdateExportPreview();
+}
+
+function workbenchFilters() {
+  const raw = $('workbench-dispositions').value || '';
+  const dispositions = [...new Set(
+    raw.split(',').map((value) => value.trim()).filter(Boolean)
+  )];
+  const query = ($('workbench-query').value || '').trim();
+  const payload = {};
+  if (dispositions.length) payload.dispositions = dispositions;
+  if (query) payload.query = query;
+  if (workbenchState.providerIssues) payload.provider_issues = true;
+  return payload;
+}
+
+function workbenchSetTask(task) {
+  workbenchState.task = task || null;
+  const state = task && task.state ? task.state : '';
+  const parts = [];
+  if (task && task.task_id) parts.push('task_id ' + task.task_id);
+  if (task && task.import_id) parts.push('import_id ' + task.import_id);
+  parts.push('状态 ' + workbenchStateLabel(state));
+  if (task && task.mode) parts.push('模式 ' + task.mode);
+  if (task && task.result_count != null) parts.push('结果 ' + task.result_count + ' 行');
+  if (task && task.progress && task.progress.phase) {
+    const completed = task.progress.completed == null ? 0 : task.progress.completed;
+    const total = task.progress.total == null ? '?' : task.progress.total;
+    parts.push('阶段 ' + task.progress.phase + ' ' + completed + '/' + total);
+  }
+  if (task && task.error) parts.push('错误 ' + task.error);
+  $('workbench-task-stats').textContent = parts.join(' · ');
+  $('workbench-task-result').hidden = !task;
+  workbenchSyncControls();
+}
+
+function workbenchShowImport(meta) {
+  const parts = [
+    '已导入 ' + (meta.filename || 'input.jsonl'),
+    'import_id ' + meta.import_id,
+    '大小 ' + meta.size + ' bytes',
+    '行数 ' + meta.rows,
+  ];
+  if (meta.input_kind) parts.push('形态 ' + meta.input_kind);
+  if (meta.input_kind === 'bare' || meta.valid != null) {
+    parts.push(
+      '有效 ' + (meta.valid != null ? meta.valid : meta.rows),
+      '重复 ' + (meta.duplicated != null ? meta.duplicated : 0),
+      '拒绝 ' + (meta.rejected != null ? meta.rejected : 0)
+    );
+  }
+  $('workbench-task-stats').textContent = parts.join(' · ');
+  $('workbench-task-result').hidden = false;
+  workbenchUpdatePastePreview(meta);
+}
+
+function workbenchUpdatePastePreview(meta) {
+  const preview = $('workbench-paste-preview');
+  if (!preview) return;
+  if (!meta) {
+    preview.textContent = '粘贴后可预览有效 / 重复 / 拒绝计数';
+    return;
+  }
+  const parts = [
+    '形态 ' + (meta.input_kind || 'jsonl'),
+    '有效 ' + (meta.valid != null ? meta.valid : meta.rows || 0),
+    '重复 ' + (meta.duplicated != null ? meta.duplicated : 0),
+    '拒绝 ' + (meta.rejected != null ? meta.rejected : 0),
+  ];
+  if (meta.import_id) parts.unshift('import_id ' + meta.import_id);
+  if (Array.isArray(meta.errors) && meta.errors.length) {
+    parts.push('样例错误 ' + meta.errors.slice(0, 3).join('；'));
+  }
+  preview.textContent = parts.join(' · ');
+}
+
+function workbenchCell(value) {
+  if (value == null) return '';
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value); } catch (err) { return String(value); }
+  }
+  return String(value);
+}
+
+function workbenchCompact(value, maxLength) {
+  const limit = maxLength || 180;
+  const text = workbenchCell(value);
+  return text.length > limit ? text.slice(0, limit - 1) + '…' : text;
+}
+
+function workbenchListSummary(value, maxItems, maxLength) {
+  if (!Array.isArray(value)) return workbenchCompact(value, maxLength);
+  const itemLimit = maxItems || 4;
+  const shown = value.slice(0, itemLimit).map((item) => workbenchCompact(item, 100));
+  if (value.length > itemLimit) shown.push('+' + (value.length - itemLimit) + ' 项');
+  return workbenchCompact(shown.join(' · '), maxLength || 180);
+}
+
+function workbenchProviderSummary(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return workbenchCompact(value, 180);
+  }
+  const entries = Object.keys(value).map((name) => name + ':' + workbenchCompact(value[name], 48));
+  return workbenchCompact(entries.join(' · '), 220);
+}
+
+function scheduleWorkbenchRender(callback) {
+  if (typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(callback);
+  } else {
+    window.setTimeout(callback, 0);
+  }
+}
+
+function createWorkbenchResultRow(row) {
+  const resultId = workbenchCell(row.result_id);
+  const tr = document.createElement('tr');
+  tr.dataset.resultId = resultId;
+  tr.tabIndex = 0;
+  tr.setAttribute('aria-label', '查看 ' + resultId + ' 的解释');
+  const conclusion = [row.conclusion, row.disposition].filter((value) => value != null && value !== '').join(' / ');
+  const cells = [
+    {label: 'result_id', value: resultId},
+    {label: 'IOC', value: row.ioc},
+    {label: '结论 / 处置', value: conclusion},
+    {label: 'route', value: row.route},
+    {label: '复核建议', value: row.review_suggestion},
+    {label: '置信度', value: row.confidence},
+    {label: '缺失来源', value: workbenchListSummary(row.missing_required_providers), wrap: true},
+    {label: 'provider 状态', value: workbenchProviderSummary(row.provider_statuses), wrap: true},
+    {label: '保留 URL', value: workbenchListSummary(row.retained_urls), wrap: true},
+    {label: '摘要', value: workbenchCompact(row.reason || row.summary, 220), wrap: true},
+  ];
+  cells.forEach((item) => {
+    const td = document.createElement('td');
+    if (item.wrap) td.className = 'wrap';
+    td.dataset.label = item.label;
+    td.textContent = workbenchCell(item.value);
+    tr.appendChild(td);
+  });
+  const select = () => loadWorkbenchExplanation(resultId);
+  tr.addEventListener('click', select);
+  tr.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      select();
+    }
+  });
+  return tr;
+}
+
+function renderWorkbenchRows(rows) {
+  const body = $('workbench-results-body');
+  const renderToken = ++workbenchState.renderVersion;
+  const source = Array.isArray(rows) ? rows.slice() : [];
+  body.replaceChildren();
+  body.setAttribute('aria-busy', 'true');
+  if (!source.length) {
+    const empty = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 10;
+    cell.textContent = '当前筛选没有结果';
+    empty.appendChild(cell);
+    body.appendChild(empty);
+    body.setAttribute('aria-busy', 'false');
+    return Promise.resolve(renderToken);
+  }
+  let cursor = 0;
+  return new Promise((resolve) => {
+    const appendChunk = () => {
+      if (renderToken !== workbenchState.renderVersion) {
+        resolve(renderToken);
+        return;
+      }
+      const fragment = document.createDocumentFragment();
+      const end = Math.min(cursor + WORKBENCH_RENDER_CHUNK_SIZE, source.length);
+      for (; cursor < end; cursor += 1) {
+        fragment.appendChild(createWorkbenchResultRow(source[cursor]));
+      }
+      body.appendChild(fragment);
+      if (cursor < source.length) {
+        scheduleWorkbenchRender(appendChunk);
+      } else {
+        body.setAttribute('aria-busy', 'false');
+        resolve(renderToken);
+      }
+    };
+    appendChunk();
+  });
+}
+
+async function copyText(text, textarea, flashId, message) {
+  try {
+    await navigator.clipboard.writeText(text);
+    flash(flashId, message || '已复制到剪贴板');
+  } catch (err) {
+    textarea.focus();
+    textarea.select();
+    flash(flashId, '剪贴板不可用：已全选输出，请按 Ctrl+C 复制');
+  }
+}
+
+function collectInput(prefix) {
+  const mode = document.querySelector('input[name="' + prefix + '-src"]:checked').value;
+  if (mode === 'path') {
+    const value = $(prefix + '-path').value.trim();
+    if (!value) throw new Error('请填写文件路径');
+    return {input_path: value};
+  }
+  const value = $(prefix + '-content').value;
+  if (!value.trim()) {
+    throw new Error(
+      prefix === 'lookup' ? '请先粘贴 IOC（每行一个）' : '请先粘贴 JSONL 内容'
+    );
+  }
+  return {content: value};
+}
+
+function bindSourceToggle(prefix) {
+  document.querySelectorAll('input[name="' + prefix + '-src"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      const mode = document.querySelector('input[name="' + prefix + '-src"]:checked').value;
+      $(prefix + '-paste').hidden = mode !== 'paste';
+      $(prefix + '-file').hidden = mode !== 'path';
+    });
+  });
+}
+
+function parseJsonl(text) {
+  const items = [];
+  String(text || '').split(/\r?\n/).forEach((line) => {
+    if (!line.trim()) return;
+    try {
+      items.push({ ok: true, value: JSON.parse(line) });
+    } catch (err) {
+      items.push({ ok: false, raw: line });
+    }
+  });
+  return items;
+}
+
+function cardSummary(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const parts = [];
+    if (value.ioc != null) parts.push('ioc: ' + String(value.ioc));
+    if (value.status != null) parts.push('status: ' + String(value.status));
+    if (value.source != null) parts.push('source: ' + String(value.source));
+    return parts.length ? parts.join(' · ') : 'object';
+  }
+  if (Array.isArray(value)) return 'array[' + value.length + ']';
+  return String(value);
+}
+
+function renderScalar(value) {
+  const span = document.createElement('span');
+  if (typeof value === 'string') {
+    span.className = 'json-string';
+    if (value.length > LONG_STRING) {
+      const short = value.slice(0, LONG_STRING);
+      span.classList.add('truncated');
+      span.title = '点击展开全文';
+      span.textContent = JSON.stringify(short) + '…';
+      span.addEventListener('click', () => {
+        if (span.classList.contains('truncated')) {
+          span.classList.remove('truncated');
+          span.textContent = JSON.stringify(value);
+          span.title = '点击重新截断';
+        } else {
+          span.classList.add('truncated');
+          span.textContent = JSON.stringify(short) + '…';
+          span.title = '点击展开全文';
+        }
+      });
+    } else {
+      span.textContent = JSON.stringify(value);
+    }
+    return span;
+  }
+  span.className = 'json-scalar';
+  if (value === null) span.textContent = 'null';
+  else if (typeof value === 'boolean') span.textContent = value ? 'true' : 'false';
+  else span.textContent = String(value);
+  return span;
+}
+
+const JSON_COLLAPSED_KEYS = new Set([
+  'job_id',
+  'result_id',
+  'evidence_fingerprint',
+]);
+
+function renderTree(value, key, collapsed) {
+  const wrap = document.createElement('div');
+  wrap.className = 'json-node';
+  if (key != null && JSON_COLLAPSED_KEYS.has(String(key))) {
+    const details = document.createElement('details');
+    details.className = 'json-branch';
+    details.open = false;
+    const summary = document.createElement('summary');
+    summary.textContent = String(key) + '（已收起）';
+    const body = document.createElement('div');
+    body.className = 'json-branch-body';
+    body.appendChild(renderTree(value, null, false));
+    details.appendChild(summary);
+    details.appendChild(body);
+    wrap.appendChild(details);
+    return wrap;
+  }
+  if (value !== null && typeof value === 'object') {
+    const details = document.createElement('details');
+    details.className = 'json-branch';
+    details.open = !collapsed;
+    const summary = document.createElement('summary');
+    const prefix = key != null ? (key + ': ') : '';
+    if (Array.isArray(value)) {
+      summary.textContent = prefix + 'Array(' + value.length + ')';
+      const body = document.createElement('div');
+      body.className = 'json-branch-body';
+      value.forEach((item, index) => {
+        body.appendChild(renderTree(item, String(index), collapsed));
+      });
+      details.appendChild(summary);
+      details.appendChild(body);
+    } else {
+      const keys = Object.keys(value);
+      summary.textContent = prefix + 'Object{' + keys.length + '}';
+      const body = document.createElement('div');
+      body.className = 'json-branch-body';
+      keys.forEach((childKey) => {
+        body.appendChild(renderTree(value[childKey], childKey, collapsed));
+      });
+      details.appendChild(summary);
+      details.appendChild(body);
+    }
+    wrap.appendChild(details);
+    return wrap;
+  }
+  const row = document.createElement('div');
+  row.className = 'json-leaf';
+  if (key != null) {
+    const keyEl = document.createElement('span');
+    keyEl.className = 'json-key';
+    keyEl.textContent = key + ': ';
+    row.appendChild(keyEl);
+  }
+  row.appendChild(renderScalar(value));
+  wrap.appendChild(row);
+  return wrap;
+}
+
+function setAllOpen(container, open) {
+  container.querySelectorAll('details.json-branch').forEach((el) => {
+    el.open = open;
+  });
+}
+
+function renderJsonlViewer(container, text) {
+  container.textContent = '';
+  const toolbar = document.createElement('div');
+  toolbar.className = 'json-toolbar';
+  const expandBtn = document.createElement('button');
+  expandBtn.type = 'button';
+  expandBtn.className = 'secondary json-toggle';
+  const cardsHost = document.createElement('div');
+  cardsHost.className = 'json-cards';
+  const updateJsonToggle = () => {
+    const branches = cardsHost.querySelectorAll('details.json-branch');
+    expandBtn.textContent = branches.length && !Array.from(branches).some((el) => !el.open)
+      ? '全部收起'
+      : '全部展开';
+  };
+  expandBtn.addEventListener('click', () => {
+    const shouldOpen = Array.from(cardsHost.querySelectorAll('details.json-branch')).some((el) => !el.open);
+    setAllOpen(cardsHost, shouldOpen);
+    updateJsonToggle();
+  });
+  cardsHost.addEventListener('toggle', updateJsonToggle, true);
+  toolbar.appendChild(expandBtn);
+  container.appendChild(toolbar);
+  container.appendChild(cardsHost);
+
+  parseJsonl(text).forEach((item, index) => {
+    const card = document.createElement('div');
+    card.className = 'json-card';
+    const head = document.createElement('div');
+    head.className = 'json-card-summary';
+    if (item.ok) {
+      head.textContent = '#' + (index + 1) + ' · ' + cardSummary(item.value);
+      card.appendChild(head);
+      card.appendChild(renderTree(item.value, null, false));
+    } else {
+      head.textContent = '#' + (index + 1) + ' · 无法解析的行';
+      card.appendChild(head);
+      const pre = document.createElement('pre');
+      pre.className = 'json-raw';
+      pre.textContent = item.raw;
+      card.appendChild(pre);
+    }
+    cardsHost.appendChild(card);
+  });
+  updateJsonToggle();
+}
+
+function showCompactResult(prefix, text) {
+  $(prefix + '-output').value = text;
+  renderJsonlViewer($(prefix + '-viewer'), text);
+  $(prefix + '-result').hidden = false;
+}
+
+function applyCreateResult(result) {
+  $('create-bundle-id').textContent = result.bundle_id;
+  $('create-stats').textContent =
+    '行数 ' + result.rows +
+    ' · token ' + result.token_occurrences +
+    ' · 永久脱敏字段 ' + result.redacted_occurrences +
+    ' · 输入中的敏感项 ' + result.source_findings;
+  showCompactResult('create', result.text);
+}
+
+async function refreshStatus() {
+  let status;
+  try { status = await api('/api/status', {}); }
+  catch (err) { showError(err.message); return; }
+  keyExists = !!status.key_exists;
+  const unlocked = !!status.unlocked;
+  document.body.classList.toggle('is-unlocked', unlocked);
+  $('status-unlocked').textContent = unlocked ? '已解锁' : '未解锁';
+  $('status-key').textContent =
+    'key: ' + status.key_file +
+    (status.key_id ? ' · key_id ' + status.key_id : '') +
+    (status.key_exists ? '' : ' · 文件不存在') +
+    (status.passphrase_saved ? ' · 已记住口令' : '');
+  const form = $('key-form');
+  const unlockedNote = $('key-unlocked-note');
+  const panelHint = $('key-panel-hint');
+  if (unlocked) {
+    form.hidden = true;
+    unlockedNote.hidden = false;
+    panelHint.hidden = true;
+  } else {
+    form.hidden = false;
+    unlockedNote.hidden = true;
+    panelHint.hidden = false;
+  }
+  const hint = $('key-hint');
+  if (!status.key_exists) {
+    hint.textContent = 'key 文件不存在：输入口令并勾选“生成新 key”以创建；创建后同一台机器请一直复用这个 key。';
+    hint.hidden = false;
+  } else if (!unlocked) {
+    hint.textContent = status.passphrase_saved
+      ? '本机记住的口令未能自动解锁，请重新输入。'
+      : '输入既有 key 的口令即可解锁。';
+    hint.hidden = false;
+  } else {
+    hint.hidden = true;
+  }
+  const credNote = $('lookup-cred-note');
+  if (credNote) credNote.hidden = !!status.ioc_info_enabled;
+  queueState.iocInfoEnabled = !!status.ioc_info_enabled;
+  const preferredMode = $('queue-mode-' + (queueState.iocInfoEnabled ? 'online' : 'offline'));
+  if (preferredMode) preferredMode.checked = true;
+  updateQueueCredNote();
+  if (status.workbench) {
+    workbenchSetAvailability(
+      status.workbench.configured,
+      status.workbench.backend_available
+    );
+  }
+  const list = $('status-bundles');
+  list.textContent = '';
+  const historyLimit = status.bundle_history_limit == null ? 5 : status.bundle_history_limit;
+  const bundles = (status.bundles || []).slice(0, Math.min(5, historyLimit));
+  const total = status.bundle_total == null ? bundles.length : status.bundle_total;
+  if (bundles.length) {
+    for (const bundle of bundles) {
+      const li = document.createElement('li');
+      li.textContent = (bundle.bundle_id || '?') + ' · ' + (bundle.rows == null ? '?' : bundle.rows) + ' 行';
+      list.appendChild(li);
+    }
+    if (total > bundles.length) {
+      const more = document.createElement('li');
+      more.textContent = '另有 ' + (total - bundles.length) + ' 个更早任务仍可还原（本机保留）';
+      list.appendChild(more);
+    }
+  }
+}
+
+async function doKey() {
+  clearError();
+  try {
+    const passphrase = $('key-passphrase').value;
+    if (!passphrase) throw new Error('请输入口令');
+    const force = $('key-force').checked;
+    if (force && keyExists !== false && !window.confirm('确认覆盖本机已有 key？旧 key 将无法还原此前的 bundle。')) {
+      return;
+    }
+    await api('/api/key', {
+      passphrase: passphrase,
+      generate: $('key-generate').checked,
+      force: force,
+    });
+    $('key-passphrase').value = '';
+    await refreshStatus();
+  } catch (err) { showError(err.message); }
+}
+
+async function doLock() {
+  clearError();
+  const button = $('lock-btn');
+  const typed = ($('key-passphrase').value || '').length > 0;
+  try {
+    const result = await withBusy(button, '清除中…', () => api('/api/lock', {}));
+    $('key-passphrase').value = '';
+    $('key-generate').checked = false;
+    $('key-force').checked = false;
+    await refreshStatus();
+    if (result && result.had_saved_passphrase && !result.passphrase_cleared) {
+      showError('未能删除本机记住的口令文件，请检查 key 同目录的写入权限');
+      return;
+    }
+    if (result && result.had_saved_passphrase) {
+      flash('lock-flash', '已清除本机记住的口令，下次需要重新输入');
+    } else if (result && result.was_unlocked) {
+      flash('lock-flash', '已锁定；本机未保存口令');
+    } else if (typed) {
+      flash('lock-flash', '已清空口令输入框；本机未保存口令');
+    } else {
+      flash('lock-flash', '当前未解锁，也没有本机记住的口令');
+    }
+  } catch (err) {
+    showError(err.message);
+    await refreshStatus();
+  }
+}
+
+async function doLookup() {
+  clearError();
+  const button = $('lookup-btn');
+  try {
+    const payload = collectInput('lookup');
+    $('lookup-flash').textContent = '正在查询，没有缓存时会走接口，请稍候…';
+    $('lookup-flash').hidden = false;
+    const result = await withBusy(button, '查询中…', () => api('/api/lookup', payload));
+    $('lookup-stats').textContent =
+      '行数 ' + result.rows +
+      ' · 缓存命中 ' + result.cache_hits +
+      ' · 在线拉取 ' + result.live_fetches +
+      ' · 无数据 ' + result.no_data +
+      ' · 错误 ' + result.errors +
+      ' · 禁用 ' + result.disabled +
+      ' · 拒绝 ' + result.rejected;
+    showCompactResult('lookup', result.text);
+    $('create-content').value = result.text;
+    const pasteRadio = document.querySelector('input[name="create-src"][value="paste"]');
+    if (pasteRadio) {
+      pasteRadio.checked = true;
+      $('create-paste').hidden = false;
+      $('create-file').hidden = true;
+    }
+    flash('lookup-flash', '查询完成；发给云端前请先「脱敏并复制」');
+  } catch (err) {
+    $('lookup-flash').hidden = true;
+    showError(err.message);
+  }
+}
+
+async function doLookupPlainCopy() {
+  clearError();
+  if (!window.confirm('明文可能包含敏感 IOC 和凭据，只能在本机使用。确认复制？')) return;
+  await copyText($('lookup-output').value, $('lookup-output'), 'lookup-flash');
+}
+
+async function doSanitizeCopy() {
+  clearError();
+  try {
+    const lookupCompactText = $('lookup-output').value;
+    if (!lookupCompactText.trim()) throw new Error('请先查询 IOC Info');
+    const payload = { content: lookupCompactText };
+    const namesPath = $('create-names').value.trim();
+    if (namesPath) payload.names_path = namesPath;
+    const result = await withBusy($('lookup-sanitize'), '脱敏中…', () => api('/api/create', payload));
+    applyCreateResult(result);
+    const createResult = $('create-result');
+    if (createResult && createResult.scrollIntoView) {
+      createResult.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    await copyText(
+      result.text,
+      $('create-output'),
+      'lookup-flash',
+      '已复制一行一个脱敏 JSON'
+    );
+    await refreshStatus();
+  } catch (err) { showError(err.message); }
+}
+
+async function doCreate() {
+  clearError();
+  try {
+    const payload = collectInput('create');
+    const namesPath = $('create-names').value.trim();
+    if (namesPath) payload.names_path = namesPath;
+    const result = await api('/api/create', payload);
+    applyCreateResult(result);
+    await copyText(result.text, $('create-output'), 'create-flash');
+    await refreshStatus();
+  } catch (err) { showError(err.message); }
+}
+
+async function doRestore() {
+  clearError();
+  try {
+    const payload = collectInput('restore');
+    const result = await api('/api/restore', payload);
+    $('restore-stats').textContent =
+      '匹配 bundle ' + result.matched_bundle_id + ' · 还原 ' + result.rows + ' 行';
+    showCompactResult('restore', result.text);
+    await copyText(result.text, $('restore-output'), 'restore-flash');
+  } catch (err) { showError(err.message); }
+}
+
+async function doRestorePlainCopy() {
+  clearError();
+  if (!window.confirm('还原结果包含真实 IOC 和身份值，只能在本机使用。确认复制？')) return;
+  await copyText($('restore-output').value, $('restore-output'), 'restore-flash');
+}
+
+async function doScan() {
+  clearError();
+  try {
+    const payload = collectInput('scan');
+    const result = await api('/api/scan', payload);
+    const counts = Object.keys(result.finding_counts || {});
+    const detail = counts.length
+      ? '（' + counts.map((code) => code + ' x' + result.finding_counts[code]).join('、') + '）'
+      : '';
+    $('scan-stats').textContent =
+      '行数 ' + result.rows + ' · 残留敏感项 ' + result.finding_count + detail +
+      (result.finding_count === 0 ? ' — 可以外发' : ' — 存在残留，禁止外发');
+    $('scan-result').hidden = false;
+  } catch (err) { showError(err.message); }
+}
+
+function workbenchSelectFile(file) {
+  if (!file || typeof file.text !== 'function') {
+    workbenchState.selectedFile = null;
+    $('workbench-file-status').textContent = '未选择文件';
+    throw new Error('请选择一个本地文件');
+  }
+  workbenchState.selectedFile = file;
+  $('workbench-file-status').textContent =
+    '已选择 ' + (file.name || 'input.jsonl') + ' · ' + file.size + ' bytes；导入时由后端校验 JSONL';
+}
+
+function workbenchHandleDrop(event) {
+  event.preventDefault();
+  $('workbench-drop-zone').classList.remove('dragover');
+  const files = event.dataTransfer && event.dataTransfer.files
+    ? Array.from(event.dataTransfer.files)
+    : [];
+  if (files.length !== 1) {
+    workbenchState.selectedFile = null;
+    $('workbench-file-status').textContent = '未选择文件';
+    showError('请一次拖入一个研判输入 JSONL 文件');
+    return;
+  }
+  try {
+    workbenchSelectFile(files[0]);
+    clearError();
+  } catch (err) {
+    workbenchError(err);
+  }
+}
+
+function workbenchApplyImportResult(result, flashText) {
+  if (!result || !result.import_id) throw new Error('导入响应缺少 import_id');
+  workbenchState.importId = result.import_id;
+  workbenchState.importMeta = result;
+  workbenchState.taskId = '';
+  workbenchState.task = null;
+  workbenchState.selectedResultId = '';
+  workbenchState.resultRows = [];
+  workbenchState.resultTotal = 0;
+  workbenchState.resultOffset = 0;
+  workbenchState.resultLimit = 100;
+  workbenchState.resultsLoaded = false;
+  workbenchState.providerIssues = false;
+  if (workbenchState.pollTimer) clearTimeout(workbenchState.pollTimer);
+  workbenchState.pollTimer = null;
+  $('workbench-results-result').hidden = true;
+  $('workbench-detail-result').hidden = true;
+  workbenchShowImport(result);
+  workbenchSyncControls();
+  flash('workbench-export-flash', flashText || '已导入 staging；可以启动任务');
+}
+
+async function doWorkbenchImport() {
+  clearError();
+  const button = $('workbench-import');
+  try {
+    const file = workbenchState.selectedFile;
+    if (!file) throw new Error('请选择或拖入研判输入 JSONL');
+    const content = await file.text();
+    const result = await withBusy(button, '导入中…', () => api('/api/workbench/import', {
+      filename: file.name,
+      content: content,
+    }));
+    workbenchApplyImportResult(result, '已导入 staging；可以启动任务');
+  } catch (err) {
+    workbenchError(err);
+    workbenchSyncControls();
+  }
+}
+
+async function doWorkbenchPasteImport() {
+  clearError();
+  const button = $('workbench-paste-import');
+  try {
+    const content = ($('workbench-paste').value || '');
+    if (!content.trim()) throw new Error('请先粘贴裸 IOC 文本');
+    const result = await withBusy(button, '解析中…', () => api('/api/workbench/import', {
+      filename: 'paste.txt',
+      content: content,
+    }));
+    workbenchApplyImportResult(
+      result,
+      '裸 IOC 已解析入 staging；可一键入队或点启动任务'
+    );
+  } catch (err) {
+    workbenchUpdatePastePreview(null);
+    workbenchError(err);
+    workbenchSyncControls();
+  }
+}
+
+async function doWorkbenchPasteStart() {
+  clearError();
+  try {
+    if (!workbenchState.importId) {
+      await doWorkbenchPasteImport();
+    }
+    if (!workbenchState.importId) throw new Error('请先解析裸 IOC 文本');
+    await doWorkbenchStart();
+  } catch (err) {
+    workbenchError(err);
+    workbenchSyncControls();
+  }
+}
+
+async function doWorkbenchStart() {
+  clearError();
+  const button = $('workbench-start');
+  try {
+    if (!workbenchState.importId) throw new Error('请先导入 staging');
+    const result = await withBusy(button, '启动中…', () => api('/api/workbench/task', {
+      import_id: workbenchState.importId,
+      options: {background: true},
+    }));
+    if (!result || !result.task_id) throw new Error('启动响应缺少 task_id');
+    workbenchState.taskId = result.task_id;
+    workbenchSetTask(result);
+    $('workbench-results-result').hidden = true;
+    $('workbench-detail-result').hidden = true;
+    workbenchState.selectedResultId = '';
+    workbenchState.resultsLoaded = false;
+    workbenchSyncControls();
+    workbenchScheduleRefresh();
+  } catch (err) {
+    workbenchError(err);
+    workbenchSyncControls();
+  }
+}
+
+async function doWorkbenchRefresh() {
+  clearError();
+  const button = $('workbench-refresh');
+  try {
+    if (!workbenchState.taskId) throw new Error('当前没有任务');
+    if (workbenchState.refreshInFlight) return workbenchState.task;
+    workbenchState.refreshInFlight = true;
+    const result = await withBusy(button, '刷新中…', () => apiGet(
+      '/api/workbench/task/' + encodeURIComponent(workbenchState.taskId)
+    ));
+    if (!result || !result.task_id) throw new Error('状态响应缺少 task_id');
+    workbenchSetTask(result);
+    if (['queued', 'pending', 'running', 'cancelling'].includes(result.state)) {
+      workbenchScheduleRefresh();
+    } else if (workbenchState.pollTimer) {
+      clearTimeout(workbenchState.pollTimer);
+      workbenchState.pollTimer = null;
+    }
+    return result;
+  } catch (err) {
+    workbenchError(err);
+    workbenchSyncControls();
+  } finally {
+    workbenchState.refreshInFlight = false;
+  }
+}
+
+function workbenchScheduleRefresh() {
+  if (workbenchState.pollTimer) clearTimeout(workbenchState.pollTimer);
+  if (!workbenchState.taskId) return;
+  const state = workbenchState.task && workbenchState.task.state;
+  if (!['queued', 'pending', 'running', 'cancelling'].includes(state)) return;
+  workbenchState.pollTimer = setTimeout(() => {
+    workbenchState.pollTimer = null;
+    doWorkbenchRefresh();
+  }, 1200);
+}
+
+async function doWorkbenchCancel() {
+  clearError();
+  const button = $('workbench-cancel');
+  try {
+    if (!workbenchState.taskId) throw new Error('当前没有任务');
+    const result = await withBusy(button, '取消中…', () => api('/api/workbench/cancel', {
+      task_id: workbenchState.taskId,
+    }));
+    if (!result || !result.task_id) throw new Error('取消响应缺少 task_id');
+    workbenchSetTask(Object.assign({}, workbenchState.task || {}, result));
+  } catch (err) {
+    workbenchError(err);
+    workbenchSyncControls();
+  }
+}
+
+async function loadWorkbenchResults(requestedOffset, preserveSelection) {
+  clearError();
+  const button = $('workbench-results');
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    const offset = Number.isInteger(requestedOffset) && requestedOffset >= 0
+      ? requestedOffset
+      : 0;
+    const filters = workbenchFilters();
+    const payload = Object.assign({
+      task_id: workbenchState.taskId,
+      offset: offset,
+      limit: workbenchState.resultLimit,
+    }, filters);
+    const result = await withBusy(button, '加载中…', () => api('/api/workbench/results', payload));
+    if (!result || !Array.isArray(result.rows)) throw new Error('结果响应缺少 rows');
+    workbenchState.resultRows = result.rows;
+    workbenchState.resultTotal = Number(result.total || 0);
+    workbenchState.resultOffset = Number(result.offset || 0);
+    workbenchState.resultLimit = Number(result.limit || workbenchState.resultLimit);
+    workbenchState.resultsLoaded = true;
+    const selectedIsVisible = workbenchState.resultRows.some(
+      (row) => workbenchCell(row.result_id) === workbenchState.selectedResultId
+    );
+    if (!preserveSelection || !selectedIsVisible) {
+      workbenchState.selectedResultId = '';
+      $('workbench-detail-result').hidden = true;
+      $('workbench-selected-result').textContent = '';
+    }
+    const filterText = [];
+    if (filters.dispositions) filterText.push('处置 ' + filters.dispositions.join(', '));
+    if (filters.query) filterText.push('关键字 ' + filters.query);
+    if (filters.provider_issues) filterText.push('Provider 异常/缺失');
+    $('workbench-results-stats').textContent = [
+      'task_id ' + (result.task_id || workbenchState.taskId),
+      '状态 ' + workbenchStateLabel(result.state),
+      '匹配 ' + workbenchState.resultTotal + ' 行',
+      '本页 ' + workbenchState.resultRows.length + ' 行',
+      filterText.length ? filterText.join(' · ') : '未筛选',
+    ].join(' · ');
+    const renderedVersion = await renderWorkbenchRows(workbenchState.resultRows);
+    if (renderedVersion !== workbenchState.renderVersion) return result;
+    $('workbench-results-result').hidden = false;
+    workbenchSyncControls();
+    return result;
+  } catch (err) {
+    workbenchError(err);
+    workbenchSyncControls();
+    return null;
+  }
+}
+
+async function loadWorkbenchExplanation(resultId) {
+  clearError();
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    if (!resultId) throw new Error('结果缺少 result_id');
+    workbenchState.selectedResultId = resultId;
+    $('workbench-selected-result').textContent = 'result_id ' + resultId;
+    $('workbench-detail-viewer').textContent = '正在加载解释…';
+    $('workbench-detail-result').hidden = false;
+    workbenchSyncControls();
+    const result = await api('/api/workbench/explanation', {
+      task_id: workbenchState.taskId,
+      result_id: resultId,
+    });
+    renderJsonlViewer(
+      $('workbench-detail-viewer'),
+      JSON.stringify(result == null ? {} : result)
+    );
+    return result;
+  } catch (err) {
+    workbenchError(err);
+    return null;
+  }
+}
+
+async function loadWorkbenchPage(direction) {
+  clearError();
+  const button = direction < 0 ? $('workbench-prev-page') : $('workbench-next-page');
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    const limit = workbenchState.resultLimit > 0 ? workbenchState.resultLimit : 100;
+    const target = workbenchState.resultOffset + (direction < 0 ? -limit : limit);
+    if (target < 0 || target >= workbenchState.resultTotal) return;
+    await withBusy(button, '加载中…', () => loadWorkbenchResults(target, false));
+  } catch (err) {
+    workbenchError(err);
+  } finally {
+    workbenchSyncControls();
+  }
+}
+
+async function applyWorkbenchQuickFilter(disposition, button) {
+  clearError();
+  try {
+    $('workbench-dispositions').value = disposition;
+    workbenchState.providerIssues = false;
+    workbenchSyncQuickFilter();
+    await withBusy(button, '加载中…', () => loadWorkbenchResults(0, false));
+  } catch (err) {
+    workbenchError(err);
+  } finally {
+    workbenchSyncControls();
+  }
+}
+
+async function applyWorkbenchProviderFilter(button) {
+  clearError();
+  try {
+    workbenchState.providerIssues = true;
+    $('workbench-dispositions').value = '';
+    workbenchSyncControls();
+    await withBusy(button, '加载中…', () => loadWorkbenchResults(0, false));
+  } catch (err) {
+    workbenchError(err);
+  } finally {
+    workbenchSyncControls();
+  }
+}
+
+async function navigateWorkbenchResult(direction) {
+  clearError();
+  const button = direction < 0 ? $('workbench-prev-result') : $('workbench-next-result');
+  try {
+    const index = workbenchState.resultRows.findIndex(
+      (row) => workbenchCell(row.result_id) === workbenchState.selectedResultId
+    );
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= workbenchState.resultRows.length) return;
+    const resultId = workbenchCell(workbenchState.resultRows[target].result_id);
+    await withBusy(button, '加载中…', () => loadWorkbenchExplanation(resultId));
+  } catch (err) {
+    workbenchError(err);
+  } finally {
+    workbenchSyncControls();
+  }
+}
+
+async function doWorkbenchReview() {
+  clearError();
+  const button = $('workbench-review');
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    if (!workbenchState.selectedResultId) throw new Error('请先点击一条结果查看解释');
+    const decision = ($('workbench-decision').value || '').trim();
+    if (!decision) throw new Error('请选择复核结论');
+    const resultId = workbenchState.selectedResultId;
+    const result = await withBusy(button, '提交中…', () => api('/api/workbench/review', {
+      task_id: workbenchState.taskId,
+      result_id: resultId,
+      decision: decision,
+      reason: $('workbench-reason').value || '',
+      reviewer: $('workbench-reviewer').value || '',
+    }));
+    if (!result || !result.result_id) throw new Error('复核响应缺少 result_id');
+    flash('workbench-flash', '人工复核 overlay 已追加；系统结论未覆盖');
+    const refreshed = await loadWorkbenchResults(workbenchState.resultOffset, true);
+    if (!refreshed) return;
+    await loadWorkbenchExplanation(resultId);
+  } catch (err) {
+    workbenchError(err);
+    workbenchSyncControls();
+  }
+}
+
+async function doWorkbenchExport() {
+  clearError();
+  const button = $('workbench-export');
+  let format = 'jsonl';
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    format = $('workbench-export-format').value;
+    if (!['jsonl', 'csv', 'xlsx', 'diagnostics', 'diff', 'bundle'].includes(format)) {
+      throw new Error('导出格式不受支持');
+    }
+    const baselineTaskId = $('workbench-baseline-task').value.trim();
+    if (['diff', 'bundle'].includes(format) && !baselineTaskId) {
+      throw new Error('导出 ' + format + ' 前请填写 baseline task_id');
+    }
+    const payload = Object.assign({
+      task_id: workbenchState.taskId,
+      format: format,
+    }, workbenchFilters());
+    if (['diff', 'bundle'].includes(format)) payload.baseline_task_id = baselineTaskId;
+    const result = await withBusy(button, '导出中…', () => api('/api/workbench/export', payload));
+    if (!result || result.available === false) {
+      workbenchMarkCapabilityUnavailable(format, result && result.message);
+      return;
+    }
+    if (!result || !result.export_id) throw new Error('导出响应缺少 export_id');
+    const downloadPath = '/api/workbench/export/' + encodeURIComponent(result.export_id) + '/download?token=' + encodeURIComponent(TOKEN);
+    const link = document.createElement('a');
+    link.href = downloadPath;
+    link.download = result.filename || (result.export_id + '.' + format);
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    flash(
+      'workbench-export-flash',
+      '已生成 ' + (result.filename || format.toUpperCase()) + '，正在下载 ' + (result.rows == null ? '' : result.rows + ' 行')
+    );
+  } catch (err) {
+    workbenchError(err, ['diagnostics', 'diff', 'bundle'].includes(format) ? format : null);
+    workbenchSyncControls();
+  }
+}
+
+async function loadWorkbenchSummary() {
+  clearError();
+  const button = $('workbench-summary');
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    const result = await withBusy(button, '加载中…', () => apiGet(
+      '/api/workbench/task/' + encodeURIComponent(workbenchState.taskId) + '/summary'
+    ));
+    if (!result || result.available === false) {
+      workbenchMarkCapabilityUnavailable('summary', result && result.message);
+      return result;
+    }
+    $('workbench-summary-stats').textContent =
+      'task_id ' + workbenchState.taskId + ' · 已加载运行摘要（敏感路径和凭据已隐藏）';
+    renderJsonlViewer(
+      $('workbench-summary-viewer'),
+      JSON.stringify(workbenchSafeSummary(result))
+    );
+    $('workbench-summary-result').hidden = false;
+    return result;
+  } catch (err) {
+    workbenchError(err, 'summary');
+    return null;
+  }
+}
+
+async function loadWorkbenchDiagnostics() {
+  clearError();
+  const button = $('workbench-diagnostics');
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    const result = await withBusy(button, '加载中…', () => apiGet(
+      '/api/workbench/task/' + encodeURIComponent(workbenchState.taskId) + '/diagnostics'
+    ));
+    if (!result || result.available === false) {
+      workbenchMarkCapabilityUnavailable('diagnostics', result && result.message);
+      return result;
+    }
+    $('workbench-diagnostics-stats').textContent = result.available
+      ? 'task_id ' + workbenchState.taskId + ' · 已加载诊断'
+      : (result.message || '诊断尚未生成');
+    renderJsonlViewer($('workbench-diagnostics-viewer'), JSON.stringify(result));
+    $('workbench-diagnostics-result').hidden = false;
+    return result;
+  } catch (err) {
+    workbenchError(err, 'diagnostics');
+    return null;
+  }
+}
+
+async function loadWorkbenchDiff() {
+  clearError();
+  const button = $('workbench-diff');
+  try {
+    if (!workbenchState.taskId) throw new Error('请先启动任务');
+    const baselineTaskId = $('workbench-baseline-task').value.trim();
+    if (!baselineTaskId) throw new Error('请填写 baseline task_id');
+    const result = await withBusy(button, '加载中…', () => api('/api/workbench/diff', {
+      task_id: workbenchState.taskId,
+      baseline_task_id: baselineTaskId,
+    }));
+    if (!result || result.available === false) {
+      workbenchMarkCapabilityUnavailable('diff', result && result.message);
+      return result;
+    }
+    $('workbench-diff-stats').textContent = '当前 ' + workbenchState.taskId + ' · baseline ' + baselineTaskId;
+    renderJsonlViewer($('workbench-diff-viewer'), JSON.stringify(result.diff || result));
+    $('workbench-diff-result').hidden = false;
+    return result;
+  } catch (err) {
+    workbenchError(err, 'diff');
+    return null;
+  }
+}
+
+$('key-btn').addEventListener('click', doKey);
+$('lock-btn').addEventListener('click', doLock);
+$('lookup-btn').addEventListener('click', doLookup);
+$('lookup-sanitize').addEventListener('click', doSanitizeCopy);
+$('lookup-copy').addEventListener('click', doLookupPlainCopy);
+$('create-btn').addEventListener('click', doCreate);
+$('create-copy').addEventListener('click', () =>
+  copyText($('create-output').value, $('create-output'), 'create-flash')
+);
+$('restore-btn').addEventListener('click', doRestore);
+$('restore-copy').addEventListener('click', doRestorePlainCopy);
+$('scan-btn').addEventListener('click', doScan);
+$('workbench-import').addEventListener('click', doWorkbenchImport);
+$('workbench-paste-import').addEventListener('click', doWorkbenchPasteImport);
+$('workbench-paste-start').addEventListener('click', doWorkbenchPasteStart);
+$('workbench-paste').addEventListener('input', () => {
+  if (!workbenchState.importMeta || workbenchState.importMeta.input_kind !== 'bare') {
+    workbenchUpdatePastePreview(null);
+  }
+});
+$('workbench-start').addEventListener('click', doWorkbenchStart);
+$('workbench-refresh').addEventListener('click', doWorkbenchRefresh);
+$('workbench-cancel').addEventListener('click', doWorkbenchCancel);
+$('workbench-results').addEventListener('click', loadWorkbenchResults);
+$('workbench-prev-page').addEventListener('click', () => loadWorkbenchPage(-1));
+$('workbench-next-page').addEventListener('click', () => loadWorkbenchPage(1));
+$('workbench-diagnostics').addEventListener('click', loadWorkbenchDiagnostics);
+$('workbench-summary').addEventListener('click', loadWorkbenchSummary);
+$('workbench-diff').addEventListener('click', loadWorkbenchDiff);
+$('workbench-baseline-task').addEventListener('input', workbenchSyncControls);
+$('workbench-dispositions').addEventListener('input', workbenchSyncControls);
+$('workbench-query').addEventListener('input', workbenchSyncControls);
+$('workbench-export-format').addEventListener('change', workbenchSyncControls);
+$('workbench-file').addEventListener('change', () => {
+  const files = $('workbench-file').files ? Array.from($('workbench-file').files) : [];
+  if (!files.length) return;
+  if (files.length !== 1) {
+    workbenchState.selectedFile = null;
+    $('workbench-file-status').textContent = '未选择文件';
+    showError('请一次选择一个研判输入 JSONL 文件');
+    return;
+  }
+  try {
+    workbenchSelectFile(files[0]);
+    clearError();
+  } catch (err) {
+    workbenchError(err);
+  }
+});
+$('workbench-drop-zone').addEventListener('click', () => $('workbench-file').click());
+$('workbench-drop-zone').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    $('workbench-file').click();
+  }
+});
+$('workbench-drop-zone').addEventListener('dragover', (event) => {
+  event.preventDefault();
+  $('workbench-drop-zone').classList.add('dragover');
+});
+$('workbench-drop-zone').addEventListener('dragleave', () => {
+  $('workbench-drop-zone').classList.remove('dragover');
+});
+$('workbench-drop-zone').addEventListener('drop', workbenchHandleDrop);
+$('workbench-prev-result').addEventListener('click', () => navigateWorkbenchResult(-1));
+$('workbench-next-result').addEventListener('click', () => navigateWorkbenchResult(1));
+$('workbench-review').addEventListener('click', doWorkbenchReview);
+$('workbench-export').addEventListener('click', doWorkbenchExport);
+document.querySelectorAll('[data-workbench-disposition]').forEach((button) => {
+  button.addEventListener('click', () => applyWorkbenchQuickFilter(
+    button.dataset.workbenchDisposition || '',
+    button
+  ));
+});
+$('workbench-filter-provider-issues').addEventListener('click', () =>
+  applyWorkbenchProviderFilter($('workbench-filter-provider-issues'))
+);
+
+const QUEUE_STATE_LABELS = {
+  queued: '排队中',
+  running: '运行中',
+  succeeded: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+  corrupt: '损坏',
+};
+
+function queueLocalTime(value) {
+  const raw = String(value || '');
+  if (!raw) return '';
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  const pad = (n) => String(n).padStart(2, '0');
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) +
+    ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+}
+
+function queueStateLabel(state) {
+  return QUEUE_STATE_LABELS[state] || (state || '未知');
+}
+
+function queueSummaryText(job) {
+  const summary = job && job.result_summary;
+  if (!summary || typeof summary !== 'object') {
+    const input = job && job.input && typeof job.input === 'object' ? job.input : {};
+    const parts = [];
+    if (input.valid != null) parts.push('有效 ' + input.valid);
+    if (input.duplicated != null) parts.push('重复 ' + input.duplicated);
+    if (input.rejected != null) parts.push('拒绝 ' + input.rejected);
+    return parts.length ? parts.join(' · ') : '—';
+  }
+  const conclusions = summary.conclusions && typeof summary.conclusions === 'object'
+    ? summary.conclusions
+    : {};
+  const bits = Object.keys(conclusions).map((key) => key + '=' + conclusions[key]);
+  const rows = summary.rows != null ? ('行 ' + summary.rows) : '';
+  return [rows, bits.join(', ')].filter(Boolean).join(' · ') || '—';
+}
+
+function queueEscape(text) {
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function queueSelectedMode() {
+  const online = $('queue-mode-online');
+  if (online && online.checked) return 'online';
+  return 'offline';
+}
+
+function updateQueueCredNote() {
+  const note = $('queue-cred-note');
+  if (!note) return;
+  const online = queueSelectedMode() === 'online';
+  const enabled = !!queueState.iocInfoEnabled;
+  if (online) {
+    note.textContent = enabled
+      ? '联网研判：将调用外部 API。当前已检测到 IOC Info 凭据；无凭据来源仍只读本机数据。'
+      : '联网研判：将调用外部 API，但当前未检测到 IOC Info 凭据；相关来源会用本机缓存或保持禁用。';
+    return;
+  }
+  note.textContent = enabled
+    ? '只用本机缓存：不调用外部 API，只读取本机缓存。'
+    : '默认只用本机缓存：当前未检测到 IOC Info 凭据，不会发起网络请求。';
+}
+
+function queueKpiFromSummary(summary) {
+  // Render numbers directly from result_summary fields (no client-side recount).
+  const conclusions = summary && summary.conclusions && typeof summary.conclusions === 'object'
+    ? summary.conclusions
+    : {};
+  const providerStatuses = summary && summary.provider_statuses && typeof summary.provider_statuses === 'object'
+    ? summary.provider_statuses
+    : {};
+  const black =
+    Number(conclusions['存活有效'] || 0) + Number(conclusions['失活有效'] || 0);
+  const review = Number(conclusions['待复核'] || 0);
+  const gray = Number(conclusions['灰'] || 0);
+  const fp = Number(conclusions['误报'] || 0);
+  const providerIssue =
+    Number(providerStatuses.error || 0) +
+    Number(providerStatuses.failed || 0) +
+    Number(providerStatuses.timeout || 0);
+  const providerDetails = summary && summary.provider_details && typeof summary.provider_details === 'object'
+    ? summary.provider_details
+    : {};
+  const abnormalProviders = Object.keys(providerDetails)
+    .filter((name) => ['error', 'failed', 'timeout'].indexOf(String(providerDetails[name]).toLowerCase()) >= 0)
+    .map((name) => name + '=' + providerDetails[name]);
+  return [
+    { label: '判黑', value: black },
+    { label: '待复核', value: review },
+    { label: '灰', value: gray },
+    { label: '误报', value: fp },
+    { label: '来源异常', value: providerIssue, detail: abnormalProviders.join(' · ') },
+  ];
+}
+
+function renderQueueKpi(job) {
+  const box = $('queue-kpi');
+  if (!box) return;
+  if (!job || job.state !== 'succeeded') {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  const summary = job.result_summary && typeof job.result_summary === 'object'
+    ? job.result_summary
+    : {};
+  const cards = queueKpiFromSummary(summary);
+  box.innerHTML = cards.map((card) => (
+    '<div class="kpi-card">' +
+      '<span class="kpi-label">' + queueEscape(card.label) + '</span>' +
+      '<span class="kpi-value">' + queueEscape(String(card.value)) + '</span>' +
+      (card.detail ? '<span class="kpi-detail">' + queueEscape(card.detail) + '</span>' : '') +
+    '</div>'
+  )).join('');
+  box.hidden = false;
+}
+
+function fillQueueBaselineOptions(currentJobId) {
+  const select = $('queue-baseline-job');
+  if (!select) return;
+  const succeeded = (queueState.jobs || []).filter((job) =>
+    job && job.state === 'succeeded' && job.job_id && job.job_id !== currentJobId
+  );
+  const previous = select.value;
+  select.innerHTML = '<option value="">（选择 baseline job）</option>' + succeeded.map((job) => (
+    '<option value="' + queueEscape(job.job_id) + '">' +
+      queueEscape(job.job_id) +
+    '</option>'
+  )).join('');
+  if (previous && succeeded.some((job) => job.job_id === previous)) {
+    select.value = previous;
+  }
+}
+
+function renderQueueResultRows(rows) {
+  const body = $('queue-results-body');
+  if (!body) return;
+  queueState.resultRows = rows || [];
+  if (!rows || !rows.length) {
+    body.innerHTML = '<tr><td colspan="4" class="wrap">无结果行</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map((row) => {
+    const resultId = row.result_id || '';
+    const ioc = row.ioc || '';
+    const conclusion = row.conclusion || '';
+    const overlay = row.review_overlay && typeof row.review_overlay === 'object'
+      ? row.review_overlay
+      : null;
+    const labelText = overlay && overlay.label
+      ? (overlay.label + (overlay.note ? (' · ' + overlay.note) : ''))
+      : '—';
+    const selected = resultId && resultId === queueState.selectedResultId ? ' is-selected' : '';
+    return (
+      '<tr class="queue-row' + selected + '" data-queue-result-id="' + queueEscape(resultId) + '">' +
+      '<td class="wrap">' + queueEscape(resultId) + '</td>' +
+      '<td class="wrap">' + queueEscape(ioc) + '</td>' +
+      '<td>' + queueEscape(conclusion) + '</td>' +
+      '<td class="queue-row-review">' + queueEscape(labelText) + '</td>' +
+      '</tr>'
+    );
+  }).join('');
+  body.querySelectorAll('[data-queue-result-id]').forEach((rowEl) => {
+    rowEl.addEventListener('click', () => {
+      const resultId = rowEl.getAttribute('data-queue-result-id');
+      doQueueExplain(resultId);
+    });
+  });
+}
+
+function renderQueueList() {
+  const body = $('queue-list');
+  const jobs = queueState.jobs || [];
+  if (!jobs.length) {
+    body.innerHTML = '<tr><td colspan="5" class="wrap">尚无任务。粘贴 IOC 后点「入队」。</td></tr>';
+    $('queue-status-line').textContent = '尚无任务';
+    renderQueueKpi(null);
+    fillQueueBaselineOptions('');
+    return;
+  }
+  $('queue-status-line').textContent = '共 ' + jobs.length + ' 个任务';
+  body.innerHTML = jobs.map((job) => {
+    const jobId = job.job_id || '';
+    const state = job.state || '';
+    const mode = job.mode || 'offline';
+    const created = queueLocalTime(job.created_at || job.updated_at || '');
+    let summary = queueSummaryText(job);
+    let runLog = '';
+    const progress = job.runner_progress && typeof job.runner_progress === 'object'
+      ? job.runner_progress
+      : null;
+    if (progress && progress.text) {
+      summary = state === 'running' ? String(progress.text) : summary;
+      const log = Array.isArray(progress.log) ? progress.log : [];
+      if (log.length) {
+        runLog = '<div class="queue-run-log">' + log.map((entry) =>
+          queueEscape((entry && entry.updated_at ? entry.updated_at + ' · ' : '') + (entry && entry.text ? entry.text : ''))
+        ).join('<br>') + '</div>';
+      }
+    }
+    const canCancel = state === 'queued';
+    const canRun = state === 'queued';
+    const canResults = state === 'succeeded' || state === 'failed';
+    const actions = [];
+    if (canRun) {
+      actions.push('<button type="button" data-queue-run="' + queueEscape(jobId) + '">运行</button>');
+    }
+    if (canCancel) {
+      actions.push('<button class="secondary" type="button" data-queue-cancel="' + queueEscape(jobId) + '">取消</button>');
+    }
+    if (canResults) {
+      actions.push('<button class="secondary" type="button" data-queue-results="' + queueEscape(jobId) + '">结果</button>');
+    }
+    return (
+      '<tr data-job-id="' + queueEscape(jobId) + '">' +
+      '<td class="wrap">' + queueEscape(jobId) +
+        ' <span class="mode-label">' + queueEscape(mode === 'online' ? '联网' : '只用缓存') + '</span></td>' +
+      '<td>' + queueEscape(queueStateLabel(state)) + '</td>' +
+      '<td class="wrap">' + queueEscape(summary) + runLog + '</td>' +
+      '<td class="wrap">' + queueEscape(created) + '</td>' +
+      '<td>' + (actions.join(' ') || '—') + '</td>' +
+      '</tr>'
+    );
+  }).join('');
+  body.querySelectorAll('[data-queue-run]').forEach((button) => {
+    button.addEventListener('click', () => doQueueRun(button.getAttribute('data-queue-run')));
+  });
+  body.querySelectorAll('[data-queue-cancel]').forEach((button) => {
+    button.addEventListener('click', () => doQueueCancel(button.getAttribute('data-queue-cancel')));
+  });
+  body.querySelectorAll('[data-queue-results]').forEach((button) => {
+    button.addEventListener('click', () => doQueueResults(button.getAttribute('data-queue-results')));
+  });
+  const selected = jobs.find((job) => job.job_id === queueState.selectedJobId) || null;
+  renderQueueKpi(selected);
+  fillQueueBaselineOptions(queueState.selectedJobId || '');
+}
+
+function queueSchedulePoll() {
+  if (queueState.pollTimer) clearTimeout(queueState.pollTimer);
+  const running = (queueState.jobs || []).some((job) => job.state === 'running');
+  if (!running) {
+    queueState.pollTimer = null;
+    return;
+  }
+  queueState.pollTimer = setTimeout(() => {
+    queueState.pollTimer = null;
+    refreshQueueList(true);
+  }, 1200);
+}
+
+async function refreshQueueList(silent) {
+  if (queueState.refreshInFlight) return queueState.jobs;
+  queueState.refreshInFlight = true;
+  try {
+    if (!silent) clearError();
+    const data = await apiGet('/api/jobs/list');
+    const jobs = (data && data.jobs) || [];
+    // Running jobs: pull latest runner_progress from status (poll, not push).
+    for (let i = 0; i < jobs.length; i += 1) {
+      const job = jobs[i];
+      if (!job || job.state !== 'running' || !job.job_id) continue;
+      try {
+        const st = await apiGet(
+          '/api/jobs/status?job_id=' + encodeURIComponent(job.job_id)
+        );
+        if (st && st.runner_progress && typeof st.runner_progress === 'object') {
+          job.runner_progress = st.runner_progress;
+        }
+      } catch (_err) {
+        // Keep list usable if a single status probe fails mid-poll.
+      }
+    }
+    queueState.jobs = jobs;
+    renderQueueList();
+    queueSchedulePoll();
+    return queueState.jobs;
+  } catch (err) {
+    if (!silent) showError(err && err.message ? err.message : String(err));
+    throw err;
+  } finally {
+    queueState.refreshInFlight = false;
+  }
+}
+
+async function doQueueEnqueue() {
+  try {
+    clearError();
+    const content = $('queue-paste').value || '';
+    if (!content.trim()) throw new Error('请先粘贴 IOC 文本');
+    const mode = queueSelectedMode();
+    const result = await api('/api/jobs/enqueue', {
+      content: content,
+      filename: 'paste.txt',
+      mode: mode,
+    });
+    const job = result && result.job ? result.job : {};
+    const input = job.input && typeof job.input === 'object' ? job.input : {};
+    $('queue-enqueue-preview').textContent =
+      '有效 ' + (input.valid != null ? input.valid : 0) +
+      ' · 重复 ' + (input.duplicated != null ? input.duplicated : 0) +
+      ' · 拒绝 ' + (input.rejected != null ? input.rejected : 0) +
+      (job.mode ? (' · ' + job.mode) : '') +
+      (job.job_id ? (' · job_id ' + job.job_id) : '');
+    const flash = $('queue-flash');
+    flash.hidden = false;
+    flash.textContent = '已入队';
+    setTimeout(() => { flash.hidden = true; }, 2000);
+    await refreshQueueList(true);
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  }
+}
+
+async function doQueuePrune() {
+  try {
+    clearError();
+    const dry = await api('/api/jobs/prune', {});
+    if (dry && dry.ok === false) {
+      throw new Error(dry.error || '清理预览失败');
+    }
+    const removed = (dry && dry.removed) || [];
+    const freed = dry && dry.freed_bytes != null ? dry.freed_bytes : 0;
+    if (!removed.length) {
+      const flash = $('queue-flash');
+      flash.hidden = false;
+      flash.textContent = '无需清理（kept=' + ((dry && dry.kept) != null ? dry.kept : '?') + '）';
+      setTimeout(() => { flash.hidden = true; }, 2500);
+      return;
+    }
+    const ok = window.confirm(
+      '将删除 ' + removed.length + ' 个旧任务（约 ' + freed + ' 字节）。\n' +
+      '运行中 / 排队中的任务会保留。确认执行？'
+    );
+    if (!ok) return;
+    const applied = await api('/api/jobs/prune', {apply: true});
+    if (applied && applied.ok === false) {
+      throw new Error(applied.error || '清理失败');
+    }
+    const flash = $('queue-flash');
+    flash.hidden = false;
+    flash.textContent =
+      '已清理 ' + (((applied && applied.removed) || []).length) +
+      ' 个 · freed=' + ((applied && applied.freed_bytes) != null ? applied.freed_bytes : 0);
+    setTimeout(() => { flash.hidden = true; }, 3000);
+    await refreshQueueList(true);
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  }
+}
+
+async function doQueueRun(jobId) {
+  try {
+    clearError();
+    if (!jobId) throw new Error('缺少 job_id');
+    const result = await api('/api/jobs/run', {job_id: jobId});
+    if (result && result.ok === false) {
+      throw new Error(result.error || '无法运行任务');
+    }
+    const flash = $('queue-flash');
+    flash.hidden = false;
+    flash.textContent = result && result.running_job_id && result.running_job_id !== jobId
+      ? ('已有任务运行中: ' + result.running_job_id)
+      : '已启动运行';
+    setTimeout(() => { flash.hidden = true; }, 2500);
+    await refreshQueueList(true);
+    queueSchedulePoll();
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  }
+}
+
+async function doQueueCancel(jobId) {
+  try {
+    clearError();
+    if (!jobId) throw new Error('缺少 job_id');
+    const result = await api('/api/jobs/cancel', {job_id: jobId});
+    if (result && result.ok === false) {
+      throw new Error(result.error || '取消失败');
+    }
+    const flash = $('queue-flash');
+    flash.hidden = false;
+    flash.textContent = '已取消';
+    setTimeout(() => { flash.hidden = true; }, 2000);
+    await refreshQueueList(true);
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  }
+}
+
+async function doQueueResults(jobId) {
+  try {
+    clearError();
+    if (!jobId) throw new Error('缺少 job_id');
+    queueState.selectedJobId = jobId;
+    queueState.selectedResultId = '';
+    const data = await apiGet('/api/jobs/results?job_id=' + encodeURIComponent(jobId));
+    const rows = (data && data.rows) || [];
+    $('queue-results-box').hidden = false;
+    $('queue-results-stats').textContent = jobId + ' · ' + rows.length + ' 行结果';
+    renderQueueResultRows(rows);
+    $('queue-explain-box').hidden = true;
+    $('queue-diff-result').hidden = true;
+    const selected = (queueState.jobs || []).find((job) => job.job_id === jobId) || null;
+    renderQueueKpi(selected);
+    fillQueueBaselineOptions(jobId);
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  }
+}
+
+async function doQueueExplain(resultId) {
+  try {
+    clearError();
+    if (!queueState.selectedJobId) throw new Error('请先打开任务结果');
+    if (!resultId) throw new Error('缺少 result_id');
+    queueState.selectedResultId = resultId;
+    renderQueueResultRows(queueState.resultRows);
+    const data = await api('/api/jobs/explain', {
+      job_id: queueState.selectedJobId,
+      result_id: resultId,
+    });
+    const explanation = (data && data.explanation) || data || {};
+    $('queue-explain-box').hidden = false;
+    $('queue-selected-result').textContent = resultId;
+    renderJsonlViewer($('queue-explain-viewer'), JSON.stringify(explanation));
+    const review = explanation.review && typeof explanation.review === 'object'
+      ? explanation.review
+      : null;
+    if (review && review.label) {
+      const select = $('queue-review-label');
+      if (select && ['approved', 'rejected', 'pending'].indexOf(review.label) >= 0) {
+        select.value = review.label;
+      }
+      if (review.note != null) $('queue-review-note').value = String(review.note || '');
+      if (review.reviewer != null) $('queue-review-reviewer').value = String(review.reviewer || '');
+    }
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  }
+}
+
+async function doQueueReview() {
+  try {
+    clearError();
+    if (!queueState.selectedJobId) throw new Error('请先打开任务结果');
+    if (!queueState.selectedResultId) throw new Error('请先点击一条结果查看解释');
+    const label = ($('queue-review-label').value || '').trim();
+    if (!label) throw new Error('请选择复核标签');
+    const result = await api('/api/jobs/review', {
+      job_id: queueState.selectedJobId,
+      result_id: queueState.selectedResultId,
+      label: label,
+      note: $('queue-review-note').value || '',
+      reviewer: $('queue-review-reviewer').value || '',
+    });
+    if (!result || result.ok === false) {
+      throw new Error((result && result.error) || '复核失败');
+    }
+    const flash = $('queue-review-flash');
+    flash.hidden = false;
+    flash.textContent = '人工复核 overlay 已追加；系统结论未覆盖';
+    setTimeout(() => { flash.hidden = true; }, 2500);
+    await doQueueResults(queueState.selectedJobId);
+    await doQueueExplain(queueState.selectedResultId);
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  }
+}
+
+async function doQueueExport(format) {
+  try {
+    clearError();
+    if (!queueState.selectedJobId) throw new Error('请先打开任务结果');
+    if (['jsonl', 'csv', 'xlsx'].indexOf(format) < 0) {
+      throw new Error('导出格式不受支持');
+    }
+    const result = await api('/api/jobs/export', {
+      job_id: queueState.selectedJobId,
+      format: format,
+    });
+    if (!result || !result.export_id) throw new Error('导出响应缺少 export_id');
+    const downloadPath = '/api/jobs/export/' + encodeURIComponent(result.export_id) +
+      '/download?token=' + encodeURIComponent(TOKEN);
+    const link = document.createElement('a');
+    link.href = downloadPath;
+    link.download = result.filename || (result.export_id + '.' + format);
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    const flash = $('queue-export-flash');
+    flash.hidden = false;
+    flash.textContent =
+      '已生成 ' + (result.filename || format.toUpperCase()) +
+      (result.rows == null ? '' : (' · ' + result.rows + ' 行'));
+    setTimeout(() => { flash.hidden = true; }, 3000);
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  }
+}
+
+async function doQueueDiff() {
+  try {
+    clearError();
+    if (!queueState.selectedJobId) throw new Error('请先打开任务结果');
+    const baseline = ($('queue-baseline-job').value || '').trim();
+    if (!baseline) throw new Error('请选择 baseline job');
+    const result = await api('/api/jobs/diff', {
+      job_id: queueState.selectedJobId,
+      baseline_job_id: baseline,
+    });
+    if (!result || result.ok === false) {
+      throw new Error((result && result.error) || 'diff 失败');
+    }
+    $('queue-diff-result').hidden = false;
+    $('queue-diff-stats').textContent =
+      '当前 ' + queueState.selectedJobId + ' · baseline ' + baseline;
+    renderJsonlViewer($('queue-diff-viewer'), JSON.stringify(result.diff || result));
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  }
+}
+
+function maybeShowLegacyWorkbench() {
+  const params = new URLSearchParams(window.location.search || '');
+  const enabled = !!(window.__LEGACY_WORKBENCH__ || params.get('legacy_workbench') === '1');
+  if (!enabled) return;
+  const panel = $('workbench-panel');
+  const nav = $('nav-workbench');
+  if (panel) panel.hidden = false;
+  if (nav) nav.hidden = false;
+}
+
+$('queue-enqueue').addEventListener('click', doQueueEnqueue);
+$('queue-refresh').addEventListener('click', () => refreshQueueList(false));
+$('queue-prune').addEventListener('click', doQueuePrune);
+$('queue-review-submit').addEventListener('click', doQueueReview);
+$('queue-diff').addEventListener('click', doQueueDiff);
+document.querySelectorAll('[data-queue-export]').forEach((button) => {
+  button.addEventListener('click', () => doQueueExport(button.getAttribute('data-queue-export')));
+});
+document.querySelectorAll('input[name="queue-mode"]').forEach((el) => {
+  el.addEventListener('change', updateQueueCredNote);
+});
+
+function bindUiVersionToggle() {
+  const button = $('ui-version-toggle');
+  if (!button) return;
+  const params = new URLSearchParams(location.search);
+  const current = params.get('ui') === 'legacy' ? 'legacy' : 'new';
+  const next = current === 'legacy' ? 'new' : 'legacy';
+  button.textContent = next === 'legacy' ? '旧版' : '切到新版';
+  button.setAttribute('aria-label', next === 'legacy' ? '切换到旧版界面' : '切换到新版界面');
+  button.addEventListener('click', () => {
+    try { localStorage.setItem('ioc-rejudge-ui-version', next); } catch (err) { /* 忽略 */ }
+    const target = new URL(location.href);
+    target.searchParams.set('ui', next);
+    location.assign(target.toString());
+  });
+}
+
+bindSourceToggle('lookup');
+bindSourceToggle('create');
+bindSourceToggle('restore');
+bindSourceToggle('scan');
+bindUiVersionToggle();
+maybeShowLegacyWorkbench();
+workbenchSyncControls();
+refreshStatus();
+refreshQueueList(true).catch(() => {});
+</script>
+</body>
+</html>

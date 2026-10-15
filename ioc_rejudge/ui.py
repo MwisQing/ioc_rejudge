@@ -118,6 +118,8 @@ _BUNDLE_ID_RE = re.compile(r"[0-9a-f]{20}")
 _WORKBENCH_ID_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]{0,127}")
 _INVALID_IOC_RE = re.compile(r"^line (\d+): invalid IOC (.+)$")
 _PAGE_FILE = Path(__file__).with_name("ui.html")
+# Restored legacy page served at /?ui=legacy; the redesigned page stays the default.
+_LEGACY_PAGE_FILE = Path(__file__).with_name("ui_legacy.html")
 
 # Process-wide single offline jobs runner (UI concurrent cap = 1).
 _jobs_runner_lock = threading.Lock()
@@ -1329,14 +1331,31 @@ class _UiRequestHandler(BaseHTTPRequestHandler):
             except OSError as exc:
                 self._send_json(500, {"error": f"cannot read export: {exc}"})
             return
+        # Version switch: /?ui=legacy serves the restored page, anything else
+        # (absent, ui=new, or an unknown value) serves the redesigned page.
+        ui_values = parse_qs(urlsplit(self.path).query).get("ui")
+        ui = ui_values[0] if ui_values else ""
+        legacy = ui == "legacy"
+        page_file = self.legacy_page_path if legacy else self.page_path
         try:
-            page = self.page_path.read_bytes()
+            page = page_file.read_bytes()
         except OSError:
-            self._send_json(500, {"error": "ui page is missing from the installation"})
-            return
+            # A missing legacy file falls back to the new page (never 500);
+            # a missing new page is a real installation error.
+            if legacy:
+                try:
+                    page = self.page_path.read_bytes()
+                    legacy = False
+                except OSError:
+                    self._send_json(500, {"error": "ui page is missing from the installation"})
+                    return
+            else:
+                self._send_json(500, {"error": "ui page is missing from the installation"})
+                return
         # Optional legacy workbench: inject a bootstrap flag so the page can
-        # unhide the retired panel without a second HTML file.
-        if self.ui_state.legacy_workbench:
+        # unhide the retired panel without a second HTML file. The flag only
+        # applies to the redesigned page; the legacy page owns its own panel.
+        if (not legacy) and self.ui_state.legacy_workbench:
             marker = b"<head>"
             inject = (
                 b"<head>\n"
@@ -2946,6 +2965,7 @@ def build_server(
     _warmup_lookup_cache(state)
     Handler.ui_state = state
     Handler.page_path = _PAGE_FILE
+    Handler.legacy_page_path = _LEGACY_PAGE_FILE
     try:
         server = _UiHttpServer(("127.0.0.1", port), Handler)
     except OSError:

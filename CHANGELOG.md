@@ -1,5 +1,10 @@
 # 更新日志
 
+## 2.10.0 - 2026-10-15
+
+- 新增：本地网页新版/旧版界面共存与切换。新版（Apple 风格重设计）为默认 `/`，旧版从历史提交字节级恢复为 `ioc_rejudge/ui_legacy.html` 并经 `/?ui=legacy` 提供；`/?ui=new` 或默认地址均为新版，非法或缺失的 `ui` 值一律回落新版，旧文件缺失时回落新版而非 500。两版各有一个切换按钮（新版顶栏、旧版模式导航），点击整页导航并保留会话令牌；选择写入本机 `localStorage`，裸地址打开时按记忆落版，显式 `ui` 参数优先于记忆且绝不触发跳转。切换与 `--legacy-workbench` 相互独立，鉴权与 Host/Origin 校验、`no-store`、零外部资源单文件约束不变。
+- 验证：新增 `tests/test_ui_version_switch.py`（服务端路由 8 项）与 `tests/browser_ui_version_regression.py`（Playwright 1280/390 双视口：切换往返、记忆落版、显式参数不跳转、token 保留且不入 DOM、无横向滚动、console 零错误）；全量 Python 测试 `1316 passed, 1 skipped`（较 2.9.1 基线 1309 新增 8 项，零回归），`compileall`、node 内联脚本解析、`pack.py --check`（170 个发布文件、禁入项 0）与既有重设计浏览器回归全绿。研判语义、provider、CLI 均未改动。
+
 ## 2.9.1 - 2026-10-09
 
 - 修复：导出的 CSV 改为带 BOM 的 UTF-8，中文 Windows 的 Excel 双击后结论不再乱码。日期列按文本写出，避免被挤成 `###`。JSONL 仍不带 BOM。日常查看仍建议用 XLSX。

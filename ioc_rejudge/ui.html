@@ -849,6 +849,7 @@
     <div class="topbar-meta">
       <span class="meta-item" id="meta-key" title="share key 状态"><span class="dot" id="meta-key-dot"></span><span id="meta-key-text">share key 加载中</span></span>
       <span class="meta-item" id="meta-cred" title="IOC Info 凭据状态"><span class="dot" id="meta-cred-dot"></span><span id="meta-cred-text">IOC Info 检测中</span></span>
+      <button class="ghost icon-btn" type="button" id="ui-version-toggle" aria-pressed="false">旧版</button>
       <button class="ghost icon-btn" type="button" id="theme-toggle" aria-pressed="false">浅色</button>
     </div>
   </div>
@@ -1420,6 +1421,21 @@
 <div class="toast-host" id="toast-host" aria-live="polite" aria-atomic="false"></div>
 <script>
 'use strict';
+/* Version switch: on a bare URL (no explicit ui param) honor the remembered
+   version; an explicit ui param always wins and never redirects. */
+(function bootstrapUiVersion() {
+  const UI_VERSION_KEY = 'ioc-rejudge-ui-version';
+  const params = new URLSearchParams(location.search);
+  if (params.has('ui')) return;
+  let stored = 'new';
+  try { stored = localStorage.getItem(UI_VERSION_KEY) || 'new'; } catch (err) { stored = 'new'; }
+  if (stored !== 'legacy' && stored !== 'new') stored = 'new';
+  if (stored === 'new') return;
+  const target = new URL(location.href);
+  target.searchParams.set('ui', stored);
+  history.replaceState(null, '', target.toString());
+  location.replace(target.toString());
+})();
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
 const $ = (id) => document.getElementById(id);
 const LONG_STRING = 160;
@@ -5083,11 +5099,28 @@ if (opsCacheToggle) {
   });
 }
 
+function bindUiVersionToggle() {
+  const button = $('ui-version-toggle');
+  if (!button) return;
+  const params = new URLSearchParams(location.search);
+  const current = params.get('ui') === 'legacy' ? 'legacy' : 'new';
+  const next = current === 'legacy' ? 'new' : 'legacy';
+  button.textContent = next === 'legacy' ? '旧版' : '切到新版';
+  button.setAttribute('aria-label', next === 'legacy' ? '切换到旧版界面' : '切换到新版界面');
+  button.addEventListener('click', () => {
+    try { localStorage.setItem('ioc-rejudge-ui-version', next); } catch (err) { /* 忽略 */ }
+    const target = new URL(location.href);
+    target.searchParams.set('ui', next);
+    location.assign(target.toString());
+  });
+}
+
 bindSourceToggle('lookup');
 bindSourceToggle('create');
 bindSourceToggle('restore');
 bindSourceToggle('scan');
 bindQueueDropZone();
+bindUiVersionToggle();
 initShell();
 maybeShowLegacyWorkbench();
 workbenchSyncControls();

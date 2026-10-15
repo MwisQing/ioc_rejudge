@@ -2,7 +2,7 @@
 
 > 操作本项目前先读本文件。完成有意义的变更后，更新底部进度记录。
 >
-> 当前版本为 `2.9.1`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收、项目内独立凭证文件、本地安全分享 bundle 和本地 share 助手 UI（含 IOC Info 查询、记住口令、可折叠 JSON 与 v0.7 漏检覆盖）。本版本同时提供离线 job/review/explain/history/health/cache 路线、CSV/XLSX 输入适配、结果 bundle 导出与本地 workbench，并收口研判正确性第一轮、统一时间边界和完整 Web UI 工作流。`2.9.0` 增加高频 `judge` 入口，以及 CLI 与本地页面共用的统一任务队列（入队、运行、结果、导出、解释、人工复核和结论对比）。
+> 当前版本为 `2.10.0`。它保留 v1.4.1 离线快照兼容入口，并已完成六个默认在线 provider、按 IOC/证据需求分流、逐接口日期缓存、完整研判结果缓存、离线回放、mock 端到端验收、项目内独立凭证文件、本地安全分享 bundle 和本地 share 助手 UI（含 IOC Info 查询、记住口令、可折叠 JSON 与 v0.7 漏检覆盖）。本版本同时提供离线 job/review/explain/history/health/cache 路线、CSV/XLSX 输入适配、结果 bundle 导出与本地 workbench，并收口研判正确性第一轮、统一时间边界和完整 Web UI 工作流。`2.10.0` 增加本地网页新版/旧版界面共存与切换（`/?ui=legacy` 旧版、默认 `/` 新版、按钮双向切换 + 本机记忆）。`2.9.0` 增加高频 `judge` 入口，以及 CLI 与本地页面共用的统一任务队列（入队、运行、结果、导出、解释、人工复核和结论对比）。
 
 ## 1. 阅读顺序
 
@@ -27,7 +27,7 @@
 
 | 项目 | 当前值 |
 |---|---|
-| 版本 | `2.9.1` |
+| 版本 | `2.10.0` |
 | 项目类型 | Python CLI |
 | 当前输入 | iocProducer 风格 JSONL 快照、裸 IOC 文件或重复 `--ioc`；workbench 另支持粘贴裸 IOC（offline 统一管线） |
 | 当前联网 | 裸 IOC 统一模式可按所选 provider 联网；`--offline` 与旧快照兼容模式不联网 |
@@ -201,7 +201,7 @@ ioc_rejudge/cli.py
 | `jobs_cli.py` | `jobs` 命令族与 offline/online runner |
 | `jobs_consumers.py` | 队列结果查看、导出、解释、人工 overlay 和结论对比 |
 | `share.py` / `share_text.py` | 本地口令保护的 AES-SIV token bundle、v0.7 形态自由文本扫描、流式严格扫描和 token restore |
-| `ui.py` + `ui.html` | 本地 share 助手：回环 HTTP 服务、单文件页面、可折叠 JSON、记住口令自动解锁、IOC Info lookup 和「脱敏并复制」 |
+| `ui.py` + `ui.html` + `ui_legacy.html` | 本地 share 助手 + 统一任务中心：回环 HTTP 服务、零外部资源单文件页面（设计 token/深浅主题/分段导航/KPI 卡）、可折叠 JSON、记住口令自动解锁、IOC Info lookup、「脱敏并复制」、队列粘贴/文件导入（`/api/jobs/import`）、结果筛选/分页/导出、解释侧面板、复核、键盘快捷键、运维面板（`/api/ops/status`）与移动端卡片化；`/?ui=legacy` 提供字节级恢复的旧版页面，`/?ui=` 白名单路由（非法/缺失回落新版、旧文件缺失回落新版非 500），两版切换按钮 + `localStorage` 版本记忆（`ioc-rejudge-ui-version`），`--legacy-workbench` 标记只注入新版 |
 
 当前公开兼容 API：
 
@@ -292,7 +292,7 @@ ioc_rejudge_cli_1.4.1/
 python -m pytest tests -q
 ```
 
-当前结果（2026-10-04 队列消费任务 12 后）：`1265 passed, 1 skipped`。skip 为 Windows 不适用的 POSIX 脚本执行探针；真实 Windows `provider_http.exe` 已由本地 HTTP 端到端验收覆盖。另含 GitHub Release 下载更新、本地凭证文件来源隔离、控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比（含 `operations=` 摘要与 `operational_changes`）、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间、逐接口日期缓存、完整研判结果缓存、评估时间 fingerprint、按目标 provider 依赖摘要与 sidecar 单次哈希、凭据回显值脱敏（六个 provider + `secret_values` 缓存边界 + 并发哨兵写入）、缓存索引性能、生命周期请求规划、最新 comment/context、过期误报出口、share bundle、share 助手 UI（安全门/回环/记住口令/IOC Info lookup/可折叠 JSON/脱敏并复制/历史可还原上限/端口回退）、输入坏行隔离/无界 nested 计数与物理行号/输出路径 sibling 预检与 os.replace-only 原子写入/流式 JSONL/`classification_unknown` 导出/`--strict`/release zip 语法与日历时间戳/NaN·Inf·TTL 溢出配置拒绝、scheme-aware 目标身份/同日 temporal `valid_until`（实质活动全量、未来事件 1µs、provider TTL、sidecar TTL 与未来 fetched_at 激活），发布 allow-list/忽略规则安全专项，以及离线路线 CLI（含 history）、CSV/XLSX 输入适配、结果 bundle 导出、cache inspect/cleanup、review 队列闭环和本地 workbench 持久化。
+当前结果（2026-10-15 新版/旧版共存后）：`1316 passed, 1 skipped`。skip 为 Windows 不适用的 POSIX 脚本执行探针；真实 Windows `provider_http.exe` 已由本地 HTTP 端到端验收覆盖。另含 GitHub Release 下载更新、本地凭证文件来源隔离、控制台可见性、逐 provider 进度耗时、`--diff-baseline` 迁移对比（含 `operations=` 摘要与 `operational_changes`）、Excel 评审列、电子表格公式注入、脏 `level` 批处理隔离、DGA 默认 UTC 时间、逐接口日期缓存、完整研判结果缓存、评估时间 fingerprint、按目标 provider 依赖摘要与 sidecar 单次哈希、凭据回显值脱敏（六个 provider + `secret_values` 缓存边界 + 并发哨兵写入）、缓存索引性能、生命周期请求规划、最新 comment/context、过期误报出口、share bundle、share 助手 UI（安全门/回环/记住口令/IOC Info lookup/可折叠 JSON/脱敏并复制/历史可还原上限/端口回退）、新版/旧版界面共存与切换（`/?ui=` 白名单路由、旧文件缺失回落新版非 500、两版切换按钮 + `localStorage` 版本记忆、`--legacy-workbench` 标记只注入新版）、输入坏行隔离/无界 nested 计数与物理行号/输出路径 sibling 预检与 os.replace-only 原子写入/流式 JSONL/`classification_unknown` 导出/`--strict`/release zip 语法与日历时间戳/NaN·Inf·TTL 溢出配置拒绝、scheme-aware 目标身份/同日 temporal `valid_until`（实质活动全量、未来事件 1µs、provider TTL、sidecar TTL 与未来 fetched_at 激活），发布 allow-list/忽略规则安全专项，以及离线路线 CLI（含 history）、CSV/XLSX 输入适配、结果 bundle 导出、cache inspect/cleanup、review 队列闭环和本地 workbench 持久化。
 
 本轮新增统一时间解析与比较边界回归：覆盖 aware/naive 混合、精确 recent/fresh 端点、未来/无效时间、负 Unix 时间、未来 WHOIS 注册日期、固定评估时刻和结果缓存。时间边界与 provider 工厂专项 15 项、人工校准 12 项通过；未使用真实 IOC、人工标签、网络请求或 ICP 凭据。
 
@@ -475,3 +475,5 @@ python -m pytest tests -q
 | 2026-10-04 | 队列消费任务 11：UI 面板合一与 KPI 卡 | 队列面板成为唯一任务中心：新增 `/api/jobs/explain|review|export|diff`（会话令牌 + Host/Origin、复核三值白名单幂等追加、导出经 export_id 受控下载零路径泄漏、diff 含 ok 与规范迁移报告、同 job 自比对 400 拒绝）；results 行惰性附 review_overlay；KPI 卡直接渲染 result_summary；workbench 面板默认隐藏（`--legacy-workbench`/`?legacy_workbench=1` opt-in，后端与 API 原样未动，浏览器回归改传 flag 无断言弱化）。专项 68、全量 `1260 passed, 1 skipped`（监工独立复跑）；真实子进程冒烟：解释/复核幂等/CSV 下载字节正确/面板隐藏/零外部资源/零路径泄漏全过（监工修正自 diff 测试场景——同 job 比对被正确拒绝是预期行为）。未提交、未发版。 |
 | 2026-10-04 | 队列消费任务 12：run 进度可见性收官 | `jobs run` 人读模式经 `_progress_tee` 组合回调接入 LiveProgress（claim 成功且非预启动取消后创建；心跳与渲染各自 try/except 异常隔离，心跳防线不削弱）；`--json` 不创建渲染、stdout 仅最终 JSON；UI runner 记录最近一条进度文本，`/api/jobs/status` 仅对 running 且匹配当前 runner 的 job 透出 `runner_progress`，结束清空。专项 83（全队列线）、全量 `1265 passed, 1 skipped`（监工独立复跑）；目视核验真实 `jobs run` 输出逐接口进度行（[provider] done/total + completed 永久行）与 judge 直跑渲染一致。第二阶段（任务 9-12）收官，两份队列规格全部实施完成。未提交、未发版。 |
 | 2026-10-05 | 路线图落盘 | 新增 `docs/ROADMAP.md` 作为“接着做”入口：当前状态快照（未提交清单、基线 1265）、已完成能力地图与关键语义、已知限制与设计决策（勿当 bug 修）、P1/P2 待开发清单（复核收件箱、自动运行、cwd 根治、README 重排、watch/通知/退役/进程级竞争测试/发版收口）与继续开发操作指引；CLAUDE.md 当前事实表加指针，保证后续任何会话可发现。仅文档变更。未提交、未发版。 |
+| 2026-10-15 | 前端重设计（Apple 风格） | 按 taste-skill 方法论整体重设计本地 UI：设计 token 体系（深色优先 + 浅色主题、WCAG AA 对比度）、52px 顶栏 + 分段模式导航（研判/脱敏/运维）、KPI 摘要卡、队列粘贴与文件导入（新增 `POST /api/jobs/import`，24MB 上限、staging 目录、保留 20 条）、结果表筛选/分页/导出菜单、解释侧面板（`#queue-detail-panel`，焦点陷阱 + 上一条/下一条）、复核三值流程、键盘快捷键、运维面板（新增 `GET /api/ops/status`）、移动端 390px 卡片化与增量渲染、reduced-motion 支持；`ui.html` 仍为零外部资源单文件（218 KB，1 个内联 script），既有 DOM id 与 API 契约全部保留。实现 10 个提交（slice 0-7 + 收口，`2ee46c0`..`f4562af`）；新增 `tests/test_ui_design_contract.py`（47 项）、`tests/browser_ui_redesign_regression.py`（Playwright 双视口端到端：粘贴→入队→运行→结果→筛选→解释→复核→导出，console 零错误、390px 无横向滚动、无长任务、reduced-motion 过渡≈0、token 不入 DOM）、扩展 `test_ui_jobs.py`/`test_ui_server.py`/`test_ui_operator_experience.py`。全量 `1309 passed, 1 skipped`（+23，零回归），`compileall`、node 内联脚本解析、单文件零外部资源检查、浏览器 E2E 独立复跑全绿；1280/390/浅色三张截图人工走查通过。研判语义、provider、CLI 均未改动。未推送、未发版。 |
+| 2026-10-15 | 新版/旧版 UI 共存与切换（2.10.0） | 本地网页新版/旧版共存：旧版从 `git 076e83a:ioc_rejudge/ui.html` 字节级恢复为 `ioc_rejudge/ui_legacy.html`（SHA256 `f071a476…a810`，110712 字节），经 `/?ui=legacy` 提供，默认 `/` 仍为新版；`ui` 白名单 `{"new","legacy"}`，非法/缺省回落新版，旧文件缺失回落新版非 500，鉴权先于选文件，`no-store` 与零外部资源单文件约束不变，`--legacy-workbench` 标记只注入新版。两版各加切换按钮（新版顶栏 ghost、旧版 mode-nav `button.secondary`）+ `localStorage['ioc-rejudge-ui-version']` 版本记忆：裸地址按记忆落版、显式 `ui` 参数优先且绝不跳转、非法记忆回落 `new`、点击整页导航保留 token。旧版仅 3 处外科手术式改动（title 加「（旧版）」、mode-nav 加按钮、既有 `<script>` 顶部加 bootstrap+绑定），既有 em-dash 占位符按「原样回退」保留，本轮新增文案不用 em-dash。新增 `tests/test_ui_version_switch.py`（服务端路由 8 项）、`tests/browser_ui_version_regression.py`（Playwright 1280/390 双视口：切换往返、记忆落版、显式参数不跳转、token 保留且不入 DOM、无横向滚动、console 零错误）。全量 `1316 passed, 1 skipped`（较 1309 基线 +8，零回归），`compileall`、node 双页脚本解析、`pack.py --check`（170 文件、禁入项 0、含 `ui_legacy.html`）、既有重设计浏览器回归全绿；1280/390 双版截图人工走查通过。研判语义、provider、CLI 均未改动。 |

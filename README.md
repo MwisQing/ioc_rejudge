@@ -68,7 +68,7 @@ python start-server.py
 python -m ioc_rejudge ui
 ```
 
-浏览器会自动打开带会话令牌的本地页面（默认端口 8731，被占用时自动换随机端口）。可用 `--port`、`--key-file`、`--bundle-dir`、`--cache-dir`、`--credentials-file`、`--jobs-dir`、`--legacy-workbench`、`--no-browser` 调整。默认缓存目录与研判 CLI 相同（`.\provider-cache`）；统一任务队列默认 `.\jobs`。当前目录存在 `credentials.local.json` 时会自动用来查 IOC Info，否则读本终端环境变量；也可显式 `--credentials-file`。页面以「队列」面板为任务中心（统一 jobs 入队/列表/运行、结果解释与复核、三格式导出、baseline diff、KPI 摘要；workbench 面板默认隐藏，可用 `--legacy-workbench` 显示），并保留脱敏协作流程：
+浏览器会自动打开带会话令牌的本地页面（默认端口 8731，被占用时自动换随机端口）。可用 `--port`、`--key-file`、`--bundle-dir`、`--cache-dir`、`--credentials-file`、`--jobs-dir`、`--legacy-workbench`、`--no-browser` 调整。默认缓存目录与研判 CLI 相同（`.\provider-cache`）；统一任务队列默认 `.\jobs`。当前目录存在 `credentials.local.json` 时会自动用来查 IOC Info，否则读本终端环境变量；也可显式 `--credentials-file`。页面以「队列」面板为任务中心（统一 jobs 入队/列表/运行、结果解释与复核、三格式导出、baseline diff、KPI 摘要；workbench 面板默认隐藏，可用 `--legacy-workbench` 显示）。页面提供新版/旧版界面切换：新版顶栏或旧版模式导航里的切换按钮可在两版间往返，选择写入本机 `localStorage`，裸地址打开时按记忆落版；`/?ui=legacy` 直达旧版，`/?ui=new` 或默认 `/` 为新版。切换与 `--legacy-workbench` 相互独立。并保留脱敏协作流程：
 
 1. 首次使用输入非空口令并勾选“生成新 key”（默认 `~\.ioc-share\key.json`）。成功后口令保存在 key 同目录的 `passphrase` 文件，下次启动自动解锁；点“清除口令”会同时清内存和该文件。
 2. “查询 IOC Info”：粘贴每行一个 IOC，或填本机文件路径。默认走 7 天缓存，没有缓存再请求接口；接口失败时可以用本机更旧的缓存。无凭据时只读缓存。查询结果是明文，页面可展开/合拢查看，不要直接发给云端。若页面提示查询超时，到启动 UI 的窗口按 Ctrl+C 停掉再启动，不要只刷新网页。
