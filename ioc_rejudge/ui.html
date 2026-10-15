@@ -6,42 +6,168 @@
 <title>IOC share 助手</title>
 <style>
   /* ============================================================
-     1. 设计 token（深色默认，浅色同构）
+     1. Design tokens: dark default, light overrides (DESIGN_V3 3.1)
      ============================================================ */
   :root {
     color-scheme: dark;
-    --bg-canvas: #101214;
-    --bg-surface: #17191C;
-    --bg-elevated: #1F2225;
-    --text-primary: #F2F4F6;
-    --text-secondary: #AEB4BB;
-    --text-tertiary: #7C848C;
-    --line: #2A2E33;
-    --line-strong: #3C4147;
-    --divider: #23262B;
-    --accent: #E8A33D;
-    --accent-hover: #F2B55C;
-    --accent-ink: #221606;
-    --accent-soft: #2B2418;
-    --verdict-black-bg: #0E1012;
-    --verdict-black-fg: #F2F4F6;
-    --verdict-gray-bg: #2A2E33;
-    --verdict-gray-fg: #DDE1E6;
-    --verdict-white-bg: #F0F2F4;
-    --verdict-white-fg: #1D2125;
-    --status-success: #79C2A0;
-    --status-no-data: #9AA1A9;
-    --status-error: #F08A80;
-    --status-disabled: #7C848C;
-    --danger-bg: #3A2225;
-    --danger-fg: #F2AFAF;
-    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    /* surfaces: one quiet cool ground, two raised planes */
+    --canvas: #101418;
+    --surface: #161B20;
+    --surface-raised: #1C2228;
+    --table-head: #141A20;
+    --line: #2A333B;
+    --line-strong: #3A454F;
+    --divider: #232B32;
+    --row-hover: #1A2027;
+    --row-selected: #20304D;
+    --selected-ink: #E9EEF4;
+    --text-primary: #E9EEF4;
+    --text-secondary: #B5C1CC;
+    --text-tertiary: #8C99A5;
+
+    /* one accent: action, current selection and normal progress */
+    --accent: #2E68DF;
+    --accent-hover: #4A82F0;
+    --accent-active: #2359C4;
+    --accent-ink: #F7FAFF;
+    --accent-soft: #1E2A3F;
+    --accent-focus: #7FB5FF;
+
+    /* threat semantics: black/gray/white are business names, not literal fills */
+    --threat-block-bg: #37181B;
+    --threat-block-fg: #FFB4AD;
+    --threat-block-border: #6B3430;
+    --threat-gray-bg: #232B32;
+    --threat-gray-fg: #D9E3EC;
+    --threat-gray-border: #46535D;
+    --threat-clear-bg: #16271F;
+    --threat-clear-fg: #A5E8C4;
+    --threat-clear-border: #365444;
+    --threat-review-bg: #302A16;
+    --threat-review-fg: #FFD28A;
+    --threat-review-border: #6D5A28;
+    --threat-unknown-bg: #1A2026;
+    --threat-unknown-fg: #A9B5C0;
+    --threat-unknown-border: #3B4550;
+
+    --status-success: #7CD9A7;
+    --status-no-data: #96A4B0;
+    --status-error: #FF9C94;
+    --status-disabled: #7A8793;
+    --danger-bg: #3A1C20;
+    --danger-fg: #FFB9B3;
+    --danger-border: #7B3A38;
+
+    --selection-bg: #2E68DF;
+    --selection-ink: #F7FAFF;
+    --caret-color: #7FB5FF;
+    --scrollbar-track: #101418;
+    --scrollbar-thumb: #3A454F;
+    --scrollbar-thumb-hover: #4A5661;
+
+    --shadow-control-hover: 0 1px 2px 0 rgba(8, 12, 20, 0.16);
+    --shadow-menu: 0 8px 20px -8px rgba(8, 12, 20, 0.28);
+    --shadow-drawer: 0 16px 40px -16px rgba(8, 12, 20, 0.34);
+    --shadow-modal: 0 24px 64px -24px rgba(8, 12, 20, 0.38);
+
+    --motion-fast: 140ms;
+    --motion-state: 180ms;
+    --motion-panel: 220ms;
+    --motion-overlay: 240ms;
+    --ease-out: cubic-bezier(0.2, 0, 0.2, 1);
+    --ease-in: cubic-bezier(0.4, 0, 0.6, 1);
+
+    --z-base: 0;
+    --z-table-head: 1;
+    --z-sticky-toolbar: 10;
+    --z-side-panel: 30;
+    --z-modal: 40;
+    --z-toast: 50;
+    --z-focus-skip: 60;
+    --z-block-inert: 70;
+  }
+
+  [data-theme="light"] {
+    color-scheme: light;
+    --canvas: #EDEFF2;
+    --surface: #F7F8FA;
+    --surface-raised: #FFFFFF;
+    --table-head: #EDEFF3;
+    --line: #C9D1D9;
+    --line-strong: #A8B3BC;
+    --divider: #E1E5EA;
+    --row-hover: #EFF3F7;
+    --row-selected: #D8E4FA;
+    --selected-ink: #16202A;
+    --text-primary: #16202A;
+    --text-secondary: #4A5763;
+    --text-tertiary: #617080;
+
+    --accent: #1B54D8;
+    --accent-hover: #0E41B4;
+    --accent-active: #0A318A;
+    --accent-ink: #FFFFFF;
+    --accent-soft: #E4EBFB;
+    --accent-focus: #1B54D8;
+
+    --threat-block-bg: #FBE9E7;
+    --threat-block-fg: #94231B;
+    --threat-block-border: #E39F97;
+    --threat-gray-bg: #E4E8ED;
+    --threat-gray-fg: #2A3540;
+    --threat-gray-border: #B9C3CC;
+    --threat-clear-bg: #E6F5EE;
+    --threat-clear-fg: #1B6B45;
+    --threat-clear-border: #A6D5BE;
+    --threat-review-bg: #FFF2D9;
+    --threat-review-fg: #8A560B;
+    --threat-review-border: #E4C37E;
+    --threat-unknown-bg: #E8EBEF;
+    --threat-unknown-fg: #4B5764;
+    --threat-unknown-border: #C2CBD4;
+
+    --status-success: #147A4C;
+    --status-no-data: #5F6B76;
+    --status-error: #B23429;
+    --status-disabled: #6A7681;
+    --danger-bg: #FDE7E5;
+    --danger-fg: #8F2019;
+    --danger-border: #E2A69F;
+
+    --selection-bg: #1B54D8;
+    --selection-ink: #FFFFFF;
+    --caret-color: #1B54D8;
+    --scrollbar-track: #EDEFF2;
+    --scrollbar-thumb: #A8B3BC;
+    --scrollbar-thumb-hover: #8C99A5;
+
+    --shadow-control-hover: 0 1px 2px 0 rgba(14, 22, 34, 0.10);
+    --shadow-menu: 0 8px 20px -8px rgba(14, 22, 34, 0.18);
+    --shadow-drawer: 0 16px 40px -16px rgba(14, 22, 34, 0.20);
+    --shadow-modal: 0 24px 64px -24px rgba(14, 22, 34, 0.24);
+  }
+
+  /* layout tokens (DESIGN_V3 3.5) */
+  :root {
+    --page-gutter: 16px;
+    --content-max: 1888px;
+    --topbar-h: 56px;
+    --task-rail: 320px;
+    --result-gap: 16px;
+    --side-panel-w: 520px;
+
+    --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Microsoft YaHei Mono", monospace;
-    --radius-panel: 10px;
-    --radius-card: 8px;
-    --radius-control: 6px;
+
     --radius-badge: 4px;
-    --radius-progress: 999px;
+    --radius-control: 6px;
+    --radius-card: 12px;
+    --radius-panel: 12px;
+    --radius-table: 8px;
+    --radius-pill: 999px;
+
+    --space-0: 0px;
+    --space-hair: 2px;
     --space-1: 4px;
     --space-2: 8px;
     --space-3: 12px;
@@ -50,148 +176,220 @@
     --space-6: 24px;
     --space-8: 32px;
     --space-10: 40px;
-    --shadow-1: 0 1px 2px rgba(8,10,12,.22);
-    --shadow-2: 0 6px 18px rgba(8,10,12,.26);
-    --shadow-3: 0 10px 28px rgba(8,10,12,.32);
-    --z-content: 0;
-    --z-sticky-header: 10;
-    --z-side-panel: 30;
-    --z-modal: 40;
-    --z-toast: 50;
-    --z-focus-skip: 60;
-    --motion-fast: 120ms;
-    --motion-state: 180ms;
-    --motion-panel: 220ms;
-    --motion-modal: 240ms;
-    --ease-standard: cubic-bezier(.2,0,.1,1);
-    --ease-exit: cubic-bezier(.3,0,.7,1);
+    --space-12: 48px;
   }
-  [data-theme="light"] {
-    color-scheme: light;
-    --bg-canvas: #F2F4F6;
-    --bg-surface: #F7F8FA;
-    --bg-elevated: #FCFCFD;
-    --text-primary: #202428;
-    --text-secondary: #5C636B;
-    --text-tertiary: #687079;
-    --line: #D7DBE0;
-    --line-strong: #B9BFC6;
-    --divider: #E7EAEE;
-    --accent: #8A5200;
-    --accent-hover: #A96A0A;
-    --accent-ink: #FFF8EC;
-    --accent-soft: #FFF2DE;
-    --verdict-black-bg: #1E2226;
-    --verdict-black-fg: #F5F6F7;
-    --verdict-gray-bg: #E3E6EA;
-    --verdict-gray-fg: #40464D;
-    --verdict-white-bg: #F8F9FA;
-    --verdict-white-fg: #383E45;
-    --status-success: #24744F;
-    --status-no-data: #687079;
-    --status-error: #B33631;
-    --status-disabled: #687079;
-    --danger-bg: #FDECEC;
-    --danger-fg: #8F1D22;
-    --shadow-1: 0 1px 2px rgba(24,28,32,.06);
-    --shadow-2: 0 6px 18px rgba(24,28,32,.08);
-    --shadow-3: 0 10px 28px rgba(24,28,32,.10);
+  @media (min-width: 1600px) {
+    :root {
+      --task-rail: 360px;
+      --result-gap: 20px;
+    }
   }
+  @media (max-width: 767px) {
+    :root {
+      --page-gutter: 12px;
+      --topbar-h: 88px;
+      --task-rail: 100vw;
+      --side-panel-w: 92vw;
+    }
+  }
+
+  /* ============================================================
+     2. Browser surfaces: selection, caret, scrollbar, focus ring
+     ============================================================ */
   * { box-sizing: border-box; }
-  html { background: var(--bg-canvas); }
+  [hidden] { display: none !important; }
+  html { background: var(--canvas); }
   body {
     margin: 0;
-    padding: 0 0 var(--space-10);
-    background: var(--bg-canvas);
+    padding: 0;
+    background: var(--canvas);
     color: var(--text-primary);
-    font: 400 14px/20px var(--font-sans);
+    font: 400 13px/18px var(--font-sans);
     -webkit-font-smoothing: antialiased;
   }
-  ::selection { background: var(--accent-soft); }
+  ::selection { background: var(--selection-bg); color: var(--selection-ink); }
+  input, textarea, select { caret-color: var(--caret-color); }
+  * { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+  *::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb); border-radius: var(--radius-pill);
+    border: 2px solid var(--scrollbar-track);
+  }
+  *::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+  :focus-visible {
+    outline: 2px solid var(--accent-focus);
+    outline-offset: 2px;
+    border-radius: inherit;
+  }
+  table.queue-results-table tbody tr:focus-visible,
+  table.queue-results-table tbody tr td:focus-visible,
+  .filter-chip:focus-visible,
+  .queue-results-wrap :focus-visible {
+    outline-offset: -2px;
+  }
   .skip-link {
     position: absolute; left: -9999px; top: 0; z-index: var(--z-focus-skip);
     background: var(--accent); color: var(--accent-ink);
     padding: 8px 14px; border-radius: 0 0 var(--radius-control) 0;
     font-size: 13px; text-decoration: none;
   }
-  .skip-link:focus-visible { left: 0; outline: 2px solid var(--accent-hover); outline-offset: 2px; }
+  .skip-link:focus-visible { left: 0; outline-offset: 2px; }
+  .icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+  .icon { width: 16px; height: 16px; flex: none; display: block; }
+  .icon-sm { width: 14px; height: 14px; }
 
-  /* 顶部工具栏：52px 持久模式导航 */
+  /* ============================================================
+     3. Topbar: 56px desktop, 88px two-row mobile (DESIGN_V3 5.1)
+     ============================================================ */
   .topbar {
-    position: sticky; top: 0; z-index: var(--z-sticky-header);
-    background: var(--bg-canvas);
+    position: sticky; top: 0; z-index: var(--z-sticky-toolbar);
+    height: var(--topbar-h);
+    background: var(--canvas);
     border-bottom: 1px solid var(--divider);
   }
   .topbar-inner {
-    max-width: 1360px; margin: 0 auto; padding: 0 var(--space-5);
-    min-height: 52px; display: flex; align-items: center; gap: var(--space-4);
+    max-width: var(--content-max); margin: 0 auto;
+    padding: 0 var(--page-gutter);
+    height: 100%; display: flex; align-items: center; gap: var(--space-4);
   }
   .brand {
-    margin: 0; font-size: 14px; line-height: 20px; font-weight: 600;
-    letter-spacing: -0.01em; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    margin: 0; font-size: 14px; line-height: 20px; font-weight: 650;
+    letter-spacing: -0.01em; white-space: nowrap; color: var(--text-primary);
   }
+  .brand-mark { width: 20px; height: 20px; flex: none; color: var(--accent); }
   .mode-nav {
-    display: flex; align-items: center; gap: 2px;
-    background: var(--bg-surface); border: 1px solid var(--line);
-    border-radius: var(--radius-control); padding: 2px;
+    display: flex; align-items: center; gap: var(--space-1);
   }
   .mode-nav a {
-    display: inline-flex; align-items: center; height: 30px; padding: 0 12px;
-    border-left: 2px solid transparent; border-radius: 4px;
+    display: inline-flex; align-items: center; height: 34px; padding: 0 var(--space-3);
+    border-bottom: 2px solid transparent;
     color: var(--text-secondary); text-decoration: none;
-    font-size: 13px; line-height: 18px;
-    transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+    font-size: 14px; line-height: 20px; font-weight: 500;
+    transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
   }
-  .mode-nav a:hover { color: var(--text-primary); border-left-color: var(--line-strong); }
+  .mode-nav a:hover { color: var(--text-primary); background: var(--row-hover); }
   .mode-nav a[aria-current="page"] {
-    background: var(--accent-soft); color: var(--text-primary); border-left-color: var(--accent);
+    background: var(--accent-soft); color: var(--text-primary); border-bottom-color: var(--accent);
   }
-  .mode-nav a:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 1px; }
   .mode-nav a[hidden] { display: none; }
-  .topbar-meta {
-    margin-left: auto; display: flex; align-items: center; gap: var(--space-3);
-    color: var(--text-secondary); font-size: 12px; line-height: 16px;
-    white-space: nowrap; overflow: hidden;
+  .topbar-spacer { flex: 1 1 auto; min-width: var(--space-2); }
+  .topbar-actions {
+    display: flex; align-items: center; gap: var(--space-2); white-space: nowrap;
   }
-  .topbar-meta .meta-item { display: inline-flex; align-items: center; gap: var(--space-1); }
-  .topbar-meta .meta-item[hidden] { display: none; }
-  .dot {
-    width: 6px; height: 6px; border-radius: 50%; background: var(--text-tertiary);
-    flex: none;
+  .status-wrap { position: relative; }
+  .status-summary {
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1);
+    height: 32px; min-width: 84px; padding: 0 var(--space-2);
+    font-size: 12px; font-weight: 500;
   }
+  .status-popover {
+    position: absolute; top: calc(100% + var(--space-2)); right: 0; z-index: var(--z-side-panel);
+    width: 320px; max-width: calc(100vw - 2 * var(--page-gutter));
+    padding: var(--space-3); border-radius: var(--radius-card);
+    background: var(--surface-raised); border: 1px solid var(--line);
+    box-shadow: var(--shadow-menu);
+    display: flex; flex-direction: column; gap: var(--space-2);
+    text-align: left;
+  }
+  .status-popover[hidden] { display: none; }
+  .status-line { display: flex; align-items: center; gap: var(--space-2); font-size: 13px; line-height: 18px; color: var(--text-secondary); }
+  .status-line .dot { flex: none; }
+  .status-popover .actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-tertiary); flex: none; }
   .dot.is-on { background: var(--status-success); }
-  .dot.is-off { background: var(--text-tertiary); }
+  .dot.is-off { background: var(--status-disabled); }
+  .dot.is-review { background: var(--threat-review-fg); }
+  .dot.is-error { background: var(--status-error); }
 
-  main { max-width: 1360px; margin: 0 auto; padding: 0 var(--space-5) var(--space-10); }
-  .mode-header {
-    display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-3);
-    margin: var(--space-6) 0 0;
+  /* ============================================================
+     4. Buttons and inputs (DESIGN_V3 6.1 / 6.2)
+     ============================================================ */
+  button {
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1);
+    height: 32px; padding: 0 var(--space-3);
+    border: 1px solid var(--accent); border-radius: var(--radius-control);
+    background: var(--accent); color: var(--accent-ink);
+    font: 500 14px/20px var(--font-sans);
+    cursor: pointer;
+    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-in);
   }
-  .mode-title { font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
-  .mode-sub { color: var(--text-secondary); font-size: 13px; line-height: 18px; margin: 0; }
-  body[data-mode] .mode-header:not([data-mode="__none__"]) { display: none; }
-  body[data-mode="queue"] .mode-header[data-mode="queue"],
-  body[data-mode="share"] .mode-header[data-mode="share"],
-  body[data-mode="ops"] .mode-header[data-mode="ops"],
-  body[data-mode="legacy"] .mode-header[data-mode="legacy"] { display: flex; }
+  button:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); box-shadow: var(--shadow-control-hover); }
+  button:active:not(:disabled) { background: var(--accent-active); border-color: var(--accent-active); transform: translateY(1px); }
+  button:disabled { background: var(--threat-unknown-bg); color: var(--status-disabled); border-color: var(--threat-unknown-bg); cursor: not-allowed; }
+  button.secondary {
+    background: var(--surface); color: var(--text-primary); border-color: var(--line-strong);
+  }
+  button.secondary:hover:not(:disabled) { background: var(--surface-raised); border-color: var(--accent); box-shadow: var(--shadow-control-hover); }
+  button.secondary:active:not(:disabled) { background: var(--row-hover); border-color: var(--accent); }
+  button.secondary:disabled { background: var(--surface); color: var(--status-disabled); border-color: var(--line); opacity: .48; }
+  button.ghost {
+    background: transparent; color: var(--text-secondary); border-color: transparent;
+  }
+  button.ghost:hover:not(:disabled) { background: var(--row-hover); color: var(--text-primary); border-color: transparent; box-shadow: none; }
+  button.ghost:active:not(:disabled) { background: var(--row-selected); color: var(--text-primary); }
+  button.ghost:disabled { background: transparent; color: var(--status-disabled); opacity: .48; }
+  button.icon-btn { padding: 0 var(--space-2); }
+  button.danger {
+    background: var(--danger-fg); border-color: var(--danger-fg); color: var(--canvas);
+  }
+  button.danger:hover:not(:disabled) { border-color: var(--danger-fg); background: var(--danger-fg); filter: brightness(.94); }
+  button.danger-outline {
+    background: transparent; color: var(--danger-fg); border-color: var(--danger-border);
+  }
+  button.danger-outline:hover:not(:disabled) { background: var(--danger-bg); border-color: var(--danger-fg); }
+  [aria-busy="true"] > .icon { display: none; }
 
-  .statusbar {
-    display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); align-items: center;
-    background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--radius-card);
-    padding: var(--space-3) var(--space-4); font-size: 13px; line-height: 18px; color: var(--text-secondary);
+  label {
+    display: block; margin: var(--space-2) 0 var(--space-1);
+    font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.01em;
+    color: var(--text-secondary);
   }
-  .statusbar b { color: var(--text-primary); font-weight: 600; }
-  .badge {
-    display: inline-flex; align-items: center; gap: var(--space-1);
-    padding: 1px 8px; border-radius: var(--radius-badge);
-    font-size: 11px; line-height: 16px; font-weight: 500;
-    border: 1px solid var(--line); color: var(--text-secondary); background: var(--bg-surface);
+  textarea, input[type="text"], input[type="password"], input[type="search"], select {
+    width: 100%; height: 32px; padding: 0 var(--space-2);
+    border: 1px solid var(--line-strong); border-radius: var(--radius-control);
+    background: var(--surface); color: var(--text-primary);
+    font: 400 13px/18px var(--font-sans);
+    transition: border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out);
   }
-  body.is-unlocked .badge { color: var(--status-success); border-color: var(--line-strong); }
+  textarea { min-height: 88px; height: auto; padding: var(--space-2); resize: vertical; }
+  textarea:hover, input[type="text"]:hover, input[type="password"]:hover, input[type="search"]:hover, select:hover {
+    background: var(--surface-raised); border-color: var(--line-strong);
+  }
+  textarea:focus, input[type="text"]:focus, input[type="password"]:focus, input[type="search"]:focus, select:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  textarea:disabled, input:disabled, select:disabled {
+    background: var(--canvas); color: var(--status-disabled); cursor: not-allowed;
+  }
+  input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
+  .radio { display: inline-flex; align-items: center; gap: var(--space-1); margin: 0; font-size: 13px; font-weight: 400; color: var(--text-secondary); }
+  .field-label { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--text-secondary); letter-spacing: 0.01em; }
+  .segmented {
+    display: inline-flex; align-items: center; gap: var(--space-1); margin: var(--space-2) 0;
+    padding: var(--space-hair); border: 1px solid var(--line); border-radius: var(--radius-control);
+    background: var(--surface);
+  }
+  .segmented label { margin: 0; padding: var(--space-1) var(--space-3); border-radius: var(--radius-badge); cursor: pointer; }
+  .segmented input { margin-right: var(--space-1); }
+  .segmented label:has(input:checked) { background: var(--accent-soft); color: var(--text-primary); }
+
+  /* ============================================================
+     5. Panels, notes, results, tables
+     ============================================================ */
+  main { max-width: var(--content-max); margin: 0 auto; padding: 0 var(--page-gutter) var(--space-8); }
+  .error {
+    margin: var(--space-3) 0 0; padding: var(--space-2) var(--space-3);
+    background: var(--danger-bg); border: 1px solid var(--danger-border); color: var(--danger-fg);
+    border-radius: var(--radius-control); font-size: 13px; line-height: 18px;
+  }
+  .error[hidden] { display: none; }
   .panel {
-    background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--radius-panel);
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel);
     padding: var(--space-4); margin-top: var(--space-4);
   }
+  .panel[hidden] { display: none; }
   body[data-mode] .panel[data-mode]:not([data-mode=""]) { display: none; }
   body[data-mode="queue"] .panel[data-mode="queue"]:not([hidden]),
   body[data-mode="share"] .panel[data-mode="share"]:not([hidden]),
@@ -199,565 +397,592 @@
   body[data-mode="legacy"] .panel[data-mode="legacy"]:not([hidden]),
   body[data-mode="legacy"] .panel[data-mode="queue"]:not([hidden]),
   body.has-legacy-workbench .panel[data-mode="legacy"]:not([hidden]) { display: block; }
-  .panel[hidden] { display: none; }
   .panel h2 { font-size: 16px; line-height: 22px; font-weight: 600; margin: 0 0 var(--space-1); }
+  .panel > .mode-title { font-size: 18px; line-height: 24px; font-weight: 600; letter-spacing: -0.015em; }
   .panel .hint { color: var(--text-secondary); font-size: 13px; line-height: 18px; margin: 0 0 var(--space-3); }
-  .panel > .mode-title { font-size: 20px; line-height: 26px; letter-spacing: -0.01em; }
-  #ops-panel > .statusbar { background: transparent; border: 0; padding: 0; border-radius: 0; }
-  label {
-    display: block; margin: var(--space-2) 0 var(--space-1);
-    font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.01em;
-    color: var(--text-secondary);
-  }
-  textarea, input[type="text"], input[type="password"], select {
-    width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius-control);
-    padding: 8px 10px; font: 400 13px/18px var(--font-mono);
-    background: var(--bg-surface); color: var(--text-primary);
-    transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
-  }
-  textarea { min-height: 120px; resize: vertical; }
-  textarea[readonly] { background: var(--bg-elevated); color: var(--text-secondary); }
-  textarea:focus-visible, input[type="text"]:focus-visible,
-  input[type="password"]:focus-visible, select:focus-visible {
-    outline: none; border-color: var(--accent); box-shadow: var(--shadow-1);
-  }
-  input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--status-error); }
-  .row { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: center; }
-  .row label { display: inline-flex; gap: var(--space-1); align-items: center; margin: 0; }
-  .segmented {
-    display: inline-flex; align-items: center; gap: 2px;
-    background: var(--bg-surface); border: 1px solid var(--line);
-    border-radius: var(--radius-control); padding: 2px; margin-bottom: var(--space-2);
-  }
-  .segmented label {
-    display: inline-flex; align-items: center; gap: var(--space-1);
-    margin: 0; padding: 0 var(--space-3); height: 30px; border-radius: 4px;
-    font-size: 13px; line-height: 18px; font-weight: 400; letter-spacing: 0;
-    color: var(--text-secondary); cursor: pointer;
-    transition: background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
-  }
-  .segmented label:hover { color: var(--text-primary); }
-  .segmented label:has(input:checked) {
-    background: var(--accent-soft); color: var(--text-primary);
-    box-shadow: inset 2px 0 0 var(--accent);
-  }
-  .segmented label:has(input:focus-visible) { outline: 2px solid var(--accent-hover); outline-offset: 1px; }
-  .segmented input[type="radio"] { width: 14px; height: 14px; }
-  button {
-    display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1);
-    height: 36px; padding: 0 var(--space-4);
-    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
-    border-radius: var(--radius-control); font: 500 14px/20px var(--font-sans); cursor: pointer;
-    transition: background var(--motion-fast) var(--ease-standard),
-      border-color var(--motion-fast) var(--ease-standard),
-      transform var(--motion-fast) var(--ease-standard);
-  }
-  button:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
-  button:active:not(:disabled) { transform: translateY(1px) scale(.995); }
-  button:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 2px; }
-  button:disabled { opacity: .48; cursor: not-allowed; }
-  button.secondary {
-    background: var(--bg-surface); border-color: var(--line-strong); color: var(--text-primary);
-  }
-  button.secondary:hover:not(:disabled) { background: var(--bg-elevated); border-color: var(--accent); }
-  button.ghost {
-    background: transparent; border-color: transparent; color: var(--text-secondary);
-  }
-  button.ghost:hover:not(:disabled) { background: var(--bg-elevated); border-color: transparent; color: var(--text-primary); }
-  button.icon-btn { height: 28px; padding: 0 var(--space-2); font-size: 13px; }
-  .error {
-    background: var(--danger-bg); color: var(--danger-fg);
-    border: 1px solid var(--danger-fg); border-radius: var(--radius-card);
-    padding: var(--space-3) var(--space-4); margin-top: var(--space-4);
-    font-size: 13px; line-height: 18px; white-space: pre-wrap;
-    position: sticky; top: 60px; z-index: var(--z-sticky-header);
-  }
+  .panel-head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-2); }
+  .panel-head .mode-title { margin: 0; }
+  .panel-head-actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .section-head { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-3) 0 var(--space-2); }
+  .section-title { font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.01em; color: var(--text-secondary); margin: 0; }
+  .note { font-size: 12px; line-height: 16px; color: var(--text-secondary); margin: var(--space-2) 0 0; }
+  .note[hidden] { display: none; }
+  .flash { color: var(--status-success); font-size: 12px; line-height: 16px; margin-left: var(--space-2); }
+  .flash[hidden] { display: none; }
+  .stats { font-size: 12px; line-height: 16px; color: var(--text-secondary); margin: var(--space-2) 0 0; overflow-wrap: anywhere; }
+  .stats[hidden] { display: none; }
+  .stats.is-error { color: var(--danger-fg); }
   .result { margin-top: var(--space-3); }
-  .result[hidden], .error[hidden], .flash[hidden], .stats[hidden] { display: none; }
-  .flash { color: var(--status-success); font-size: 13px; margin-left: var(--space-3); }
-  .bundle-id {
-    font: 500 14px/20px var(--font-mono);
-    background: var(--bg-elevated); border: 1px dashed var(--line-strong); border-radius: var(--radius-control);
-    padding: var(--space-2) var(--space-3); display: inline-block; margin: var(--space-1) 0;
-    user-select: all;
+  .result[hidden] { display: none; }
+  .unavailable {
+    margin: var(--space-2) 0; padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--danger-border); border-radius: var(--radius-control);
+    background: var(--danger-bg); color: var(--danger-fg); font-size: 13px; line-height: 18px;
   }
-  .stats {
-    color: var(--text-secondary); font-size: 13px; line-height: 18px; margin: var(--space-2) 0;
-    font-variant-numeric: tabular-nums;
+  .unavailable[hidden] { display: none; }
+  .row { display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: flex-end; }
+  .row > * { flex: 1 1 14rem; min-width: 0; }
+  .actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-2); }
+  .actions > .stats { margin: 0; }
+  .table-wrap {
+    border: 1px solid var(--line); border-radius: var(--radius-table);
+    overflow: hidden; background: var(--surface);
   }
-  .note {
-    background: var(--bg-elevated); border: 1px solid var(--line); color: var(--text-secondary);
-    border-radius: var(--radius-control); padding: var(--space-2) var(--space-3);
-    font-size: 13px; line-height: 18px; margin-top: var(--space-3);
-  }
-  .actions { margin-top: var(--space-3); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-  .queue-kpi {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
-    gap: 0; margin: var(--space-3) 0 var(--space-1);
-    background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--radius-card);
-    overflow: hidden;
-  }
-  .queue-kpi[hidden] { display: none; }
-  .queue-kpi .kpi-card {
-    background: transparent; border: 0; border-right: 1px solid var(--divider);
-    border-radius: 0; padding: var(--space-3); text-align: left;
-  }
-  .queue-kpi .kpi-card:last-child { border-right: 0; }
-  .queue-kpi .kpi-card.is-actionable { cursor: pointer; }
-  .queue-kpi .kpi-card.is-actionable:hover { background: var(--bg-elevated); }
-  .queue-kpi .kpi-card.is-selected { background: var(--accent-soft); }
-  .queue-kpi .kpi-card:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: -2px; }
-  .queue-kpi .kpi-card .kpi-label {
-    display: block; color: var(--text-secondary); font-size: 12px; line-height: 16px;
-    font-weight: 500; letter-spacing: 0.01em;
-  }
-  .queue-kpi .kpi-card .kpi-value {
-    display: block; font-size: 20px; line-height: 24px; font-weight: 600; color: var(--text-primary);
-    font-variant-numeric: tabular-nums;
-  }
-  .queue-kpi .kpi-card .kpi-detail {
-    display: block; color: var(--status-error); font-size: 11px; line-height: 14px;
-    font-weight: 500; word-break: break-word;
-  }
-  .panel-head { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
-  .panel-head-actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
-  .section-head { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-5); }
-  .section-title { font-size: 16px; line-height: 22px; font-weight: 600; margin: 0; }
-  .field-label {
+  table { border-collapse: collapse; width: 100%; }
+  thead th {
+    height: 40px; padding: var(--space-2) var(--space-3); text-align: left;
     font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.01em;
-    color: var(--text-secondary);
+    color: var(--text-secondary); background: var(--table-head);
+    border-bottom: 1px solid var(--line-strong); white-space: nowrap;
   }
-  input[type="radio"], input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; flex: none; }
-  .queue-input { margin-top: var(--space-2); }
-  .queue-input textarea { min-height: 160px; }
-  .queue-mode-row { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin-top: var(--space-3); }
-  .queue-mode-row label.radio {
-    display: inline-flex; align-items: center; gap: var(--space-2); margin: 0;
-    font-size: 13px; line-height: 18px; font-weight: 400; letter-spacing: 0;
-    color: var(--text-primary); cursor: pointer;
-  }
-  .queue-file-row { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
-  .queue-file-row[hidden] { display: none; }
-  .queue-file-row .stats { margin: 0; }
-  .queue-submit-row { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-3); flex-wrap: wrap; }
-  .queue-submit-row .stats { margin: 0; flex: 1 1 12rem; }
-  .queue-progress {
-    height: 4px; border-radius: var(--radius-progress); background: var(--bg-elevated);
-    overflow: hidden; min-width: 72px;
-  }
-  .queue-progress-fill {
-    display: block; height: 100%; width: 100%; background: var(--accent);
-    transform-origin: left center; transform: scaleX(0);
-    transition: transform var(--motion-state) var(--ease-standard);
-  }
-  .queue-progress-fill.is-failed { background: var(--status-error); }
-  .queue-progress-fill.is-done { background: var(--status-success); }
-  .queue-progress-text {
-    display: block; margin-top: var(--space-1); font-size: 11px; line-height: 14px;
-    color: var(--text-tertiary); font-variant-numeric: tabular-nums;
-  }
-  .queue-list-table .queue-job-id { font-family: var(--font-mono); font-size: 13px; }
-  .queue-list-table td { vertical-align: middle; }
-  .toast-host {
-    position: fixed; right: var(--space-5); bottom: var(--space-5); z-index: var(--z-toast);
-    display: flex; flex-direction: column; gap: var(--space-2);
-    max-width: min(420px, calc(100vw - var(--space-8)));
-    pointer-events: none;
-  }
-  .toast {
-    pointer-events: auto;
-    background: var(--bg-elevated); color: var(--text-primary);
-    border: 1px solid var(--line); border-left: 3px solid var(--text-secondary);
-    border-radius: var(--radius-control); box-shadow: var(--shadow-3);
+  tbody td {
     padding: var(--space-2) var(--space-3); font-size: 13px; line-height: 18px;
-    opacity: 0; transform: translateY(4px);
-    transition: opacity var(--motion-modal) var(--ease-standard), transform var(--motion-modal) var(--ease-standard);
+    border-bottom: 1px solid var(--divider); vertical-align: top; overflow-wrap: anywhere;
   }
-  .toast.is-visible { opacity: 1; transform: translateY(0); }
-  .toast.is-success { border-left-color: var(--status-success); }
-  .toast.is-error { border-left-color: var(--status-error); }
-  .toast.is-info { border-left-color: var(--text-secondary); }
-  .icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
-  .visually-hidden {
-    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
-  }
-  .results-toolbar {
-    position: sticky; top: 52px; z-index: var(--z-sticky-header);
-    background: var(--bg-surface); border-bottom: 1px solid var(--divider);
-    padding: var(--space-3) 0; margin-top: var(--space-3);
-    display: flex; flex-direction: column; gap: var(--space-2);
-  }
-  .results-toolbar-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-  .results-headline { margin: 0; color: var(--text-primary); font-weight: 500; }
-  .results-toolbar-actions {
-    margin-left: auto; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
-  }
-  .filter-group { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
-  .filter-chip {
-    height: 32px; padding: 0 var(--space-3);
-    background: var(--bg-surface); border: 1px solid var(--line-strong);
-    color: var(--text-secondary); border-radius: var(--radius-control);
-    font-size: 13px; font-weight: 400;
-  }
-  .filter-chip:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-surface); color: var(--text-primary); }
-  .filter-chip[aria-pressed="true"] {
-    background: var(--accent-soft); border-color: var(--accent); color: var(--text-primary);
-  }
-  .queue-query { width: min(240px, 100%); margin-left: auto; font-family: var(--font-sans); }
-  .inline-field {
-    font-size: 12px; line-height: 16px; color: var(--text-secondary);
-    margin: 0; font-weight: 500; letter-spacing: 0.01em;
-  }
-  .queue-page-size, .queue-baseline {
-    width: auto; min-width: 6rem; max-width: 100%;
-    font-family: var(--font-sans); font-size: 13px;
-  }
-  .menu-wrap { position: relative; }
-  .menu {
-    position: absolute; right: 0; top: calc(100% + var(--space-1)); z-index: var(--z-side-panel);
-    min-width: 10rem; padding: var(--space-1);
-    background: var(--bg-elevated); border: 1px solid var(--line);
-    border-radius: var(--radius-control); box-shadow: var(--shadow-2);
-    display: flex; flex-direction: column; gap: 2px;
-  }
-  .menu[hidden] { display: none; }
-  .menu button {
-    justify-content: flex-start; height: 32px; padding: 0 var(--space-2);
-    background: transparent; border-color: transparent; color: var(--text-primary);
-    font-size: 13px; font-weight: 400;
-  }
-  .menu button:hover:not(:disabled) { background: var(--accent-soft); border-color: transparent; }
-  .batch-bar {
-    display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
-    background: var(--accent-soft); border: 1px solid var(--line);
-    border-radius: var(--radius-card); padding: var(--space-2) var(--space-3);
-    margin-top: var(--space-2);
-  }
-  .batch-bar[hidden] { display: none; }
-  .batch-bar .stats { margin: 0; color: var(--text-primary); }
-  .verdict-badge {
-    display: inline-block; height: 22px; line-height: 16px; padding: 2px 8px;
-    border-radius: var(--radius-badge); font-size: 12px; font-weight: 500; white-space: nowrap;
-  }
-  .verdict-badge.is-black { background: var(--verdict-black-bg); color: var(--verdict-black-fg); border: 1px solid var(--line-strong); }
-  .verdict-badge.is-gray { background: var(--verdict-gray-bg); color: var(--verdict-gray-fg); }
-  .verdict-badge.is-white { background: var(--verdict-white-bg); color: var(--verdict-white-fg); }
-  .verdict-badge.is-review { background: var(--accent); color: var(--accent-ink); }
-  .verdict-badge.is-unknown { background: var(--bg-elevated); color: var(--text-secondary); border: 1px solid var(--line); }
-  .review-badge {
-    display: inline-block; height: 20px; line-height: 16px; padding: 1px 6px;
-    border-radius: var(--radius-badge); font-size: 11px; font-weight: 500;
-    border: 1px solid var(--line); background: var(--bg-elevated); color: var(--text-secondary);
-  }
-  .review-badge.is-approved { color: var(--status-success); }
-  .review-badge.is-rejected { color: var(--status-error); }
-  .review-badge.is-pending { color: var(--accent); }
-  .provider-cell { display: flex; flex-direction: column; gap: 2px; }
-  .provider-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-  .provider-chip {
-    display: inline-flex; align-items: center; gap: 2px;
-    height: 20px; padding: 1px 6px; border-radius: var(--radius-badge);
-    border: 1px solid var(--line); background: var(--bg-surface);
-    font-size: 11px; line-height: 16px; font-weight: 500; white-space: nowrap;
-  }
-  .provider-chip.is-success { color: var(--status-success); }
-  .provider-chip.is-no_data { color: var(--status-no-data); }
-  .provider-chip.is-error { color: var(--status-error); }
-  .provider-chip.is-disabled { color: var(--status-disabled); }
-  .provider-chip .chip-icon { width: 8px; height: 8px; flex: none; }
-  .queue-results-wrap { max-height: 70vh; overflow: auto; }
-  .queue-results-table { min-width: 1080px; }
-  .queue-results-table thead th {
-    position: sticky; top: 0; z-index: var(--z-content); background: var(--bg-surface);
-  }
-  .queue-results-table .col-select { width: 36px; text-align: center; }
-  .queue-results-table .col-id { width: 68px; }
-  .queue-results-table .col-conclusion { width: 140px; }
-  .queue-results-table .col-route { width: 96px; }
-  .queue-results-table .col-review { width: 110px; }
-  .queue-results-table .col-confidence { width: 80px; text-align: right; }
-  .queue-results-table .col-provider { width: 220px; }
-  .queue-results-table .col-url { width: 180px; }
-  .queue-results-table .col-summary { min-width: 260px; }
-  .queue-results-table td.cell-id, .queue-results-table td.cell-route { font-family: var(--font-mono); font-size: 13px; }
-  .queue-results-table td.cell-ioc { font-family: var(--font-mono); font-size: 13px; max-width: 320px; }
-  .queue-results-table td.cell-confidence { text-align: right; font-variant-numeric: tabular-nums; }
-  .queue-results-table td.cell-select { text-align: center; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: var(--row-hover); }
+  .wrap { white-space: normal; overflow-wrap: anywhere; }
   .ellipsis { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .clamp-2 {
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     overflow: hidden; white-space: normal; word-break: break-word;
   }
-  .conclusion-cell { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
-  .conclusion-cell .disposition-text {
-    font-size: 11px; line-height: 14px; color: var(--text-secondary); font-family: var(--font-mono);
+  .badge {
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    padding: 1px 6px; border-radius: var(--radius-badge);
+    font-size: 11px; line-height: 16px; font-weight: 500;
+    border: 1px solid var(--line); color: var(--text-secondary); background: var(--surface);
   }
+  body.is-unlocked .badge { color: var(--status-success); border-color: var(--line-strong); }
+  .verdict-badge {
+    display: inline-block; height: 22px; padding: 3px 6px;
+    border-radius: var(--radius-badge); font-size: 12px; line-height: 14px; font-weight: 500;
+    white-space: nowrap; border: 1px solid transparent;
+  }
+  .verdict-badge.is-black { background: var(--threat-block-bg); color: var(--threat-block-fg); border-color: var(--threat-block-border); }
+  .verdict-badge.is-gray { background: var(--threat-gray-bg); color: var(--threat-gray-fg); border-color: var(--threat-gray-border); }
+  .verdict-badge.is-white { background: var(--threat-clear-bg); color: var(--threat-clear-fg); border-color: var(--threat-clear-border); }
+  .verdict-badge.is-review { background: var(--threat-review-bg); color: var(--threat-review-fg); border-color: var(--threat-review-border); }
+  .verdict-badge.is-unknown { background: var(--threat-unknown-bg); color: var(--threat-unknown-fg); border-color: var(--threat-unknown-border); }
+  .review-badge {
+    display: inline-block; height: 20px; padding: 1px 6px;
+    border-radius: var(--radius-badge); font-size: 11px; line-height: 16px; font-weight: 500;
+    border: 1px solid var(--line); background: var(--surface-raised); color: var(--text-secondary);
+  }
+  .review-badge.is-approved { color: var(--threat-clear-fg); border-color: var(--threat-clear-border); background: var(--threat-clear-bg); }
+  .review-badge.is-rejected { color: var(--threat-block-fg); border-color: var(--threat-block-border); background: var(--threat-block-bg); }
+  .review-badge.is-pending { color: var(--threat-review-fg); border-color: var(--threat-review-border); background: var(--threat-review-bg); }
+  .state-chip {
+    display: inline-flex; align-items: center; gap: var(--space-hair);
+    height: 20px; padding: 1px 6px; border-radius: var(--radius-badge);
+    font-size: 11px; line-height: 16px; font-weight: 500; white-space: nowrap;
+    border: 1px solid var(--line); background: var(--surface-raised); color: var(--text-secondary);
+  }
+  .state-chip.is-ok { color: var(--status-success); }
+  .state-chip.is-warn { color: var(--threat-review-fg); }
+  .state-chip.is-error { color: var(--status-error); }
+  .provider-cell { display: flex; flex-direction: column; gap: var(--space-hair); min-width: 0; }
+  .provider-chips { display: flex; flex-wrap: nowrap; gap: var(--space-1); min-width: 0; overflow: hidden; }
+  .provider-chip {
+    display: inline-flex; align-items: center; gap: var(--space-hair);
+    height: 20px; padding: 1px 6px; border-radius: var(--radius-badge);
+    border: 1px solid var(--line); background: var(--surface-raised);
+    font-size: 11px; line-height: 16px; font-weight: 500; white-space: nowrap;
+  }
+  .provider-chip::before {
+    content: ""; width: 8px; height: 8px; border-radius: 50%;
+    background: currentColor; flex: none;
+  }
+  .provider-chip { flex: 0 1 auto; min-width: 0; }
+  .provider-chip .provider-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .provider-chip.is-more { flex: none; color: var(--text-tertiary); }
+  .provider-chip.is-more::before { content: none; }
+  .provider-chip.is-success { color: var(--status-success); }
+  .provider-chip.is-no_data { color: var(--status-no-data); }
+  .provider-chip.is-error { color: var(--status-error); }
+  .provider-chip.is-disabled { color: var(--status-disabled); }
+  .provider-chip .chip-icon { width: 8px; height: 8px; flex: none; }
+  .conclusion-cell { display: flex; flex-direction: column; gap: var(--space-hair); align-items: flex-start; }
+  .conclusion-cell .disposition-text { font-size: 11px; line-height: 14px; color: var(--text-secondary); font-family: var(--font-mono); }
   .row-select { width: 16px; height: 16px; }
-  .skeleton-block {
-    display: block; height: 12px; border-radius: var(--radius-badge);
-    background: var(--bg-elevated);
-  }
-  .skeleton-row td { padding: 9px 10px; }
+  .skeleton-block { display: block; height: 12px; border-radius: var(--radius-badge); background: var(--surface-raised); }
+  .skeleton-row td { height: 36px; }
   .json-skeleton { display: grid; gap: var(--space-2); margin: var(--space-2) 0; }
   .json-skeleton .skeleton-block { height: 18px; }
+  /* ============================================================
+     6. Queue workspace: 320/360px task rail + result ledger
+     ============================================================ */
+  #queue-panel.queue-workspace {
+    grid-template-columns: var(--task-rail) minmax(0, 1fr);
+    gap: var(--result-gap);
+    align-items: start;
+    padding: 0; border: 0; background: transparent; margin-top: var(--space-4);
+  }
+  body[data-mode="queue"] #queue-panel.queue-workspace:not([hidden]) { display: grid; }
+  .share-layout { display: none; }
+  body[data-mode="share"] .share-layout { display: grid; }
+  .task-rail {
+    display: flex; flex-direction: column; gap: var(--space-2);
+    min-width: 0;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius-panel); padding: var(--space-3);
+    max-height: calc(100vh - var(--topbar-h) - var(--space-6));
+    position: sticky; top: calc(var(--topbar-h) + var(--space-3));
+  }
+  .rail-head { display: flex; align-items: center; gap: var(--space-2); height: 48px; }
+  .rail-title { font-size: 18px; line-height: 24px; font-weight: 600; letter-spacing: -0.015em; margin: 0; }
+  .rail-head-actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-1); }
+  .rail-head-actions button { height: 28px; padding: 0 var(--space-2); font-size: 12px; }
+  .queue-kpi { display: flex; align-items: center; gap: var(--space-3); height: 32px; min-width: 0; }
+  .queue-kpi[hidden] { display: none; }
+  .queue-kpi .kpi-field {
+    display: inline-flex; align-items: baseline; gap: var(--space-1);
+    height: 32px; padding: 0; border: 0; background: transparent; color: inherit;
+    font: inherit; min-width: 0;
+  }
+  .queue-kpi .kpi-field .kpi-label { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--text-secondary); }
+  .queue-kpi .kpi-field .kpi-value { font-size: 14px; line-height: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .queue-kpi .kpi-field.is-actionable { cursor: pointer; border-radius: var(--radius-badge); padding: 0 var(--space-1); }
+  .queue-kpi .kpi-field.is-actionable:hover { background: var(--row-hover); }
+  .queue-kpi .kpi-field.is-actionable[aria-pressed="true"] { background: var(--accent-soft); }
+  .queue-kpi .kpi-field:focus-visible { outline-offset: 1px; }
+  .queue-status-line { margin: 0; font-size: 12px; line-height: 16px; color: var(--text-tertiary); }
+  .rail-composer {
+    border: 1px solid var(--line); border-radius: var(--radius-card);
+    background: var(--surface-raised); padding: var(--space-2);
+    display: flex; flex-direction: column; gap: var(--space-1);
+  }
+  .rail-composer[hidden] { display: none; }
+  .rail-composer textarea { height: 88px; min-height: 88px; }
+  .rail-composer .drop-zone { min-height: 28px; padding: var(--space-1) var(--space-2); }
+  .rail-composer .note { margin: 0; }
+  .queue-mode-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; min-height: 20px; }
+  .queue-file-row { display: flex; align-items: center; gap: var(--space-2); }
+  .queue-file-row[hidden] { display: none; }
+  .queue-file-row .stats { margin: 0; }
+  .queue-submit-row { display: grid; grid-template-columns: minmax(84px, 1fr) auto; align-items: center; gap: var(--space-2); }
+  .queue-submit-row .stats { margin: 0; flex: 1 1 auto; min-width: 0; }
+  #queue-panel #queue-enqueue { flex: 0 0 auto; min-width: 84px; }
+  .drop-zone {
+    display: flex; align-items: center; justify-content: center; min-height: 48px;
+    padding: var(--space-3); text-align: center;
+    border: 1px dashed var(--line-strong); border-radius: var(--radius-control);
+    background: var(--surface); color: var(--text-secondary); font-size: 12px; line-height: 16px;
+    cursor: pointer;
+    transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out);
+  }
+  .drop-zone.dragover, .drop-zone:focus-visible { border-color: var(--accent); background: var(--accent-soft); color: var(--text-primary); }
+  .drop-zone[aria-disabled="true"] { cursor: not-allowed; opacity: .48; }
+  .rail-tasks { min-height: 0; overflow-y: auto; }
+  table.queue-list-table { border-collapse: separate; border-spacing: 0; }
+  table.queue-list-table thead { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  table.queue-list-table tbody tr {
+    display: block; padding: 6px var(--space-2); margin-bottom: var(--space-2);
+    border: 0; border-radius: var(--radius-card);
+    background: var(--surface); cursor: pointer;
+    transition: background var(--motion-state) var(--ease-out);
+  }
+  table.queue-list-table tbody tr:hover { background: var(--row-hover); }
+  table.queue-list-table tbody tr.is-selected { background: var(--row-selected); }
+  table.queue-list-table tbody tr.is-selected .task-id { color: var(--selected-ink); }
+  table.queue-list-table tbody td { display: block; padding: 0; border: 0; }
+  .task-line { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .task-line + .task-line { margin-top: 0; }
+  .task-line .queue-progress { flex: 1 1 auto; }
+  .task-id {
+    font-family: var(--font-mono); font-size: 14px; line-height: 20px; font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    min-width: 0; flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .task-count {
+    margin-left: auto; font-size: 12px; line-height: 16px; color: var(--text-secondary);
+    font-variant-numeric: tabular-nums; flex: none; white-space: nowrap;
+  }
+  .task-meta {
+    font-size: 12px; line-height: 16px; color: var(--text-secondary);
+    min-width: 0; flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .task-actions { display: flex; align-items: center; gap: var(--space-1); margin-left: auto; }
+  .task-actions { flex: none; }
+  .task-actions button { height: 20px; padding: 0 6px; font-size: 11px; }
+  .queue-run-log { font-size: 12px; line-height: 16px; color: var(--text-tertiary); overflow-wrap: anywhere; }
+  .queue-progress { position: relative; height: 4px; border-radius: var(--radius-pill); background: var(--divider); overflow: hidden; }
+  .queue-progress-fill {
+    position: absolute; inset: 0; transform-origin: left center;
+    background: var(--accent); border-radius: var(--radius-pill);
+    transition: transform var(--motion-state) var(--ease-out);
+  }
+  .queue-progress-fill.is-failed { background: var(--status-error); }
+  .queue-progress-fill.is-done { background: var(--status-success); }
+  .queue-progress-text { font-size: 11px; line-height: 14px; color: var(--text-tertiary); }
+  .queue-empty { text-align: center; color: var(--text-secondary); padding: var(--space-6) var(--space-4); }
+  .rail-foot { font-size: 12px; line-height: 16px; color: var(--text-tertiary); }
+  /* ---- result ledger ---- */
+  .result-ledger { min-width: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+  .result-ledger[hidden] { display: none; }
+  .ledger-empty {
+    display: flex; flex-direction: column; align-items: center; gap: var(--space-3);
+    padding: var(--space-10) var(--space-4); text-align: center;
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel);
+  }
+  .ledger-empty[hidden] { display: none; }
+  .ledger-empty .ledger-empty-title { font-size: 20px; line-height: 26px; font-weight: 650; letter-spacing: -0.02em; margin: 0; }
+  .ledger-empty .ledger-empty-reason { font-size: 13px; line-height: 18px; color: var(--text-secondary); margin: 0; }
+  .results-toolbar {
+    display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+    height: auto; min-height: 48px; padding: var(--space-2) var(--space-3);
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-card);
+    position: sticky; top: calc(var(--topbar-h) + var(--space-2)); z-index: var(--z-sticky-toolbar);
+  }
+  .results-headline {
+    margin: 0; color: var(--text-primary); font-size: 13px; line-height: 18px; font-weight: 500;
+    flex: 0 1 auto; min-width: 0; max-width: 236px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .results-toolbar-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-left: auto; flex: none; }
+  .results-toolbar-actions button { height: 28px; padding: 0 var(--space-2); font-size: 12px; }
+  .filter-group { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+  .filter-chip {
+    display: inline-flex; align-items: center; height: 28px; padding: var(--space-1) var(--space-2);
+    flex: none;
+    border-radius: var(--radius-pill);
+    background: var(--surface); border: 1px solid var(--line); color: var(--text-secondary);
+    font-size: 12px; font-weight: 500;
+    transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+  }
+  .filter-chip:hover:not(:disabled) { background: var(--row-hover); color: var(--text-primary); border-color: var(--line-strong); }
+  .filter-chip[aria-pressed="true"] { background: var(--accent-soft); color: var(--text-primary); border-color: var(--accent); }
+  .filter-chip:disabled { opacity: .48; cursor: not-allowed; }
+  .queue-query { flex: 0 1 220px; width: 220px; max-width: 100%; height: 32px; min-width: 160px; }
+  .inline-field { font-size: 12px; line-height: 16px; color: var(--text-secondary); margin: 0; font-weight: 500; letter-spacing: 0.01em; }
+  .queue-page-size, .queue-baseline { width: auto; min-width: 6rem; max-width: 100%; font-size: 13px; }
+  .menu-wrap { position: relative; }
+  .menu {
+    position: absolute; right: 0; top: calc(100% + var(--space-1)); z-index: var(--z-side-panel);
+    min-width: 168px; padding: var(--space-1);
+    background: var(--surface-raised); border: 1px solid var(--line);
+    border-radius: var(--radius-table); box-shadow: var(--shadow-menu);
+    display: flex; flex-direction: column; gap: var(--space-hair);
+  }
+  .menu[hidden] { display: none; }
+  .menu button {
+    justify-content: flex-start; height: 32px; padding: var(--space-1) var(--space-2);
+    background: transparent; border-color: transparent; color: var(--text-primary);
+    border-radius: var(--radius-badge); font-size: 13px; font-weight: 400;
+  }
+  .menu button:hover:not(:disabled) { background: var(--row-hover); border-color: transparent; box-shadow: none; }
+  .menu button:focus-visible { outline-offset: -1px; }
+  .menu-group { display: flex; flex-direction: column; gap: var(--space-hair); }
+  .menu-group + .menu-group { margin-top: var(--space-1); border-top: 1px solid var(--divider); padding-top: var(--space-1); }
+  .menu-group-title { padding: var(--space-1) var(--space-2); font-size: 11px; line-height: 14px; font-weight: 500; letter-spacing: 0.01em; color: var(--text-tertiary); }
+  .menu-field { margin: var(--space-1) var(--space-2) var(--space-hair); }
+  .menu .queue-baseline { margin: 0 var(--space-2) var(--space-1); width: calc(100% - 2 * var(--space-2)); }
+  .queue-results-wrap {
+    max-height: calc(100vh - var(--topbar-h) - 220px); overflow: auto;
+    border: 1px solid var(--line); border-radius: var(--radius-table);
+    background: var(--surface); min-width: 0;
+  }
+  .queue-results-table { table-layout: fixed; min-width: 720px; }
+  .queue-results-table thead th {
+    position: sticky; top: 0; z-index: var(--z-table-head); background: var(--table-head);
+    border-bottom: 1px solid var(--line-strong);
+  }
+  .queue-results-table tbody tr { height: 36px; background: var(--surface); transition: background var(--motion-state) var(--ease-out); }
+  .queue-results-table tbody tr.queue-row { cursor: pointer; }
+  .queue-results-table tbody tr.is-selected { background: var(--row-selected); }
+  .queue-results-table tbody tr.is-selected td { color: var(--selected-ink); }
+  .queue-results-table .col-select { width: 36px; text-align: center; }
+  .queue-results-table .col-id { width: 44px; text-align: right; }
+  .queue-results-table .col-ioc { width: 224px; }
+  .queue-results-table .col-conclusion { width: 108px; }
+  .queue-results-table .col-review { width: 92px; }
+  .queue-results-table .col-confidence { width: 72px; text-align: right; }
+  .queue-results-table .col-provider { width: 148px; }
+  .queue-results-table .col-summary { width: auto; }
+  .queue-results-table td.cell-id,
+  .queue-results-table td.cell-route { font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .queue-results-table td.cell-ioc { font-family: var(--font-mono); font-size: 13px; overflow-wrap: anywhere; }
+  .queue-results-table td.cell-confidence { text-align: right; font-variant-numeric: tabular-nums; }
+  .queue-results-table td.cell-select { text-align: center; }
+  .queue-results-table td { padding: var(--space-1) var(--space-2); }
+  .cell-route-line, .cell-url {
+    display: block; font-size: 12px; line-height: 16px; color: var(--text-tertiary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .provider-cell .queue-run-log { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .batch-bar {
+    display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+    position: sticky; bottom: 0; z-index: var(--z-sticky-toolbar);
+    min-height: 44px; padding: var(--space-1) var(--space-3);
+    background: var(--surface-raised); border-top: 1px solid var(--line);
+    border-radius: 0 0 var(--radius-table) var(--radius-table);
+  }
+  .batch-bar[hidden] { display: none; }
+  .batch-bar .stats { margin: 0; color: var(--text-primary); }
+  .table-foot {
+    display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+    min-height: 40px; padding: var(--space-1) var(--space-3);
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-card);
+  }
+  .table-foot .stats { margin: 0; }
+  .table-foot-actions { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; flex-wrap: wrap; }
+  .table-foot-actions button { height: 28px; padding: 0 var(--space-2); font-size: 12px; }
+  /* ============================================================
+     7. Case-file drawer (DESIGN_V3 5.4 / 6.6)
+     ============================================================ */
+  .scrim {
+    position: fixed; top: var(--topbar-h); right: 0; bottom: 0; left: 0; z-index: calc(var(--z-side-panel) - 1);
+    /* Clicks on the scrim close the drawer, so it must receive pointer
+       events; the panel sits above it and keeps its own hit area. The scrim
+       starts below the persistent topbar so the version/theme controls stay
+       reachable while a case file is open. */
+    background: rgba(8, 12, 20, .56);
+  }
+  [data-theme="light"] .scrim { background: rgba(20, 28, 38, .32); }
   .side-panel {
-    position: fixed; top: 0; right: 0; bottom: 0; width: 480px; max-width: 100vw;
+    position: fixed; top: var(--topbar-h); right: 0; bottom: 0;
+    width: min(var(--side-panel-w), 92vw); max-width: 100vw;
     z-index: var(--z-side-panel);
-    background: var(--bg-elevated); border-left: 1px solid var(--line);
-    box-shadow: var(--shadow-2);
+    background: var(--surface-raised); border-left: 1px solid var(--line);
+    box-shadow: var(--shadow-drawer);
     display: flex; flex-direction: column;
-    transform: translateX(8px); opacity: 0;
-    transition: transform var(--motion-panel) var(--ease-standard), opacity var(--motion-panel) var(--ease-standard);
+    transform: translateX(24px); opacity: 0;
+    transition: transform var(--motion-overlay) var(--ease-out), opacity var(--motion-overlay) var(--ease-out);
   }
   .side-panel[hidden] { display: none; }
   .side-panel.is-open { transform: translateX(0); opacity: 1; }
   .side-panel-head {
-    position: sticky; top: 0; display: flex; align-items: flex-start; gap: var(--space-3);
-    padding: var(--space-4); border-bottom: 1px solid var(--divider); background: var(--bg-elevated);
+    flex: none; height: 64px; display: flex; align-items: center; gap: var(--space-2);
+    padding: 0 var(--space-4); border-bottom: 1px solid var(--divider); background: var(--surface-raised);
   }
-  .side-panel-heading { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .side-panel-label {
-    font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.01em; color: var(--text-secondary);
-  }
+  .side-panel-heading { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .side-panel-label { font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.01em; color: var(--text-secondary); }
   .side-panel-title {
-    margin: 0; font-family: var(--font-mono); font-size: 14px; line-height: 20px;
-    font-weight: 500; overflow-wrap: anywhere;
+    margin: 0; font-family: var(--font-mono); font-size: 14px; line-height: 20px; font-weight: 500;
+    overflow-wrap: anywhere; min-width: 0;
   }
-  .side-panel-actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
+  .side-panel-actions { margin-left: auto; display: flex; align-items: center; gap: var(--space-1); }
+  .side-panel-actions button { height: 28px; padding: 0 var(--space-2); font-size: 12px; }
   .side-panel-body {
-    flex: 1; overflow-y: auto; padding: var(--space-4);
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: var(--space-4);
     display: flex; flex-direction: column; gap: var(--space-3);
   }
+  .side-panel-section { display: flex; flex-direction: column; gap: var(--space-2); }
+  .side-panel-section[hidden] { display: none; }
   .detail-state { color: var(--text-secondary); font-size: 13px; line-height: 18px; }
+  .detail-state[hidden] { display: none; }
   .detail-state.is-error { color: var(--danger-fg); }
-  .review-form { border-top: 1px solid var(--divider); padding-top: var(--space-3); margin-top: var(--space-2); }
-  .review-form .actions { margin-top: var(--space-2); }
+  .source-row {
+    display: flex; align-items: center; gap: var(--space-2); min-height: 28px;
+    font-size: 13px; line-height: 18px; color: var(--text-secondary); overflow-wrap: anywhere;
+  }
+  .source-row + .source-row { border-top: 1px solid var(--divider); }
+  .source-detail { min-width: 0; overflow-wrap: anywhere; }
+  .raw-viewer { max-height: 40vh; overflow: auto; margin: 0; padding: var(--space-2); background: var(--canvas); border: 1px solid var(--line); border-radius: var(--radius-control); font-family: var(--font-mono); font-size: 12px; line-height: 18px; }
+  .raw-viewer[hidden] { display: none; }
+  .review-form {
+    position: sticky; bottom: 0; flex: none;
+    border-top: 1px solid var(--divider); background: var(--surface-raised);
+    padding: var(--space-3) var(--space-4) var(--space-4);
+    display: flex; flex-direction: column; gap: var(--space-2);
+  }
+  .review-form[hidden] { display: none; }
+  .review-form .actions { margin-top: 0; }
+  .review-form .actions button { flex: none; }
+  .review-grid { display: grid; grid-template-columns: 1fr; gap: 0 var(--space-3); }
+
+  /* ============================================================
+     8. Redaction mode: 280px step nav + content (DESIGN_V3 5.5)
+     ============================================================ */
+  .share-layout { grid-template-columns: 280px minmax(0, 1fr); gap: var(--space-5); align-items: start; margin-top: var(--space-4); }
+  .step-nav {
+    position: sticky; top: calc(var(--topbar-h) + var(--space-4));
+    display: flex; flex-direction: column; gap: var(--space-hair);
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel);
+    padding: var(--space-3);
+  }
+  .step-nav-title { font-size: 18px; line-height: 24px; font-weight: 600; letter-spacing: -0.015em; margin: 0 0 var(--space-2); }
+  .step-item {
+    display: flex; align-items: center; gap: var(--space-2); min-height: 40px; padding: 0 var(--space-2);
+    border-radius: var(--radius-control); color: var(--text-secondary); text-decoration: none;
+    font-size: 14px; line-height: 20px; font-weight: 500;
+  }
+  .step-item:hover { background: var(--row-hover); color: var(--text-primary); }
+  .step-item:focus-visible { outline-offset: -2px; }
+  .key-status-bar {
+    display: flex; align-items: center; gap: var(--space-2);
+    min-height: 48px; padding: 0 var(--space-3); margin-bottom: var(--space-3);
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-card);
+    font-size: 13px; line-height: 18px; color: var(--text-secondary);
+  }
+  .key-status-bar[hidden] { display: none; }
+  .key-status-bar .actions { margin: 0 0 0 auto; }
+  .share-content { min-width: 0; }
+  body:not(.is-unlocked) .step-nav a[data-step]:not([data-step="key"]):not([data-step="lookup"]) { display: none; }
+  body:not(.is-unlocked) .panel[data-mode].needs-key { display: none; }
+  .bundle-meta { font-size: 12px; line-height: 16px; color: var(--text-secondary); margin: var(--space-3) 0 var(--space-1); }
+  .bundle-id {
+    display: flex; align-items: center; min-height: 40px; padding: var(--space-2) var(--space-3);
+    background: var(--canvas); border: 1px solid var(--line); border-radius: var(--radius-control);
+    font-family: var(--font-mono); font-size: 14px; line-height: 20px; overflow-wrap: anywhere;
+  }
+  #scan-stats {
+    padding: var(--space-2) var(--space-3); border-radius: var(--radius-control);
+    border: 1px solid var(--threat-clear-border); background: var(--threat-clear-bg); color: var(--threat-clear-fg);
+  }
+  #scan-stats.is-error {
+    border-color: var(--threat-block-border); background: var(--threat-block-bg); color: var(--threat-block-fg);
+  }
+  .results-error {
+    display: flex; flex-direction: column; gap: var(--space-2);
+    padding: var(--space-3); border: 1px solid var(--danger-border); border-radius: var(--radius-card);
+    background: var(--danger-bg);
+  }
+  .results-error .stats { margin: 0; color: var(--danger-fg); }
+  .results-error .actions { margin: 0; }
+  .compact-source { margin-top: var(--space-3); }
+  .compact-source textarea { min-height: 120px; font-family: var(--font-mono); font-size: 12px; line-height: 18px; }
+
+  /* ---- JSON viewer ---- */
+  .json-viewer { font-size: 13px; line-height: 18px; }
+  .json-toolbar { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+  .json-toolbar button { height: 28px; padding: 0 var(--space-2); font-size: 12px; }
+  .json-cards { display: flex; flex-direction: column; gap: var(--space-2); max-height: 52vh; overflow: auto; }
+  .json-card { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--surface); padding: var(--space-2) var(--space-3); }
+  .json-card-summary { font-family: var(--font-mono); font-size: 12px; line-height: 16px; color: var(--text-tertiary); margin-bottom: var(--space-1); overflow-wrap: anywhere; }
+  .json-raw { margin: 0; padding: var(--space-2); background: var(--canvas); border-radius: var(--radius-control); overflow: auto; font-family: var(--font-mono); font-size: 12px; line-height: 18px; }
+  .json-node { min-width: 0; }
+  .json-branch { border-left: 1px solid var(--divider); padding-left: var(--space-2); margin: var(--space-hair) 0; }
+  .json-branch > summary { cursor: pointer; font-family: var(--font-mono); font-size: 12px; line-height: 16px; color: var(--text-secondary); }
+  .json-branch-body { padding-left: var(--space-2); transition: height 180ms ease; }
+  .json-leaf { font-family: var(--font-mono); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+  .json-key { color: var(--text-secondary); }
+  .json-string { color: var(--threat-clear-fg); }
+  .json-scalar { color: var(--text-primary); }
+  .json-string.truncated { cursor: pointer; text-decoration: underline dotted; }
+  /* ============================================================
+     9. Ops mode: read-only ledger (DESIGN_V3 5.6)
+     ============================================================ */
+  .statusbar {
+    display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); align-items: center;
+    min-height: 64px; padding: var(--space-3) var(--space-4);
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-card);
+    font-size: 14px; line-height: 20px; color: var(--text-secondary);
+  }
+  #ops-panel > .statusbar { background: transparent; border: 0; padding: 0; border-radius: 0; min-height: 48px; }
+  .statusbar .bundles { display: flex; flex-wrap: wrap; gap: var(--space-2); list-style: none; margin: 0; padding: 0; font-size: 12px; line-height: 16px; }
+  .ops-ledger { display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-4); margin-top: var(--space-4); }
+  .ops-block { border: 1px solid var(--divider); border-radius: var(--radius-card); padding: var(--space-3) var(--space-4); min-width: 0; }
+  .ops-block-wide { grid-column: span 2; }
+  .ops-block .section-title { margin-bottom: var(--space-2); }
+  .ops-checks, .ops-providers, .ops-jobs { list-style: none; margin: 0; padding: 0; }
+  .ops-checks li, .ops-providers li, .ops-jobs li {
+    display: flex; align-items: center; gap: var(--space-2); min-height: 32px;
+    font-size: 13px; line-height: 18px; color: var(--text-secondary); overflow-wrap: anywhere;
+  }
+  .ops-providers li { min-height: 28px; }
+  .ops-checks li + li, .ops-providers li + li, .ops-jobs li + li { border-top: 1px solid var(--divider); }
+  .ops-check-name { color: var(--text-primary); }
+  .ops-check-detail { color: var(--text-tertiary); }
+  .ops-value { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text-primary); }
+
+  /* ============================================================
+     10. Dialogs, menus, toast (DESIGN_V3 6.7 / 6.8 / 6.9)
+     ============================================================ */
   .modal {
     position: fixed; inset: 0; z-index: var(--z-modal);
-    background: rgba(8, 10, 12, .55);
+    background: rgba(8, 12, 20, .56);
     display: flex; align-items: center; justify-content: center; padding: var(--space-5);
+    opacity: 0; transition: opacity var(--motion-overlay) var(--ease-out);
   }
+  [data-theme="light"] .modal { background: rgba(20, 28, 38, .32); }
   .modal[hidden] { display: none; }
+  .modal.is-open { opacity: 1; }
   .modal-card {
     width: min(440px, 100%); max-height: 90vh; overflow-y: auto;
-    background: var(--bg-elevated); border: 1px solid var(--line);
-    border-radius: var(--radius-panel); box-shadow: var(--shadow-3);
+    background: var(--surface-raised); border: 1px solid var(--line);
+    border-radius: var(--radius-panel); box-shadow: var(--shadow-modal);
     padding: var(--space-5);
+    transform: scale(.98); transition: transform var(--motion-overlay) var(--ease-out);
   }
+  .modal.is-open .modal-card { transform: scale(1); }
   .modal-title { margin: 0 0 var(--space-2); font-size: 16px; line-height: 22px; font-weight: 600; }
-  .modal-body {
-    margin: 0 0 var(--space-4); font-size: 14px; line-height: 20px;
-    color: var(--text-secondary); white-space: pre-wrap;
-  }
+  .modal-body { margin: 0 0 var(--space-4); font-size: 14px; line-height: 20px; color: var(--text-secondary); white-space: pre-wrap; }
   .modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
-  button.danger { background: var(--danger-fg); border-color: var(--danger-fg); color: var(--bg-surface); }
-  button.danger:hover:not(:disabled) { border-color: var(--danger-fg); filter: brightness(.94); }
   .shortcut-list { margin: 0; display: grid; gap: var(--space-1); font-size: 13px; line-height: 18px; }
   .shortcut-list > div { display: flex; gap: var(--space-3); align-items: baseline; }
-  .shortcut-list dt {
-    flex: none; min-width: 7.5rem; font-family: var(--font-mono);
-    font-size: 12px; color: var(--text-secondary);
-  }
+  .shortcut-list dt { flex: none; min-width: 7.5rem; font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); }
   .shortcut-list dd { margin: 0; color: var(--text-primary); }
-  .ops-grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: var(--space-4); margin-top: var(--space-4);
+  .toast-host {
+    position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: var(--z-toast);
+    display: flex; flex-direction: column; gap: var(--space-2); max-width: 420px;
   }
-  .ops-block {
-    border: 1px solid var(--divider); border-radius: var(--radius-card);
-    padding: var(--space-3) var(--space-4);
+  .toast {
+    display: flex; align-items: center; gap: var(--space-2);
+    min-height: 40px; padding: var(--space-2) var(--space-3);
+    background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-table);
+    box-shadow: var(--shadow-menu); color: var(--text-primary); font-size: 13px; line-height: 18px;
+    opacity: 0; transform: translateY(4px);
+    transition: opacity var(--motion-state) var(--ease-out), transform var(--motion-state) var(--ease-out);
   }
-  .ops-block .section-title { margin-bottom: var(--space-2); }
-  .ops-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
-  .ops-check { display: flex; align-items: baseline; gap: var(--space-2); font-size: 13px; line-height: 18px; }
-  .ops-check-name { color: var(--text-secondary); font-size: 12px; min-width: 5rem; }
-  .ops-check-detail { color: var(--text-primary); }
-  .state-chip.is-ok { color: var(--status-success); }
-  .state-chip.is-warn { color: var(--accent); }
-  .state-chip.is-error { color: var(--status-error); }
-  .ops-providers, .ops-jobs {
-    list-style: none; margin: var(--space-2) 0 0; padding: 0;
-    display: grid; gap: var(--space-1); font-size: 12px; line-height: 16px;
-    color: var(--text-secondary); font-variant-numeric: tabular-nums;
-  }
-  .ops-providers[hidden], .ops-jobs[hidden] { display: none; }
-  .ops-providers li, .ops-jobs li {
-    display: flex; gap: var(--space-2); align-items: baseline; flex-wrap: wrap;
-  }
-  .ops-providers .ops-value, .ops-jobs .ops-value { color: var(--text-primary); font-family: var(--font-mono); }
-  #queue-panel #queue-enqueue {
-    background: var(--accent); border-color: var(--accent); color: var(--accent-ink);
-  }
-  #queue-panel #queue-enqueue:hover:not(:disabled) {
-    background: var(--accent-hover); border-color: var(--accent-hover);
-  }
-  .queue-results-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .queue-results-table th, .queue-results-table td {
-    border-bottom: 1px solid var(--divider); padding: 7px 10px; text-align: left; vertical-align: middle;
-  }
-  .queue-results-table th {
-    color: var(--text-secondary); font-size: 12px; line-height: 16px; font-weight: 500;
-    letter-spacing: 0.01em;
-  }
-  .queue-results-table tr.queue-row { cursor: pointer; height: 38px; }
-  .queue-results-table tr.queue-row:hover { background: var(--bg-elevated); }
-  .queue-results-table tr.queue-row.is-selected {
-    background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent);
-  }
-  .queue-results-table tr.queue-row:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: -2px; }
-  .queue-row-review { color: var(--text-secondary); font-size: 12px; line-height: 16px; }
-  .queue-run-log {
-    color: var(--text-tertiary); font-size: 11px; line-height: 14px; margin-top: var(--space-1);
-    white-space: normal; overflow-wrap: anywhere; font-variant-numeric: tabular-nums;
-  }
-  .mode-label {
-    display: inline-block; border: 1px solid var(--line); border-radius: var(--radius-badge);
-    padding: 0 6px; font-size: 11px; line-height: 16px; color: var(--text-secondary); background: var(--bg-surface);
-  }
-  .state-chip {
-    display: inline-block; border: 1px solid var(--line); border-radius: var(--radius-badge);
-    padding: 0 6px; font-size: 11px; line-height: 16px; font-weight: 500;
-    color: var(--text-secondary); background: var(--bg-surface); white-space: nowrap;
-  }
-  tr[data-job-id] .state-chip { color: var(--text-primary); }
-  .stats.is-error { color: var(--danger-fg); }
-  .queue-empty { color: var(--text-secondary); padding: var(--space-6) var(--space-3); text-align: center; }
-  #key-panel .note { background: var(--bg-elevated); border-color: var(--line); color: var(--text-secondary); }
-  body:not(.is-unlocked) .panel[data-mode].needs-key { display: none; }
-  ul.bundles { list-style: none; margin: 0; padding: 0; font-size: 12px; line-height: 16px; color: var(--text-tertiary); }
-  ul.bundles li { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-  .json-viewer { margin-top: var(--space-2); }
-  .json-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-1) 0 var(--space-2); }
-  .json-toolbar button { height: 28px; padding: 0 var(--space-3); font-size: 13px; }
-  .json-card {
-    border: 1px solid var(--line); border-radius: var(--radius-control);
-    padding: var(--space-2) var(--space-3); margin-top: var(--space-2); background: var(--bg-surface);
-  }
-  .json-card-summary {
-    font-weight: 500; font-size: 13px; line-height: 18px; margin-bottom: var(--space-1);
-    word-break: break-all; color: var(--text-primary);
-  }
-  .json-branch { margin-left: var(--space-1); }
-  details.json-branch > summary {
-    cursor: pointer;
-    font: 400 13px/18px var(--font-mono);
-    color: var(--text-secondary);
-  }
-  details.json-branch > summary:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 2px; }
-  details.json-branch > .json-branch-body {
-    display: block;
-    overflow: hidden;
-    height: auto;
-    transition: height 180ms ease;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    details.json-branch,
-    details.json-branch > .json-branch-body {
-      transition: none !important;
-      animation: none !important;
+  .toast::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--text-secondary); flex: none; }
+  .toast.is-visible { opacity: 1; transform: translateY(0); }
+  .toast.is-success::before { background: var(--status-success); }
+  .toast.is-error::before { background: var(--status-error); }
+  .toast.is-info::before { background: var(--text-secondary); }
+  /* ============================================================
+     11. Responsive: 390px mobile (DESIGN_V3 5.7)
+     ============================================================ */
+  @media (max-width: 767px) {
+    .topbar-inner {
+      display: grid; grid-template-columns: 1fr auto; grid-template-rows: 44px 44px;
+      align-items: center; gap: 0 var(--space-2); padding: var(--space-1) var(--page-gutter);
     }
-  }
-  .json-leaf {
-    margin-left: var(--space-4);
-    font: 400 13px/18px var(--font-mono);
-    word-break: break-all;
-  }
-  .json-key { color: var(--text-secondary); }
-  .json-string { color: var(--text-primary); }
-  .json-string.truncated { cursor: pointer; text-decoration: underline dotted; }
-  .json-scalar { color: var(--text-primary); font-variant-numeric: tabular-nums; }
-  .json-raw {
-    margin: var(--space-1) 0 0; white-space: pre-wrap; word-break: break-all;
-    font: 400 12px/18px var(--font-mono); color: var(--danger-fg);
-  }
-  .compact-source { margin-top: var(--space-3); }
-  .compact-source label { color: var(--text-secondary); font-size: 12px; }
-  .compact-source textarea { min-height: 64px; font-size: 12px; }
-  .bundle-meta { color: var(--text-secondary); font-size: 13px; margin-top: var(--space-2); }
-  .table-wrap {
-    overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-card);
-    margin-top: var(--space-2); background: var(--bg-surface);
-  }
-  table { border-collapse: collapse; width: 100%; min-width: 640px; }
-  th, td {
-    text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--divider);
-    font-size: 13px; line-height: 18px; vertical-align: middle; white-space: nowrap;
-  }
-  th {
-    background: var(--bg-surface); font-weight: 500; color: var(--text-secondary);
-    font-size: 12px; letter-spacing: 0.01em;
-  }
-  td.wrap { white-space: normal; word-break: break-word; min-width: 180px; }
-  tbody tr:hover { background: var(--bg-elevated); }
-  tbody tr.queue-row { cursor: pointer; }
-  .unavailable {
-    background: var(--danger-bg); border: 1px solid var(--danger-fg); color: var(--danger-fg);
-    border-radius: var(--radius-control); padding: var(--space-2) var(--space-3);
-    margin: var(--space-2) 0 0; font-size: 13px; line-height: 18px;
-  }
-  .drop-zone {
-    border: 1px dashed var(--line-strong); border-radius: var(--radius-control);
-    padding: var(--space-3) var(--space-4);
-    margin-top: var(--space-2); background: var(--bg-surface); color: var(--text-secondary);
-    text-align: center; cursor: pointer;
-    transition: border-color var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard);
-  }
-  .drop-zone.dragover, .drop-zone:focus-visible {
-    border-color: var(--accent); background: var(--accent-soft); color: var(--text-primary);
-    outline: none;
-  }
-  .drop-zone[aria-disabled="true"] { cursor: not-allowed; opacity: .48; }
-  .review-grid {
-    display: grid; grid-template-columns: 1fr; gap: 0;
-  }
-  @media (max-width: 719px) {
-    .topbar-inner { padding: 0 var(--space-3); gap: var(--space-2); flex-wrap: wrap; }
-    .mode-nav { order: 3; width: 100%; overflow-x: auto; }
-    .mode-nav a { height: 34px; }
-    .topbar-meta { font-size: 11px; }
-    .topbar-meta .meta-item { max-width: 9rem; overflow: hidden; text-overflow: ellipsis; }
-    main { padding: 0 var(--space-3) var(--space-8); }
-    .side-panel { width: 100%; border-left: 0; }
-    .side-panel-head { flex-wrap: wrap; }
-    .side-panel-actions { width: 100%; margin-left: 0; justify-content: flex-start; }
-    button, .filter-chip { min-height: 44px; }
-    .icon-btn { height: auto; min-height: 44px; }
-    .menu button { min-height: 44px; }
-    .queue-query { width: 100%; margin-left: 0; }
-    .results-toolbar { position: static; }
-    .results-toolbar-actions { width: 100%; margin-left: 0; }
-    .batch-bar { position: sticky; bottom: var(--space-2); z-index: var(--z-sticky-header); }
-    .table-wrap {
-      overflow-x: auto; border: 0; background: transparent;
-    }
-    .queue-results-wrap { max-height: none; overflow: visible; }
-    table.queue-results-table {
-      display: block; min-width: 0; width: 100%;
-    }
-    table.queue-results-table thead {
+    .brand { grid-column: 1; grid-row: 1; }
+    .topbar-actions { grid-column: 2; grid-row: 1; }
+    .topbar-actions button, .topbar-actions .status-summary { min-height: 40px; }
+    .mode-nav { grid-column: 1 / -1; grid-row: 2; }
+    .mode-nav a { flex: 1 1 0; justify-content: center; }
+    .status-popover { right: 0; width: min(320px, calc(100vw - 2 * var(--page-gutter))); }
+    main { padding-bottom: var(--space-12); }
+    button { min-height: 44px; }
+    .actions button, .panel-head-actions button, .rail-head-actions button,
+    .results-toolbar-actions button, .table-foot-actions button, .task-actions button,
+    .side-panel-actions button, .json-toolbar button, .menu button { min-height: 44px; }
+    input[type="text"], input[type="password"], input[type="search"], select, textarea { min-height: 44px; }
+    body[data-mode="queue"] #queue-panel.queue-workspace:not([hidden]) { display: block; }
+    .task-rail { position: static; max-height: none; margin-bottom: var(--space-3); }
+    .rail-tasks { overflow-x: auto; overflow-y: visible; }
+    table.queue-list-table tbody { display: flex; gap: var(--space-2); }
+    table.queue-list-table tbody tr { flex: 0 0 132px; height: 76px; margin: 0; overflow: hidden; }
+    .task-line { gap: var(--space-1); }
+    .task-actions button { min-height: 28px; height: 28px; }
+    .results-toolbar { position: static; min-height: 44px; }
+    .queue-query { width: 100%; }
+    .filter-group { width: 100%; }
+    .queue-results-wrap { max-height: none; overflow: visible; border: 0; background: transparent; }
+    .queue-results-table { min-width: 0; }
+    .queue-results-table thead {
       position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
       overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
     }
     table.queue-results-table tbody { display: grid; gap: var(--space-2); }
     table.queue-results-table tbody tr {
-      display: block; border: 1px solid var(--line); border-radius: var(--radius-card);
-      background: var(--bg-surface); padding: var(--space-1) var(--space-3);
+      display: block; height: auto; border: 1px solid var(--line); border-radius: var(--radius-card);
+      background: var(--surface); padding: var(--space-2) var(--space-3);
     }
     table.queue-results-table tbody tr:hover,
     table.queue-results-table tbody tr:focus-visible {
-      background: var(--bg-elevated); outline: 2px solid var(--accent-hover); outline-offset: 1px;
+      background: var(--row-hover); outline: 2px solid var(--accent-focus); outline-offset: 1px;
     }
-    table.queue-results-table tbody tr.is-selected {
-      background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent);
-    }
+    table.queue-results-table tbody tr.is-selected { background: var(--row-selected); }
     table.queue-results-table tbody td,
     table.queue-results-table tbody td.wrap {
-      display: grid; grid-template-columns: minmax(6.5rem, 34%) minmax(0, 1fr);
-      gap: var(--space-2); min-width: 0; padding: 7px 0;
+      display: grid; grid-template-columns: minmax(84px, 34%) minmax(0, 1fr);
+      gap: var(--space-2); min-width: 0; padding: var(--space-1) 0; height: auto;
       border-bottom: 1px solid var(--divider);
-      white-space: normal; overflow-wrap: anywhere; word-break: break-word;
-      max-width: none;
+      white-space: normal; overflow-wrap: anywhere; word-break: break-word; max-width: none;
+      text-align: left;
     }
     table.queue-results-table tbody td:last-child { border-bottom: 0; }
     table.queue-results-table tbody td::before {
@@ -773,28 +998,39 @@
     }
     table.queue-results-table tbody tr td[colspan]::before { content: none; }
     .ellipsis { white-space: normal; overflow-wrap: anywhere; }
-    table.workbench-results-table {
-      display: block; min-width: 0; width: 100%;
-    }
+    .batch-bar { position: sticky; bottom: 0; }
+    .toast-host { left: var(--space-3); right: var(--space-3); bottom: var(--space-3); max-width: none; }
+    body[data-mode="share"] .share-layout { display: block; }
+    .step-nav { position: static; flex-direction: row; overflow-x: auto; margin-bottom: var(--space-3); }
+    .step-nav-title { display: none; }
+    .step-item { flex: 0 0 auto; padding: 0 var(--space-3); }
+    .ops-ledger { display: block; }
+    .ops-block + .ops-block { margin-top: var(--space-3); }
+    .side-panel { width: min(var(--side-panel-w), 92vw); }
+    .side-panel-head { height: auto; min-height: 56px; padding: var(--space-2) var(--space-3); flex-wrap: wrap; }
+    .side-panel-body { padding: var(--space-3); }
+    .review-form { padding: var(--space-3); }
+    .modal { padding: var(--space-3); }
+  }
+  @media (max-width: 719px) {
+    table.workbench-results-table { display: block; min-width: 0; width: 100%; }
     table.workbench-results-table thead {
       position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
       overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
     }
-    table.workbench-results-table tbody {
-      display: grid; gap: 10px;
-    }
+    table.workbench-results-table tbody { display: grid; gap: var(--space-2); }
     table.workbench-results-table tbody tr {
       display: block; border: 1px solid var(--line); border-radius: var(--radius-card);
-      background: var(--bg-surface); padding: var(--space-1) var(--space-3);
+      background: var(--surface); padding: var(--space-1) var(--space-3);
     }
     table.workbench-results-table tbody tr:hover,
     table.workbench-results-table tbody tr:focus-visible {
-      background: var(--bg-elevated); outline: 2px solid var(--accent-hover); outline-offset: 1px;
+      background: var(--row-hover); outline: 2px solid var(--accent-focus); outline-offset: 1px;
     }
     table.workbench-results-table tbody td,
     table.workbench-results-table tbody td.wrap {
       display: grid; grid-template-columns: minmax(6.5rem, 34%) minmax(0, 1fr);
-      gap: 8px; min-width: 0; padding: 7px 0; border-bottom: 1px solid var(--line);
+      gap: var(--space-2); min-width: 0; padding: 7px 0; border-bottom: 1px solid var(--divider);
       white-space: normal; overflow-wrap: anywhere; word-break: break-word;
     }
     table.workbench-results-table tbody td:last-child { border-bottom: 0; }
@@ -803,22 +1039,18 @@
       font-weight: 500; line-height: 16px;
     }
     table.workbench-results-table tbody td:first-child { font-weight: 600; }
-    table.workbench-results-table tbody td:first-child::after { content: none; }
     table.workbench-results-table tbody tr td[colspan] {
-      display: block; border-bottom: 0; padding: 12px 0; text-align: center;
+      display: block; border-bottom: 0; padding: var(--space-3) 0; text-align: center;
     }
     table.workbench-results-table tbody tr td[colspan]::before { content: none; }
   }
   @media (min-width: 720px) {
-    .review-grid { grid-template-columns: 1fr 1fr; gap: 0 var(--space-3); }
+    .review-grid { grid-template-columns: 1fr 1fr; }
   }
-  @media (max-width: 390px) {
-    main { padding: 0 var(--space-3) var(--space-8); }
-    .panel { padding: var(--space-3); }
-    .actions { gap: var(--space-2); }
-    button { padding: 0 var(--space-3); }
-    .queue-kpi { grid-template-columns: repeat(3, 1fr); }
-  }
+
+  /* ============================================================
+     12. Reduced motion (DESIGN_V3 7.3)
+     ============================================================ */
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: .01ms !important;
@@ -835,295 +1067,340 @@
     <path d="M8 2.6 14.2 13H1.8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"></path>
     <path d="M8 6.6v2.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
   </symbol>
+  <symbol id="icon-mark" viewBox="0 0 20 20">
+    <rect x="2.5" y="2.5" width="15" height="15" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"></rect>
+    <path d="M6 10h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+  </symbol>
+  <symbol id="icon-refresh" viewBox="0 0 16 16">
+    <path d="M13 8a5 5 0 1 1-1.6-3.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
+    <path d="M13 2.5V5h-2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+  </symbol>
+  <symbol id="icon-plus" viewBox="0 0 16 16">
+    <path d="M8 3.5v9M3.5 8h9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
+  </symbol>
+  <symbol id="icon-more" viewBox="0 0 16 16">
+    <path d="M4 8h.01M8 8h.01M12 8h.01" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
+  </symbol>
+  <symbol id="icon-download" viewBox="0 0 16 16">
+    <path d="M8 3v6.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
+    <path d="M5.2 7.2 8 10l2.8-2.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+    <path d="M3.5 12.5h9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
+  </symbol>
+  <symbol id="icon-close" viewBox="0 0 16 16">
+    <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
+  </symbol>
+  <symbol id="icon-prev" viewBox="0 0 16 16">
+    <path d="M9.5 4.5 6 8l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+  </symbol>
+  <symbol id="icon-next" viewBox="0 0 16 16">
+    <path d="M6.5 4.5 10 8l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+  </symbol>
 </svg>
 <a class="skip-link" href="#main">跳到主要内容</a>
 <header class="topbar">
   <div class="topbar-inner">
-    <h1 class="brand">IOC 研判工作台</h1>
+    <h1 class="brand"><svg class="brand-mark" aria-hidden="true" viewBox="0 0 20 20"><use href="#icon-mark"></use></svg>IOC 研判工作台</h1>
     <nav class="mode-nav" id="mode-nav" aria-label="页面模式">
       <a href="#queue-panel" id="nav-queue" data-mode="queue" aria-current="page">研判</a>
       <a href="#create-panel" id="nav-share" data-mode="share">脱敏协作</a>
       <a href="#statusbar" id="nav-ops" data-mode="ops">运维</a>
       <a href="#workbench-panel" id="nav-workbench" data-mode="legacy" hidden>研判工作台</a>
     </nav>
-    <div class="topbar-meta">
-      <span class="meta-item" id="meta-key" title="share key 状态"><span class="dot" id="meta-key-dot"></span><span id="meta-key-text">share key 加载中</span></span>
-      <span class="meta-item" id="meta-cred" title="IOC Info 凭据状态"><span class="dot" id="meta-cred-dot"></span><span id="meta-cred-text">IOC Info 检测中</span></span>
-      <button class="ghost icon-btn" type="button" id="ui-version-toggle" aria-pressed="false">旧版</button>
-      <button class="ghost icon-btn" type="button" id="theme-toggle" aria-pressed="false">浅色</button>
+    <div class="topbar-spacer"></div>
+    <div class="topbar-actions">
+      <div class="status-wrap">
+        <button class="secondary status-summary" type="button" id="status-summary-button" aria-haspopup="true" aria-expanded="false" aria-controls="status-popover">
+          <span class="dot is-off" id="status-dot"></span><span id="status-summary-text">状态</span>
+        </button>
+        <div class="status-popover" id="status-popover" role="region" aria-label="系统状态" hidden>
+          <span class="status-line" id="meta-key" title="share key 状态"><span class="dot" id="meta-key-dot"></span><span id="meta-key-text">share key 加载中</span></span>
+          <span class="status-line" id="meta-cred" title="IOC Info 凭据状态"><span class="dot" id="meta-cred-dot"></span><span id="meta-cred-text">IOC Info 检测中</span></span>
+          <div class="actions">
+            <button class="secondary" type="button" id="status-retry" hidden>重试</button>
+            <button class="ghost" type="button" id="status-popover-close">关闭</button>
+          </div>
+        </div>
+      </div>
+      <button class="secondary icon-btn" type="button" id="ui-version-toggle" aria-pressed="false">旧版</button>
+      <button class="secondary icon-btn" type="button" id="theme-toggle" aria-pressed="false">浅色</button>
     </div>
   </div>
 </header>
 <main id="main">
   <div class="error" id="error-bar" hidden></div>
 
-  <div class="mode-header" data-mode="share">
-    <h2 class="mode-title">脱敏协作</h2>
-    <p class="mode-sub">解锁 share key 后可生成脱敏包、还原云端返回并做残留扫描。</p>
+  <div class="share-layout" data-mode="share">
+    <nav class="step-nav" aria-label="脱敏协作步骤">
+      <h2 class="step-nav-title">脱敏协作</h2>
+      <a class="step-item" href="#key-panel" data-step="key">Key 状态</a>
+      <a class="step-item" href="#lookup-panel" data-step="lookup">查询</a>
+      <a class="step-item" href="#create-panel" data-step="create">生成</a>
+      <a class="step-item" href="#restore-panel" data-step="restore">还原</a>
+      <a class="step-item" href="#scan-panel" data-step="scan">扫描</a>
+    </nav>
+    <div class="share-content">
+      <div class="key-status-bar" id="key-status-bar" hidden>
+        <span class="dot is-on"></span><span>Key 已解锁</span>
+        <div class="actions">
+          <button class="secondary" type="button" id="lock-btn">清除口令</button>
+          <span class="flash" id="lock-flash" hidden></span>
+        </div>
+      </div>
+      <section class="panel" id="key-panel" data-mode="share">
+        <h2>解锁 share key</h2>
+        <p class="hint" id="key-panel-hint">口令可永久保存在本机 key 同目录；下次打开自动解锁。「清除口令」会忘掉本机记住的口令。</p>
+        <div id="key-form">
+          <label for="key-passphrase">key 口令（非空即可）</label>
+          <input type="password" id="key-passphrase" autocomplete="off">
+          <div class="row" style="margin-top: 8px;">
+            <label><input type="checkbox" id="key-generate"> 生成新 key</label>
+            <label><input type="checkbox" id="key-force"> 覆盖已存在的 key 文件</label>
+          </div>
+          <div class="note" id="key-hint" hidden></div>
+          <div class="actions">
+            <button type="button" id="key-btn">解锁 / 创建</button>
+          </div>
+        </div>
+        <div class="note" id="key-unlocked-note" hidden>已用本机记住的口令自动解锁，无需再次输入。</div>
+      </section>
+
+      <section class="panel" id="lookup-panel" data-mode="share">
+        <h2>查询 IOC Info</h2>
+        <p class="hint">丢入 IOC（每行一个）或本机文件；默认用 7 天缓存，没有缓存再走 IOC Info 接口。查询结果是明文，发给云端前请先「脱敏并复制」。缺凭据时请用 <code>--credentials-file credentials.local.json</code> 启动，或在本终端设置 <code>IOC_INFO_API_KEY</code>。</p>
+        <div class="note" id="lookup-cred-note" hidden>当前没有 IOC Info 凭据：只能读本机 7 天缓存。请关掉本页，在有 credentials.local.json 的目录用 --credentials-file 重新启动。</div>
+        <div class="segmented" role="radiogroup" aria-label="输入方式">
+          <label><input type="radio" name="lookup-src" value="paste" checked> 粘贴文本</label>
+          <label><input type="radio" name="lookup-src" value="path"> 本机文件路径</label>
+        </div>
+        <div id="lookup-paste">
+          <label for="lookup-content">IOC 列表（每行一个）</label>
+          <textarea id="lookup-content" placeholder="lookup.example.invalid"></textarea>
+        </div>
+        <div id="lookup-file" hidden>
+          <label for="lookup-path">文件路径</label>
+          <input type="text" id="lookup-path" placeholder="D:\iocs.txt">
+        </div>
+        <div class="actions">
+          <button type="button" id="lookup-btn">查询 IOC Info</button>
+          <span class="flash" id="lookup-flash" hidden></span>
+        </div>
+        <div class="result" id="lookup-result" hidden>
+          <div class="stats" id="lookup-stats"></div>
+          <div class="json-viewer" id="lookup-viewer"></div>
+          <div class="compact-source">
+            <label for="lookup-output">compact JSONL（复制源）</label>
+            <textarea id="lookup-output" readonly></textarea>
+          </div>
+          <div class="actions">
+            <button type="button" id="lookup-sanitize">脱敏并复制</button>
+            <button class="secondary danger-outline" type="button" id="lookup-copy">复制明文（未脱敏，勿发给云端）</button>
+          </div>
+          <div class="note">「脱敏并复制」需要先解锁 share key；成功后复制一行一个脱敏 JSON，并把结果展示在下方「生成脱敏包」结果区。明文结果勿直接发给云端。</div>
+        </div>
+      </section>
+      <section class="panel needs-key" id="create-panel" data-mode="share">
+        <h2>生成脱敏包</h2>
+        <p class="hint">粘贴研判结果 JSONL（或填写本机文件路径），生成可发给云端 AI 的脱敏内容并复制到剪贴板。</p>
+        <div class="segmented" role="radiogroup" aria-label="输入方式">
+          <label><input type="radio" name="create-src" value="paste" checked> 粘贴文本</label>
+          <label><input type="radio" name="create-src" value="path"> 本机文件路径</label>
+        </div>
+        <div id="create-paste">
+          <label for="create-content">JSONL 内容</label>
+          <textarea id="create-content" placeholder='{"ioc": "...", "conclusion": "..."}'></textarea>
+        </div>
+        <div id="create-file" hidden>
+          <label for="create-path">文件路径</label>
+          <input type="text" id="create-path" placeholder="D:\outputs\result.jsonl">
+        </div>
+        <label for="create-names">人员姓名文件路径（可选，自由文本中的姓名需逐行列出）</label>
+        <input type="text" id="create-names" placeholder="D:\names.txt">
+        <div class="actions">
+          <button type="button" id="create-btn">生成脱敏包</button>
+          <span class="flash" id="create-flash" hidden></span>
+        </div>
+        <div class="result" id="create-result" hidden>
+          <div class="stats" id="create-stats"></div>
+          <div class="json-viewer" id="create-viewer"></div>
+          <div class="bundle-meta">bundle_id 必须随脱敏内容发送：</div>
+          <div class="bundle-id" id="create-bundle-id"></div>
+          <div class="compact-source">
+            <label for="create-output">compact JSONL（复制源）</label>
+            <textarea id="create-output" readonly></textarea>
+          </div>
+          <div class="actions">
+            <button class="secondary" type="button" id="create-copy">复制脱敏内容</button>
+          </div>
+          <div class="note">发给云端 AI 时请附带要求：返回的每行 JSON 顶层需原样加入上面的 bundle_id；ss1: 开头的 token 保持原样，不要改写、截断或翻译。</div>
+        </div>
+      </section>
+
+      <section class="panel needs-key" id="restore-panel" data-mode="share">
+        <h2>还原 AI 返回</h2>
+        <p class="hint">粘贴云端 AI 返回的 JSONL（每行需带 bundle_id），自动匹配本地 bundle 并还原真实值；原样粘回脱敏包内容也可以验证还原。顶部仅展示最近任务，更早任务的清单与还原记录仍保留在本机，只要粘贴对应回复即可再次匹配。</p>
+        <div class="segmented" role="radiogroup" aria-label="输入方式">
+          <label><input type="radio" name="restore-src" value="paste" checked> 粘贴文本</label>
+          <label><input type="radio" name="restore-src" value="path"> 本机文件路径</label>
+        </div>
+        <div id="restore-paste">
+          <label for="restore-content">AI 返回的 JSONL</label>
+          <textarea id="restore-content" placeholder='{"bundle_id": "...", "ioc": "ss1:...", "proposed_label": "..."}'></textarea>
+        </div>
+        <div id="restore-file" hidden>
+          <label for="restore-path">文件路径</label>
+          <input type="text" id="restore-path" placeholder="D:\cloud-review.jsonl">
+        </div>
+        <div class="actions">
+          <button type="button" id="restore-btn">还原</button>
+          <span class="flash" id="restore-flash" hidden></span>
+        </div>
+        <div class="result" id="restore-result" hidden>
+          <div class="stats" id="restore-stats"></div>
+          <div class="json-viewer" id="restore-viewer"></div>
+          <div class="compact-source">
+            <label for="restore-output">compact JSONL（复制源）</label>
+            <textarea id="restore-output" readonly></textarea>
+          </div>
+          <div class="actions">
+            <button class="secondary" type="button" id="restore-copy">复制还原结果</button>
+          </div>
+          <div class="note">还原结果只在本机使用：包含真实 IOC 与真实身份值，不要把还原后的内容再发回云端。</div>
+        </div>
+      </section>
+
+      <section class="panel needs-key" id="scan-panel" data-mode="share">
+        <h2>残留扫描</h2>
+        <p class="hint">对任意 JSONL 做脱敏残留检查；finding_count 应为 0 才可以外发。</p>
+        <div class="segmented" role="radiogroup" aria-label="输入方式">
+          <label><input type="radio" name="scan-src" value="paste" checked> 粘贴文本</label>
+          <label><input type="radio" name="scan-src" value="path"> 本机文件路径</label>
+        </div>
+        <div id="scan-paste">
+          <label for="scan-content">JSONL 内容</label>
+          <textarea id="scan-content"></textarea>
+        </div>
+        <div id="scan-file" hidden>
+          <label for="scan-path">文件路径</label>
+          <input type="text" id="scan-path">
+        </div>
+        <div class="actions">
+          <button type="button" id="scan-btn">扫描</button>
+        </div>
+        <div class="result" id="scan-result" hidden>
+          <div class="stats" id="scan-stats"></div>
+        </div>
+      </section>
+    </div>
   </div>
 
-  <section class="panel" id="key-panel" data-mode="share">
-    <h2>解锁 share key</h2>
-    <p class="hint" id="key-panel-hint">口令可永久保存在本机 key 同目录；下次打开自动解锁。「清除口令」会忘掉本机记住的口令。</p>
-    <div id="key-form">
-      <label for="key-passphrase">key 口令（非空即可）</label>
-      <input type="password" id="key-passphrase" autocomplete="off">
-      <div class="row" style="margin-top: 8px;">
-        <label><input type="checkbox" id="key-generate"> 生成新 key</label>
-        <label><input type="checkbox" id="key-force"> 覆盖已存在的 key 文件</label>
+  <section class="panel queue-workspace" id="queue-panel" data-mode="queue">
+    <div class="task-rail">
+      <div class="rail-head">
+        <h2 class="rail-title">任务</h2>
+        <div class="rail-head-actions">
+          <button class="secondary icon-btn" type="button" id="queue-refresh"><svg class="icon icon-sm" aria-hidden="true" viewBox="0 0 16 16"><use href="#icon-refresh"></use></svg>刷新</button>
+          <button class="secondary icon-btn" type="button" id="queue-composer-toggle" aria-expanded="true" aria-controls="queue-composer-body">收起</button>
+          <div class="menu-wrap" id="queue-more-wrap">
+            <button class="ghost icon-btn" type="button" id="queue-more-button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-more-menu" aria-label="更多任务操作"><svg class="icon icon-sm" aria-hidden="true" viewBox="0 0 16 16"><use href="#icon-more"></use></svg>更多</button>
+            <div class="menu" id="queue-more-menu" role="menu" hidden>
+              <button type="button" role="menuitem" id="queue-prune">清理旧任务</button>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="note" id="key-hint" hidden></div>
-      <div class="actions">
-        <button type="button" id="key-btn">解锁 / 创建</button>
+      <div id="queue-kpi" class="queue-kpi"></div>
+      <p class="queue-status-line" id="queue-status-line">还没有任务</p>
+      <div class="rail-composer" id="queue-composer-body" aria-describedby="queue-cred-note">
+        <textarea id="queue-paste" rows="6" aria-label="粘贴裸 IOC，一行一个，空行与 # 注释会被忽略" placeholder="# 每行一个 IOC；空行与 # 注释会被忽略&#10;alpha.example.invalid&#10;beta.example.invalid"></textarea>
+        <div class="drop-zone" id="queue-drop-zone" role="button" tabindex="0" aria-describedby="queue-file-status" title="支持 .txt / .csv / .jsonl / .xlsx，单文件不超过 24MB">
+          拖入或点击选择文件
+        </div>
+        <input type="file" id="queue-file" accept=".txt,.csv,.jsonl,.xlsx" hidden>
+        <div class="queue-file-row" id="queue-file-row" hidden>
+          <span class="stats" id="queue-file-status"></span>
+          <button class="ghost icon-btn" type="button" id="queue-file-clear">移除文件</button>
+        </div>
+        <div class="queue-mode-row">
+          <span class="field-label">模式</span>
+          <label class="radio"><input type="radio" name="queue-mode" id="queue-mode-offline" value="offline"> 只用本机缓存</label>
+          <label class="radio"><input type="radio" name="queue-mode" id="queue-mode-online" value="online"> 联网研判</label>
+        </div>
+        <div class="note" id="queue-cred-note">正在判断凭据…</div>
+        <div class="queue-submit-row">
+          <div class="stats" id="queue-enqueue-preview">入队后显示有效 / 重复 / 拒绝计数</div>
+          <button type="button" id="queue-enqueue">入队</button>
+        </div>
       </div>
-    </div>
-    <div class="note" id="key-unlocked-note" hidden>已用本机记住的口令自动解锁，无需再次输入。</div>
-  </section>
-
-  <section class="panel" id="lookup-panel" data-mode="share">
-    <h2>查询 IOC Info</h2>
-    <p class="hint">丢入 IOC（每行一个）或本机文件；默认用 7 天缓存，没有缓存再走 IOC Info 接口。查询结果是明文，发给云端前请先「脱敏并复制」。缺凭据时请用 <code>--credentials-file credentials.local.json</code> 启动，或在本终端设置 <code>IOC_INFO_API_KEY</code>。</p>
-    <div class="note" id="lookup-cred-note" hidden>当前没有 IOC Info 凭据：只能读本机 7 天缓存。请关掉本页，在有 credentials.local.json 的目录用 --credentials-file 重新启动。</div>
-    <div class="segmented" role="radiogroup" aria-label="输入方式">
-      <label><input type="radio" name="lookup-src" value="paste" checked> 粘贴文本</label>
-      <label><input type="radio" name="lookup-src" value="path"> 本机文件路径</label>
-    </div>
-    <div id="lookup-paste">
-      <label for="lookup-content">IOC 列表（每行一个）</label>
-      <textarea id="lookup-content" placeholder="lookup.example.invalid"></textarea>
-    </div>
-    <div id="lookup-file" hidden>
-      <label for="lookup-path">文件路径</label>
-      <input type="text" id="lookup-path" placeholder="D:\iocs.txt">
-    </div>
-    <div class="actions">
-      <button type="button" id="lookup-btn">查询 IOC Info</button>
-      <span class="flash" id="lookup-flash" hidden></span>
-    </div>
-    <div class="result" id="lookup-result" hidden>
-      <div class="stats" id="lookup-stats"></div>
-      <div class="json-viewer" id="lookup-viewer"></div>
-      <div class="compact-source">
-        <label for="lookup-output">compact JSONL（复制源）</label>
-        <textarea id="lookup-output" readonly></textarea>
+      <div class="rail-tasks">
+        <table class="queue-list-table">
+          <thead>
+            <tr>
+              <th>任务</th>
+              <th>模式</th>
+              <th>状态</th>
+              <th>进度</th>
+              <th>更新时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="queue-list"></tbody>
+        </table>
       </div>
-      <div class="actions">
-        <button type="button" id="lookup-sanitize">脱敏并复制</button>
-        <button class="secondary" type="button" id="lookup-copy">复制明文（未脱敏，勿发给云端）</button>
-      </div>
-      <div class="note">「脱敏并复制」需要先解锁 share key；成功后复制一行一个脱敏 JSON，并把结果展示在下方「生成脱敏包」结果区。明文结果勿直接发给云端。</div>
-    </div>
-  </section>
-
-  <section class="panel needs-key" id="create-panel" data-mode="share">
-    <h2>生成脱敏包</h2>
-    <p class="hint">粘贴研判结果 JSONL（或填写本机文件路径），生成可发给云端 AI 的脱敏内容并复制到剪贴板。</p>
-    <div class="segmented" role="radiogroup" aria-label="输入方式">
-      <label><input type="radio" name="create-src" value="paste" checked> 粘贴文本</label>
-      <label><input type="radio" name="create-src" value="path"> 本机文件路径</label>
-    </div>
-    <div id="create-paste">
-      <label for="create-content">JSONL 内容</label>
-      <textarea id="create-content" placeholder='{"ioc": "...", "conclusion": "..."}'></textarea>
-    </div>
-    <div id="create-file" hidden>
-      <label for="create-path">文件路径</label>
-      <input type="text" id="create-path" placeholder="D:\outputs\result.jsonl">
-    </div>
-    <label for="create-names">人员姓名文件路径（可选，自由文本中的姓名需逐行列出）</label>
-    <input type="text" id="create-names" placeholder="D:\names.txt">
-    <div class="actions">
-      <button type="button" id="create-btn">生成脱敏包</button>
-      <span class="flash" id="create-flash" hidden></span>
-    </div>
-    <div class="result" id="create-result" hidden>
-      <div class="stats" id="create-stats"></div>
-      <div class="json-viewer" id="create-viewer"></div>
-      <div class="bundle-meta">bundle_id（连同脱敏内容一并提供给云端 AI）：</div>
-      <div class="bundle-id" id="create-bundle-id"></div>
-      <div class="compact-source">
-        <label for="create-output">compact JSONL（复制源）</label>
-        <textarea id="create-output" readonly></textarea>
-      </div>
-      <div class="actions">
-        <button class="secondary" type="button" id="create-copy">复制脱敏内容</button>
-      </div>
-      <div class="note">发给云端 AI 时请附带要求：返回的每行 JSON 顶层需原样加入上面的 bundle_id；ss1: 开头的 token 保持原样，不要改写、截断或翻译。</div>
-    </div>
-  </section>
-
-  <section class="panel needs-key" id="restore-panel" data-mode="share">
-    <h2>还原 AI 返回</h2>
-    <p class="hint">粘贴云端 AI 返回的 JSONL（每行需带 bundle_id），自动匹配本地 bundle 并还原真实值；原样粘回脱敏包内容也可以验证还原。顶部仅展示最近任务，更早任务的清单与还原记录仍保留在本机，只要粘贴对应回复即可再次匹配。</p>
-    <div class="segmented" role="radiogroup" aria-label="输入方式">
-      <label><input type="radio" name="restore-src" value="paste" checked> 粘贴文本</label>
-      <label><input type="radio" name="restore-src" value="path"> 本机文件路径</label>
-    </div>
-    <div id="restore-paste">
-      <label for="restore-content">AI 返回的 JSONL</label>
-      <textarea id="restore-content" placeholder='{"bundle_id": "...", "ioc": "ss1:...", "proposed_label": "..."}'></textarea>
-    </div>
-    <div id="restore-file" hidden>
-      <label for="restore-path">文件路径</label>
-      <input type="text" id="restore-path" placeholder="D:\cloud-review.jsonl">
-    </div>
-    <div class="actions">
-      <button type="button" id="restore-btn">还原</button>
-      <span class="flash" id="restore-flash" hidden></span>
-    </div>
-    <div class="result" id="restore-result" hidden>
-      <div class="stats" id="restore-stats"></div>
-      <div class="json-viewer" id="restore-viewer"></div>
-      <div class="compact-source">
-        <label for="restore-output">compact JSONL（复制源）</label>
-        <textarea id="restore-output" readonly></textarea>
-      </div>
-      <div class="actions">
-        <button class="secondary" type="button" id="restore-copy">复制还原结果</button>
-      </div>
-      <div class="note">还原结果包含真实 IOC 与真实身份值，只能在本机使用；不要把还原后的内容再发回云端。</div>
-    </div>
-  </section>
-
-  <section class="panel" id="scan-panel" data-mode="share">
-    <h2>残留扫描</h2>
-    <p class="hint">对任意 JSONL 做脱敏残留检查；finding_count 应为 0 才可以外发。</p>
-    <div class="segmented" role="radiogroup" aria-label="输入方式">
-      <label><input type="radio" name="scan-src" value="paste" checked> 粘贴文本</label>
-      <label><input type="radio" name="scan-src" value="path"> 本机文件路径</label>
-    </div>
-    <div id="scan-paste">
-      <label for="scan-content">JSONL 内容</label>
-      <textarea id="scan-content"></textarea>
-    </div>
-    <div id="scan-file" hidden>
-      <label for="scan-path">文件路径</label>
-      <input type="text" id="scan-path">
-    </div>
-    <div class="actions">
-      <button type="button" id="scan-btn">扫描</button>
-    </div>
-    <div class="result" id="scan-result" hidden>
-      <div class="stats" id="scan-stats"></div>
-    </div>
-  </section>
-
-  <section class="panel" id="queue-panel" data-mode="queue">
-    <div class="panel-head">
-      <h2 class="mode-title">研判队列</h2>
-      <div class="panel-head-actions">
-        <button class="secondary icon-btn" type="button" id="queue-refresh">刷新列表</button>
-        <button class="ghost icon-btn" type="button" id="queue-prune">清理旧任务</button>
-      </div>
-    </div>
-    <p class="hint" id="queue-status-line">尚无任务</p>
-
-    <div class="queue-input" aria-describedby="queue-cred-note">
-      <label for="queue-paste">粘贴裸 IOC，一行一个。空行与 # 注释会被忽略。</label>
-      <textarea id="queue-paste" rows="6" placeholder="# 每行一个 IOC；空行与 # 注释会被忽略&#10;alpha.example.invalid&#10;beta.example.invalid"></textarea>
-      <div class="drop-zone" id="queue-drop-zone" role="button" tabindex="0" aria-describedby="queue-file-status">
-        拖入 .txt / .csv / .jsonl / .xlsx，或点击选择文件
-      </div>
-      <input type="file" id="queue-file" accept=".txt,.csv,.jsonl,.xlsx" hidden>
-      <div class="queue-file-row" id="queue-file-row" hidden>
-        <span class="stats" id="queue-file-status"></span>
-        <button class="ghost icon-btn" type="button" id="queue-file-clear">移除文件</button>
-      </div>
-      <div class="queue-mode-row">
-        <span class="field-label">模式</span>
-        <label class="radio"><input type="radio" name="queue-mode" id="queue-mode-offline" value="offline"> 只用本机缓存</label>
-        <label class="radio"><input type="radio" name="queue-mode" id="queue-mode-online" value="online"> 联网研判</label>
-      </div>
-      <div class="note" id="queue-cred-note">正在判断凭据…</div>
-      <div class="queue-submit-row">
-        <div class="stats" id="queue-enqueue-preview">入队后显示有效 / 重复 / 拒绝计数</div>
-        <button type="button" id="queue-enqueue">入队</button>
-      </div>
+      <div class="rail-foot" id="queue-rail-foot">只显示最近任务；更早的记录仍保留在本机。</div>
     </div>
 
-    <div id="queue-kpi" class="queue-kpi" hidden></div>
+    <div class="ledger-empty" id="queue-ledger-empty">
+      <p class="ledger-empty-title">选择左侧任务开始研判。</p>
+      <p class="ledger-empty-reason">粘贴 IOC 入队并运行后，右侧会显示当前任务的证据台账。</p>
+      <button type="button" id="queue-ledger-refresh">刷新任务列表</button>
+    </div>
 
-    <div class="section-head">
-      <h3 class="section-title">任务列表</h3>
-    </div>
-    <div class="table-wrap">
-      <table class="queue-list-table">
-        <thead>
-          <tr>
-            <th>任务</th>
-            <th>模式</th>
-            <th>状态</th>
-            <th>进度</th>
-            <th>更新时间</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody id="queue-list"></tbody>
-      </table>
-    </div>
-    <div class="result" id="queue-results-box" hidden>
+    <div class="result-ledger" id="queue-results-box" hidden>
       <div class="results-toolbar" id="queue-results-toolbar">
-        <div class="results-toolbar-row">
-          <span class="stats results-headline" id="queue-results-stats" aria-live="polite">未选择任务</span>
-          <div class="results-toolbar-actions">
-            <button class="ghost icon-btn" type="button" id="queue-results-clear-filter" hidden>清除筛选</button>
-            <button class="ghost icon-btn" type="button" id="queue-results-refresh">刷新结果</button>
-          </div>
+        <span class="results-headline" id="queue-results-stats" aria-live="polite">未选择任务</span>
+        <div class="filter-group" role="group" aria-label="结论筛选">
+          <button class="filter-chip" type="button" data-queue-filter="all" aria-pressed="true">全部</button>
+          <button class="filter-chip" type="button" data-queue-filter="review" aria-pressed="false">待复核</button>
+          <button class="filter-chip" type="button" data-queue-filter="gray" aria-pressed="false">受限</button>
+          <button class="filter-chip" type="button" data-queue-filter="false_positive" aria-pressed="false">误报</button>
+          <button class="filter-chip" type="button" data-queue-filter="block" aria-pressed="false">威胁成立</button>
+          <button class="filter-chip" type="button" id="queue-filter-provider-issues" aria-pressed="false" aria-describedby="queue-provider-filter-status">异常</button>
         </div>
-        <div class="results-toolbar-row">
-          <div class="filter-group" role="group" aria-label="结论快捷筛选">
-            <button class="filter-chip" type="button" data-queue-filter="all" aria-pressed="true">全部</button>
-            <button class="filter-chip" type="button" data-queue-filter="review" aria-pressed="false">待复核</button>
-            <button class="filter-chip" type="button" data-queue-filter="gray" aria-pressed="false">灰</button>
-            <button class="filter-chip" type="button" data-queue-filter="false_positive" aria-pressed="false">误报</button>
-            <button class="filter-chip" type="button" data-queue-filter="block" aria-pressed="false">黑</button>
-            <button class="filter-chip" type="button" id="queue-filter-provider-issues" aria-pressed="false" aria-describedby="queue-provider-filter-status">Provider 异常</button>
-          </div>
-          <input type="search" id="queue-query" class="queue-query" placeholder="关键字：IOC / 证据" autocomplete="off" aria-label="结果关键字">
-        </div>
-        <div class="results-toolbar-row">
-          <span class="stats" id="queue-page-status">第 0 / 0 页 · 共 0 行</span>
-          <div class="results-toolbar-actions">
-            <button class="secondary icon-btn" type="button" id="queue-prev-page" disabled>上一页</button>
-            <button class="secondary icon-btn" type="button" id="queue-next-page" disabled>下一页</button>
-            <label class="inline-field" for="queue-page-size">每页</label>
-            <select id="queue-page-size" class="queue-page-size" aria-label="每页行数">
-              <option value="50">50</option>
-              <option value="100" selected>100</option>
-              <option value="200">200</option>
-              <option value="500">500</option>
-            </select>
-            <div class="menu-wrap">
-              <button class="secondary icon-btn" type="button" id="queue-export-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-export-menu">导出</button>
-              <div class="menu" id="queue-export-menu" role="menu" hidden>
+        <input type="search" id="queue-query" class="queue-query" placeholder="搜索 IOC 或证据" autocomplete="off" aria-label="结果关键字">
+        <div class="results-toolbar-actions">
+          <button class="ghost icon-btn" type="button" id="queue-results-clear-filter" hidden>清除筛选</button>
+          <button class="ghost icon-btn" type="button" id="queue-results-refresh" hidden>刷新结果</button>
+          <div class="menu-wrap">
+            <button class="secondary icon-btn" type="button" id="queue-export-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-export-menu"><svg class="icon icon-sm" aria-hidden="true" viewBox="0 0 16 16"><use href="#icon-download"></use></svg>导出</button>
+            <div class="menu" id="queue-export-menu" role="menu" hidden>
+              <div class="menu-group" role="group" aria-label="结果文件">
+                <span class="menu-group-title">结果文件</span>
                 <button type="button" role="menuitem" id="queue-export-jsonl" data-queue-export="jsonl">JSONL</button>
                 <button type="button" role="menuitem" id="queue-export-csv" data-queue-export="csv">CSV</button>
                 <button type="button" role="menuitem" id="queue-export-xlsx" data-queue-export="xlsx">XLSX</button>
+              </div>
+              <div class="menu-group" role="group" aria-label="审计包">
+                <span class="menu-group-title">审计包</span>
                 <button type="button" role="menuitem" id="queue-export-diagnostics" data-queue-export="diagnostics">诊断 JSON</button>
                 <button type="button" role="menuitem" id="queue-export-diff" data-queue-export="diff">diff JSON</button>
                 <button type="button" role="menuitem" id="queue-export-bundle" data-queue-export="bundle">bundle ZIP</button>
+                <button type="button" role="menuitem" id="queue-diff">对比 baseline</button>
+                <label class="inline-field menu-field" for="queue-baseline-job">baseline 任务</label>
+                <select id="queue-baseline-job" class="queue-baseline"></select>
               </div>
             </div>
-            <button class="secondary icon-btn" type="button" id="queue-diff">对比 baseline</button>
-            <span class="flash" id="queue-export-flash" hidden></span>
           </div>
+          <span class="flash" id="queue-export-flash" hidden></span>
         </div>
-        <div class="results-toolbar-row">
-          <label class="inline-field" for="queue-baseline-job">baseline job</label>
-          <select id="queue-baseline-job" class="queue-baseline"></select>
+      </div>
+      <div class="results-error" id="queue-results-error" hidden>
+        <p class="stats is-error" id="queue-results-error-message">结果读取失败。</p>
+        <div class="actions">
+          <button class="secondary icon-btn" type="button" id="queue-results-error-retry">重试</button>
+          <button class="ghost icon-btn" type="button" id="queue-results-error-back">返回任务列表</button>
         </div>
       </div>
       <p class="stats" id="queue-provider-filter-status">Provider 异常筛选会匹配 error、disabled、failed、timeout 和缺失必要来源；no_data 不视为失败。</p>
-      <div class="batch-bar" id="queue-batch-bar" hidden>
-        <span class="stats" id="queue-batch-count">已选 0 行</span>
-        <button class="secondary icon-btn" type="button" id="queue-batch-copy">复制 IOC</button>
-        <button class="secondary icon-btn" type="button" id="queue-batch-export">导出选中</button>
-        <button class="secondary icon-btn" type="button" data-queue-batch-review="approved">标记 approved</button>
-        <button class="secondary icon-btn" type="button" data-queue-batch-review="rejected">标记 rejected</button>
-        <button class="secondary icon-btn" type="button" data-queue-batch-review="pending">标记 pending</button>
-        <span class="stats" id="queue-batch-progress" aria-live="polite" hidden></span>
-        <button class="ghost icon-btn" type="button" id="queue-batch-clear">取消选择</button>
-      </div>
       <div class="result" id="queue-diff-result" hidden>
         <div class="stats" id="queue-diff-stats"></div>
         <div class="json-viewer" id="queue-diff-viewer"></div>
@@ -1136,16 +1413,43 @@
               <th class="col-id">#</th>
               <th class="col-ioc">IOC</th>
               <th class="col-conclusion">结论 / 处置</th>
-              <th class="col-route">route</th>
               <th class="col-review">人工标签</th>
               <th class="col-confidence">置信度</th>
               <th class="col-provider">来源</th>
-              <th class="col-url">保留 URL</th>
               <th class="col-summary">摘要</th>
             </tr>
           </thead>
           <tbody id="queue-results-body"></tbody>
         </table>
+      </div>
+      <div class="batch-bar" id="queue-batch-bar" hidden>
+        <span class="stats" id="queue-batch-count">已选 0 行</span>
+        <div class="menu-wrap">
+          <button class="secondary icon-btn" type="button" id="queue-batch-mark-button" aria-haspopup="true" aria-expanded="false" aria-controls="queue-batch-mark-menu">标记</button>
+          <div class="menu" id="queue-batch-mark-menu" role="menu" hidden>
+            <button type="button" role="menuitem" data-queue-batch-review="approved">approved</button>
+            <button type="button" role="menuitem" data-queue-batch-review="rejected">rejected</button>
+            <button type="button" role="menuitem" data-queue-batch-review="pending">pending</button>
+          </div>
+        </div>
+        <button class="secondary icon-btn" type="button" id="queue-batch-copy">复制 IOC</button>
+        <button class="secondary icon-btn" type="button" id="queue-batch-export">导出选中</button>
+        <span class="stats" id="queue-batch-progress" aria-live="polite" hidden></span>
+        <button class="ghost icon-btn" type="button" id="queue-batch-clear">取消选择</button>
+      </div>
+      <div class="table-foot" id="queue-results-foot">
+        <span class="stats" id="queue-page-status" aria-live="polite">第 0 / 0 页 · 共 0 行</span>
+        <div class="table-foot-actions">
+          <label class="inline-field" for="queue-page-size">每页</label>
+          <select id="queue-page-size" class="queue-page-size" aria-label="每页行数">
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+          </select>
+          <button class="secondary icon-btn" type="button" id="queue-prev-page" disabled>上一页</button>
+          <button class="secondary icon-btn" type="button" id="queue-next-page" disabled>下一页</button>
+        </div>
       </div>
     </div>
   </section>
@@ -1287,11 +1591,6 @@
     </div>
   </section>
 
-  <div class="mode-header" data-mode="ops">
-    <h2 class="mode-title">运维状态</h2>
-    <p class="mode-sub">服务、缓存与历史记录；只读信息，不显示本机路径。</p>
-  </div>
-
   <section class="panel" id="ops-panel" data-mode="ops">
     <div class="panel-head">
       <h2 class="mode-title">运维状态</h2>
@@ -1299,88 +1598,100 @@
         <button class="secondary icon-btn" type="button" id="ops-refresh">刷新状态</button>
       </div>
     </div>
-    <p class="hint" id="ops-state-line">进入运维模式时读取一次，不自动轮询。</p>
+    <p class="hint" id="ops-state-line">只读信息，不显示本机路径；进入运维模式时读取一次，不自动轮询。</p>
     <div class="statusbar" id="statusbar">
       <span id="status-key">正在加载…</span>
       <span class="badge" id="status-unlocked">未解锁</span>
       <span style="margin-left: auto;"></span>
       <ul class="bundles" id="status-bundles" title="仅展示最近任务；更早的任务仍保存在本机，粘贴对应云端回复仍可自动还原"></ul>
-      <button class="secondary" type="button" id="lock-btn">清除口令</button>
-      <span class="flash" id="lock-flash" hidden></span>
     </div>
-    <div class="ops-grid" id="ops-blocks" aria-busy="false">
-      <div class="ops-block">
-        <h3 class="section-title">服务状态</h3>
-        <div class="stats" id="ops-server-stats">尚未读取。</div>
-      </div>
-      <div class="ops-block">
+    <div class="ops-ledger" id="ops-blocks" aria-busy="false">
+      <div class="ops-block ops-block-wide">
         <h3 class="section-title">服务健康</h3>
         <ul class="ops-checks" id="ops-health"></ul>
       </div>
       <div class="ops-block">
+        <h3 class="section-title">服务</h3>
+        <div class="stats" id="ops-server-stats">状态尚未读取。</div>
+      </div>
+      <div class="ops-block">
         <h3 class="section-title">缓存统计</h3>
-        <div class="stats" id="ops-cache-stats">尚未读取。</div>
+        <div class="stats" id="ops-cache-stats">状态尚未读取。</div>
         <button class="ghost icon-btn" type="button" id="ops-cache-toggle" aria-expanded="false" aria-controls="ops-cache-providers">按 provider 展开</button>
         <ul class="ops-providers" id="ops-cache-providers" hidden></ul>
       </div>
-      <div class="ops-block">
+      <div class="ops-block ops-block-wide">
         <h3 class="section-title">任务与 bundle 历史</h3>
-        <div class="stats" id="ops-history-stats">尚未读取。</div>
+        <div class="stats" id="ops-history-stats">状态尚未读取。</div>
         <ul class="ops-jobs" id="ops-history-jobs"></ul>
+        <p class="note">只显示最近 10 条；完整记录保留在本机。</p>
       </div>
-      <div class="ops-block">
+      <div class="ops-block ops-block-wide">
         <h3 class="section-title">legacy workbench</h3>
-        <div class="stats" id="ops-workbench-stats">尚未读取。</div>
+        <div class="stats" id="ops-workbench-stats">状态尚未读取。</div>
       </div>
     </div>
   </section>
 </main>
+
+<div class="scrim" id="overlay-scrim" hidden></div>
 <aside class="side-panel" id="queue-detail-panel" role="dialog" aria-modal="true" aria-labelledby="queue-detail-title" tabindex="-1" hidden>
   <div class="side-panel-head">
     <div class="side-panel-heading">
       <span class="side-panel-label" id="queue-detail-kicker">解释详情</span>
       <h3 class="side-panel-title" id="queue-detail-title">result_id</h3>
+      <span class="verdict-badge is-unknown" id="queue-detail-badge">未知</span>
       <span class="stats" id="queue-detail-nav-status">未选择结果</span>
     </div>
     <div class="side-panel-actions">
-      <button class="secondary icon-btn" type="button" id="queue-detail-prev" disabled>上一条</button>
-      <button class="secondary icon-btn" type="button" id="queue-detail-next" disabled>下一条</button>
-      <button class="ghost icon-btn" type="button" id="queue-detail-close" aria-label="关闭解释详情">关闭</button>
+      <button class="secondary icon-btn" type="button" id="queue-detail-prev" disabled><svg class="icon icon-sm" aria-hidden="true" viewBox="0 0 16 16"><use href="#icon-prev"></use></svg>上一条</button>
+      <button class="secondary icon-btn" type="button" id="queue-detail-next" disabled>下一条<svg class="icon icon-sm" aria-hidden="true" viewBox="0 0 16 16"><use href="#icon-next"></use></svg></button>
+      <button class="ghost icon-btn" type="button" id="queue-detail-close" aria-label="关闭解释详情"><svg class="icon icon-sm" aria-hidden="true" viewBox="0 0 16 16"><use href="#icon-close"></use></svg>关闭</button>
     </div>
   </div>
   <div class="side-panel-body">
-    <div class="result" id="queue-explain-box" hidden>
-      <div class="json-viewer" id="queue-explain-viewer"></div>
-      <div class="detail-state" id="queue-explain-state" hidden></div>
-      <div class="review-form">
-        <div class="review-grid">
-          <div>
-            <label for="queue-review-label">复核标签</label>
-            <select id="queue-review-label">
-              <option value="approved">approved</option>
-              <option value="rejected">rejected</option>
-              <option value="pending">pending</option>
-            </select>
-          </div>
-          <div>
-            <label for="queue-review-reviewer">复核人</label>
-            <input type="text" id="queue-review-reviewer" autocomplete="off">
-          </div>
-        </div>
-        <label for="queue-review-note">复核备注</label>
-        <textarea id="queue-review-note" rows="2"></textarea>
-        <div class="actions">
-          <button type="button" id="queue-review-submit">提交复核</button>
-          <span class="stats" id="queue-selected-result"></span>
-          <span class="flash" id="queue-review-flash" hidden></span>
-        </div>
-        <p class="stats">人工复核只追加 overlay，不覆盖系统结论。Ctrl+Enter 提交。</p>
+    <section class="side-panel-section" id="queue-explain-box">
+      <h4 class="section-title">证据</h4>
+      <div class="json-toolbar">
+        <button class="secondary json-toggle" type="button" id="queue-raw-toggle" aria-expanded="false" aria-controls="queue-raw-viewer">原始 JSONL</button>
       </div>
-    </div>
-    <div class="result" id="queue-diff-result" hidden>
+      <pre class="raw-viewer" id="queue-raw-viewer" hidden></pre>
+      <div class="detail-state" id="queue-explain-state" hidden></div>
+      <div class="json-viewer" id="queue-explain-viewer"></div>
+    </section>
+    <section class="side-panel-section" id="queue-detail-sources-section">
+      <h4 class="section-title">来源</h4>
+      <div id="queue-detail-sources"></div>
+    </section>
+    <section class="side-panel-section" id="queue-diff-result" hidden>
+      <h4 class="section-title">diff 对比</h4>
       <div class="stats" id="queue-diff-stats"></div>
       <div class="json-viewer" id="queue-diff-viewer"></div>
+    </section>
+  </div>
+  <div class="review-form" id="queue-review-form">
+    <div class="review-grid">
+      <div>
+        <label for="queue-review-label">复核标签</label>
+        <select id="queue-review-label">
+          <option value="approved">approved</option>
+          <option value="rejected">rejected</option>
+          <option value="pending">pending</option>
+        </select>
+      </div>
+      <div>
+        <label for="queue-review-reviewer">复核人</label>
+        <input type="text" id="queue-review-reviewer" autocomplete="off">
+      </div>
     </div>
+    <label for="queue-review-note">复核备注</label>
+    <textarea id="queue-review-note" rows="2"></textarea>
+    <div class="actions">
+      <button type="button" id="queue-review-submit">提交复核</button>
+      <span class="stats" id="queue-selected-result"></span>
+      <span class="flash" id="queue-review-flash" hidden></span>
+    </div>
+    <p class="stats">人工复核只追加 overlay，不覆盖系统结论。Ctrl+Enter 提交。</p>
   </div>
 </aside>
 
@@ -1388,9 +1699,9 @@
   <div class="modal-card">
     <h3 class="modal-title" id="shortcuts-title">键盘快捷键</h3>
     <dl class="shortcut-list">
-      <div><dt>/</dt><dd>聚焦结果关键字</dd></div>
-      <div><dt>1 2 3 4 5</dt><dd>全部 / 待复核 / 灰 / 误报 / 黑</dd></div>
-      <div><dt>Shift+P</dt><dd>Provider 异常筛选</dd></div>
+      <div><dt>/</dt><dd>聚焦结果搜索</dd></div>
+      <div><dt>1 2 3 4 5</dt><dd>全部 / 待复核 / 受限 / 误报 / 威胁成立</dd></div>
+      <div><dt>Shift+P</dt><dd>Provider 异常切换</dd></div>
       <div><dt>J / ↓</dt><dd>下一行</dd></div>
       <div><dt>K / ↑</dt><dd>上一行</dd></div>
       <div><dt>Enter</dt><dd>打开当前行解释</dd></div>
@@ -1488,6 +1799,10 @@ function applyMode(mode, options) {
   let next = MODE_LABELS[mode] ? mode : 'queue';
   if (next === 'legacy' && !legacyWorkbenchEnabled()) next = 'queue';
   document.body.dataset.mode = next;
+  // The case-file drawer belongs to the queue view. Leaving the queue mode
+  // closes it (and clears the single-row focus) so it never floats over the
+  // share or ops panels.
+  if (next !== 'queue') closeQueueDetail();
   document.querySelectorAll('#mode-nav a').forEach((link) => {
     link.setAttribute('aria-current', link.dataset.mode === next ? 'page' : 'false');
   });
@@ -1600,7 +1915,7 @@ const queueState = {
   pollTimer: null,
   refreshInFlight: false,
   selectedJobId: '',
-  selectedResultId: '',
+  selectedResultId: null,
   resultRows: [],
   iocInfoEnabled: false,
   selectedFile: null,
@@ -1612,6 +1927,21 @@ const queueState = {
   selectedResultIds: new Set(),
   renderVersion: 0,
 };
+
+function queueHasResultRow(resultId) {
+  const rows = queueState.resultRows || [];
+  return rows.some((row) => String(row.result_id) === String(resultId));
+}
+
+function queueHasResultSelection() {
+  return queueState.selectedResultId !== null && queueState.selectedResultId !== '';
+}
+
+function queueFirstVisibleRow() {
+  const body = $('queue-results-body');
+  if (!body) return null;
+  return body.querySelector('tr.queue-row');
+}
 
 const WORKBENCH_STATE_LABELS = {
   queued: '排队中',
@@ -1721,11 +2051,11 @@ function showToast(message, kind) {
   toast.textContent = message;
   host.appendChild(toast);
   requestAnimationFrame(() => toast.classList.add('is-visible'));
-  let timer = setTimeout(dismiss, 4000);
+  let timer = setTimeout(dismiss, kind === 'error' ? 6000 : 3200);
   function dismiss() {
     clearTimeout(timer);
     toast.classList.remove('is-visible');
-    setTimeout(() => toast.remove(), 320);
+    setTimeout(() => toast.remove(), 180);
   }
   toast.addEventListener('mouseenter', () => clearTimeout(timer));
   toast.addEventListener('mouseleave', () => { timer = setTimeout(dismiss, 2000); });
@@ -2321,9 +2651,26 @@ function applyCreateResult(result) {
 }
 
 async function refreshStatus() {
+  const statusButton = $('status-summary-button');
+  const statusText = $('status-summary-text');
+  if (statusButton) statusButton.setAttribute('aria-busy', 'true');
+  if (statusText) statusText.textContent = '读取中';
+  const statusRetryButton = $('status-retry');
+  if (statusRetryButton) statusRetryButton.hidden = true;
   let status;
   try { status = await api('/api/status', {}); }
-  catch (err) { showError(err.message); return; }
+  catch (err) {
+    const statusDot = $('status-dot');
+    if (statusDot) statusDot.className = 'dot is-error';
+    const failedLine = $('meta-key-text');
+    if (failedLine) failedLine.textContent = '状态读取失败，选择“重试”';
+    if (statusRetryButton) statusRetryButton.hidden = false;
+    showError(err.message);
+    return;
+  } finally {
+    if (statusButton) statusButton.setAttribute('aria-busy', 'false');
+    if (statusText) statusText.textContent = '状态';
+  }
   keyExists = !!status.key_exists;
   const unlocked = !!status.unlocked;
   document.body.classList.toggle('is-unlocked', unlocked);
@@ -2348,6 +2695,8 @@ async function refreshStatus() {
     metaCredText.textContent = status.ioc_info_enabled ? 'IOC Info 凭据可用' : 'IOC Info 无凭据';
   }
   if (metaCredDot) metaCredDot.className = 'dot ' + (status.ioc_info_enabled ? 'is-on' : 'is-off');
+  const statusDot = $('status-dot');
+  if (statusDot) statusDot.className = 'dot ' + (unlocked ? 'is-on' : 'is-review');
   const form = $('key-form');
   const unlockedNote = $('key-unlocked-note');
   const panelHint = $('key-panel-hint');
@@ -2360,6 +2709,8 @@ async function refreshStatus() {
     unlockedNote.hidden = true;
     panelHint.hidden = false;
   }
+  const keyStatusBar = $('key-status-bar');
+  if (keyStatusBar) keyStatusBar.hidden = !unlocked;
   const hint = $('key-hint');
   if (!status.key_exists) {
     hint.textContent = 'key 文件不存在：输入口令并勾选“生成新 key”以创建；创建后同一台机器请一直复用这个 key。';
@@ -3170,14 +3521,14 @@ function queueSummaryText(job) {
     if (input.valid != null) parts.push('有效 ' + input.valid);
     if (input.duplicated != null) parts.push('重复 ' + input.duplicated);
     if (input.rejected != null) parts.push('拒绝 ' + input.rejected);
-    return parts.length ? parts.join(' · ') : '—';
+    return parts.length ? parts.join(' · ') : '未记录';
   }
   const conclusions = summary.conclusions && typeof summary.conclusions === 'object'
     ? summary.conclusions
     : {};
   const bits = Object.keys(conclusions).map((key) => key + '=' + conclusions[key]);
   const rows = summary.rows != null ? ('行 ' + summary.rows) : '';
-  return [rows, bits.join(', ')].filter(Boolean).join(' · ') || '—';
+  return [rows, bits.join(', ')].filter(Boolean).join(' · ') || '未记录';
 }
 
 function queueEscape(text) {
@@ -3353,50 +3704,57 @@ function queueKpiFromSummary(summary) {
   const providerStatuses = summary && summary.provider_statuses && typeof summary.provider_statuses === 'object'
     ? summary.provider_statuses
     : {};
-  const black =
-    Number(conclusions['存活有效'] || 0) + Number(conclusions['失活有效'] || 0);
+  const providerDetails = summary && summary.provider_details && typeof summary.provider_details === 'object'
+    ? summary.provider_details
+    : {};
   const review = Number(conclusions['待复核'] || 0);
-  const gray = Number(conclusions['灰'] || 0);
-  const fp = Number(conclusions['误报'] || 0);
   const providerIssue =
     Number(providerStatuses.error || 0) +
     Number(providerStatuses.failed || 0) +
     Number(providerStatuses.timeout || 0);
-  const providerDetails = summary && summary.provider_details && typeof summary.provider_details === 'object'
-    ? summary.provider_details
-    : {};
   const abnormalProviders = Object.keys(providerDetails)
     .filter((name) => ['error', 'failed', 'timeout'].indexOf(String(providerDetails[name]).toLowerCase()) >= 0)
     .map((name) => name + '=' + providerDetails[name]);
-  return [
-    { label: '判黑', value: black },
-    { label: '待复核', value: review },
-    { label: '灰', value: gray },
-    { label: '误报', value: fp },
-    { label: '来源异常', value: providerIssue, detail: abnormalProviders.join(' · ') },
-  ];
+  return { review: review, providerIssue: providerIssue, abnormalProviders: abnormalProviders };
 }
 
 function renderQueueKpi(job) {
   const box = $('queue-kpi');
   if (!box) return;
-  if (!job || job.state !== 'succeeded') {
-    box.hidden = true;
-    box.innerHTML = '';
-    return;
-  }
-  const summary = job.result_summary && typeof job.result_summary === 'object'
-    ? job.result_summary
+  const jobs = queueState.jobs || [];
+  const done = jobs.filter((item) => item && item.state === 'succeeded').length;
+  const selected = job || jobs.find((item) => item.job_id === queueState.selectedJobId) || null;
+  const summary = selected && selected.result_summary && typeof selected.result_summary === 'object'
+    ? selected.result_summary
     : {};
-  const cards = queueKpiFromSummary(summary);
-  box.innerHTML = cards.map((card) => (
-    '<div class="kpi-card">' +
-      '<span class="kpi-label">' + queueEscape(card.label) + '</span>' +
-      '<span class="kpi-value">' + queueEscape(String(card.value)) + '</span>' +
-      (card.detail ? '<span class="kpi-detail">' + queueEscape(card.detail) + '</span>' : '') +
-    '</div>'
-  )).join('');
+  const counts = queueKpiFromSummary(summary);
+  const providerActive = !!queueFilterState().providerIssues;
+  const fields = [
+    { key: 'jobs', label: '任务', value: jobs.length, action: '' },
+    { key: 'review', label: '待复核', value: counts.review, action: 'review' },
+    { key: 'done', label: '已完成', value: done, action: '' },
+    { key: 'issues', label: '来源异常', value: counts.providerIssue, action: 'provider' },
+  ];
+  box.innerHTML = fields.map((field) => {
+    const inner =
+      '<span class="kpi-label">' + queueEscape(field.label) + '</span>' +
+      '<span class="kpi-value">' + queueEscape(String(field.value)) + '</span>';
+    if (!field.action) return '<span class="kpi-field">' + inner + '</span>';
+    const pressed = field.action === 'provider' && providerActive ? ' aria-pressed="true"' : '';
+    return '<button class="kpi-field is-actionable" type="button" data-kpi-action="' + field.action + '"' +
+      pressed + '>' + inner + '</button>';
+  }).join('');
   box.hidden = false;
+  box.querySelectorAll('[data-kpi-action]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (button.getAttribute('data-kpi-action') === 'review') {
+        queueApplyQuickFilter('review');
+        return;
+      }
+      const providerButton = $('queue-filter-provider-issues');
+      if (providerButton) providerButton.click();
+    });
+  });
 }
 
 function fillQueueBaselineOptions(currentJobId) {
@@ -3424,9 +3782,7 @@ const QUEUE_FILTERS = {
   false_positive: ['false_positive'],
   block: ['block'],
 };
-const QUEUE_FILTER_LABELS = { review: '待复核', gray: '灰', false_positive: '误报', block: '黑' };
-const SVG_NS = $('icon-sprite') ? $('icon-sprite').namespaceURI : '';
-
+const QUEUE_FILTER_LABELS = { review: '待复核', gray: '受限', false_positive: '误报', block: '威胁成立' };
 function queueFilterState() {
   if (!queueState.filters) {
     queueState.filters = { kind: 'all', query: '', providerIssues: false };
@@ -3456,34 +3812,15 @@ function queueProviderStatusClass(status) {
   return 'is-no_data';
 }
 
-function queueAlertIcon() {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 16 16');
-  svg.setAttribute('class', 'chip-icon');
-  svg.setAttribute('aria-hidden', 'true');
-  const body = document.createElementNS(SVG_NS, 'path');
-  body.setAttribute('d', 'M8 2.6 14.2 13H1.8z');
-  body.setAttribute('fill', 'none');
-  body.setAttribute('stroke', 'currentColor');
-  body.setAttribute('stroke-width', '1.5');
-  body.setAttribute('stroke-linejoin', 'round');
-  const stem = document.createElementNS(SVG_NS, 'path');
-  stem.setAttribute('d', 'M8 6.6v2.6');
-  stem.setAttribute('fill', 'none');
-  stem.setAttribute('stroke', 'currentColor');
-  stem.setAttribute('stroke-width', '1.5');
-  stem.setAttribute('stroke-linecap', 'round');
-  svg.appendChild(body);
-  svg.appendChild(stem);
-  return svg;
-}
-
 function queueProviderChip(name, status) {
   const chip = document.createElement('span');
-  chip.className = 'provider-chip ' + queueProviderStatusClass(status);
-  if (queueProviderStatusClass(status) === 'is-error') chip.appendChild(queueAlertIcon());
+  const kind = queueProviderStatusClass(status);
+  chip.className = 'provider-chip ' + kind;
+  chip.title = String(name) + ' ' + String(status == null ? '' : status);
   const text = document.createElement('span');
-  text.textContent = String(name) + ' ' + String(status == null ? '' : status);
+  text.className = 'provider-chip-name';
+  const label = String(name);
+  text.textContent = label.length > 14 ? label.slice(0, 13) + '…' : label;
   chip.appendChild(text);
   return chip;
 }
@@ -3509,9 +3846,16 @@ function queueProviderCell(row) {
   });
   const chips = document.createElement('div');
   chips.className = 'provider-chips';
-  const shown = abnormal.length ? abnormal : normal.slice(0, 3);
+  const pool = abnormal.length ? abnormal : normal;
+  const shown = pool.slice(0, 3);
   if (shown.length) {
     shown.forEach((entry) => chips.appendChild(queueProviderChip(entry[0], entry[1])));
+    if (pool.length > 3) {
+      const more = document.createElement('span');
+      more.className = 'provider-chip is-more';
+      more.textContent = '+' + (pool.length - 3);
+      chips.appendChild(more);
+    }
   } else {
     const empty = document.createElement('span');
     empty.className = 'stats';
@@ -3575,7 +3919,7 @@ function queueBuildRow(row, index) {
   const idCell = document.createElement('td');
   idCell.className = 'cell-id';
   idCell.dataset.label = '#';
-  idCell.textContent = resultId ? resultId.slice(-6) : String(index + 1);
+  idCell.textContent = String(index + 1);
   idCell.title = resultId;
   tr.appendChild(idCell);
 
@@ -3587,6 +3931,11 @@ function queueBuildRow(row, index) {
   iocText.textContent = String(row.ioc == null ? '' : row.ioc);
   iocText.title = String(row.ioc == null ? '' : row.ioc);
   iocCell.appendChild(iocText);
+  const routeLine = document.createElement('span');
+  routeLine.className = 'cell-route-line';
+  routeLine.dataset.label = 'route';
+  routeLine.textContent = 'route ' + String(row.route == null || row.route === '' ? '未给出' : row.route);
+  iocCell.appendChild(routeLine);
   tr.appendChild(iocCell);
 
   const conclusionCell = document.createElement('td');
@@ -3597,6 +3946,7 @@ function queueBuildRow(row, index) {
   const badge = document.createElement('span');
   badge.className = 'verdict-badge ' + queueVerdictClass(row.conclusion);
   badge.textContent = String(row.conclusion == null || row.conclusion === '' ? '未知' : row.conclusion);
+  badge.setAttribute('aria-label', queueVerdictAria(row.conclusion));
   conclusionWrap.appendChild(badge);
   const disposition = String(row.disposition == null ? '' : row.disposition);
   if (disposition) {
@@ -3607,12 +3957,6 @@ function queueBuildRow(row, index) {
   }
   conclusionCell.appendChild(conclusionWrap);
   tr.appendChild(conclusionCell);
-
-  const routeCell = document.createElement('td');
-  routeCell.className = 'cell-route';
-  routeCell.dataset.label = 'route';
-  routeCell.textContent = String(row.route == null ? '—' : row.route);
-  tr.appendChild(routeCell);
 
   const reviewCell = document.createElement('td');
   reviewCell.className = 'cell-review';
@@ -3636,18 +3980,14 @@ function queueBuildRow(row, index) {
   providerCell.className = 'cell-provider';
   providerCell.dataset.label = '来源';
   providerCell.appendChild(queueProviderCell(row));
-  tr.appendChild(providerCell);
-
-  const urlCell = document.createElement('td');
-  urlCell.className = 'cell-url';
-  urlCell.dataset.label = '保留 URL';
-  const urlText = document.createElement('span');
-  urlText.className = 'ellipsis';
+  const urlLine = document.createElement('span');
+  urlLine.className = 'cell-url';
+  urlLine.dataset.label = '保留 URL';
   const retained = queueFirstRetainedUrl(row.retained_urls);
-  urlText.textContent = retained || '—';
-  urlText.title = retained;
-  urlCell.appendChild(urlText);
-  tr.appendChild(urlCell);
+  urlLine.textContent = retained ? 'URL ' + retained : 'URL 未保留';
+  urlLine.title = retained;
+  providerCell.appendChild(urlLine);
+  tr.appendChild(providerCell);
 
   const summaryCell = document.createElement('td');
   summaryCell.className = 'cell-summary';
@@ -3658,11 +3998,14 @@ function queueBuildRow(row, index) {
   summaryCell.appendChild(summary);
   tr.appendChild(summaryCell);
 
-  tr.addEventListener('click', () => doQueueExplain(resultId, tr));
+  tr.addEventListener('click', () => queueToggleResultSelection(resultId, tr));
   tr.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       event.preventDefault();
-      doQueueExplain(resultId, tr);
+      // Stop propagation so the document-level Enter shortcut does not
+      // re-activate the same row and undo the toggle.
+      event.stopPropagation();
+      queueToggleResultSelection(resultId, tr);
     } else if (event.key === ' ') {
       event.preventDefault();
       if (!queueState.selectedResultIds) queueState.selectedResultIds = new Set();
@@ -3684,7 +4027,7 @@ function queueResultsSkeleton() {
   for (let index = 0; index < 8; index += 1) {
     const tr = document.createElement('tr');
     tr.className = 'skeleton-row';
-    for (let column = 0; column < 10; column += 1) {
+    for (let column = 0; column < 8; column += 1) {
       const td = document.createElement('td');
       const block = document.createElement('span');
       block.className = 'skeleton-block';
@@ -3721,15 +4064,16 @@ function renderQueueResultRows(rows) {
   if (!rows || !rows.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 10;
+    td.colSpan = 8;
     td.className = 'wrap queue-empty';
     td.textContent = queueFiltersActive()
-      ? '当前筛选没有结果。清除筛选或换关键字。'
-      : '这个任务没有结果。请确认任务已完成，或换一个任务。';
+      ? '所有行都不匹配当前筛选。清除筛选后重新查看。'
+      : '这个任务还没有结果。等待运行完成后选择“刷新结果”。';
     tr.appendChild(td);
     body.appendChild(tr);
     body.setAttribute('aria-busy', 'false');
     queueUpdateBatchBar();
+    queueReconcileResultSelection();
     return;
   }
   let cursor = 0;
@@ -3748,10 +4092,30 @@ function renderQueueResultRows(rows) {
     } else {
       body.setAttribute('aria-busy', 'false');
       queueUpdateBatchBar();
+      queueReconcileResultSelection();
     }
   };
   requestAnimationFrame(mount);
 }
+function queueListSkeleton() {
+  const body = $('queue-list');
+  if (!body) return;
+  body.innerHTML = '';
+  for (let index = 0; index < 3; index += 1) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 6;
+    const line = document.createElement('span');
+    line.className = 'skeleton-block';
+    line.style.height = '20px';
+    line.style.width = index === 0 ? '70%' : (index === 1 ? '52%' : '84%');
+    td.appendChild(line);
+    tr.appendChild(td);
+    body.appendChild(tr);
+  }
+  $('queue-status-line').textContent = '任务列表读取中';
+}
+
 function queueProgressInfo(job) {
   const state = (job && job.state) || '';
   const progress = job && job.runner_progress && typeof job.runner_progress === 'object'
@@ -3774,15 +4138,15 @@ function queueProgressInfo(job) {
     return { ratio: 0, text: short || '进度未知', tone: 'is-failed' };
   }
   if (state === 'cancelled') return { ratio: 0, text: '已取消', tone: '' };
-  return { ratio: 0, text: '—', tone: '' };
+  return { ratio: 0, text: '未记录', tone: '' };
 }
 
 function renderQueueList() {
   const body = $('queue-list');
   const jobs = queueState.jobs || [];
   if (!jobs.length) {
-    body.innerHTML = '<tr><td colspan="6" class="wrap queue-empty">还没有任务。粘贴 IOC 或拖入 CSV，然后点入队。</td></tr>';
-    $('queue-status-line').textContent = '还没有任务。粘贴 IOC 或拖入 CSV，然后点入队。';
+    body.innerHTML = '<tr><td colspan="6" class="wrap queue-empty">还没有任务。粘贴 IOC 或导入文件开始第一批研判。</td></tr>';
+    $('queue-status-line').textContent = '还没有任务。粘贴 IOC 或导入文件开始第一批研判。';
     renderQueueKpi(null);
     fillQueueBaselineOptions('');
     return;
@@ -3811,6 +4175,11 @@ function renderQueueList() {
         ).join('<br>') + '</div>';
       }
     }
+    const conclusions = job.result_summary && typeof job.result_summary === 'object'
+      && job.result_summary.conclusions && typeof job.result_summary.conclusions === 'object'
+      ? job.result_summary.conclusions
+      : {};
+    const reviewCount = Number(conclusions['待复核'] || 0);
     const canCancel = state === 'queued' || state === 'running';
     const canRun = state === 'queued';
     const canResults = state === 'succeeded' || state === 'failed';
@@ -3824,21 +4193,36 @@ function renderQueueList() {
     if (canResults) {
       actions.push('<button class="secondary icon-btn" type="button" data-queue-results="' + queueEscape(jobId) + '">结果</button>');
     }
-    const detail = state === 'running' ? (runLog || '') : (runLog || '<div class="queue-run-log">' + queueEscape(summary) + '</div>');
+    const logTail = progress && Array.isArray(progress.log)
+      ? progress.log.slice(-2).map((entry) =>
+          (entry && entry.updated_at ? entry.updated_at + ' · ' : '') + (entry && entry.text ? entry.text : '')
+        ).join(' ')
+      : '';
+    const rowTitle = [summary && summary !== '未记录' ? summary : '', logTail]
+      .filter((value) => String(value || '').trim())
+      .join(' · ');
     return (
-      '<tr data-job-id="' + queueEscape(jobId) + '">' +
-      '<td class="wrap"><span class="queue-job-id">' + queueEscape(jobId) + '</span>' + detail + '</td>' +
-      '<td><span class="mode-label">' + queueEscape(mode === 'online' ? '联网' : '只用缓存') + '</span></td>' +
-      '<td><span class="state-chip">' + queueEscape(queueStateLabel(state)) + '</span></td>' +
-      '<td class="wrap">' +
-        '<div class="queue-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' +
-          Math.round(info.ratio * 100) + '">' +
-          '<span class="queue-progress-fill ' + info.tone + '" style="transform: scaleX(' + info.ratio + ')"></span>' +
+      '<tr data-job-id="' + queueEscape(jobId) + '"' +
+        (rowTitle ? ' title="' + queueEscape(rowTitle) + '"' : '') +
+        (jobId && jobId === queueState.selectedJobId ? ' class="is-selected"' : '') + '>' +
+      '<td colspan="6">' +
+        '<div class="task-line">' +
+          '<span class="task-id">' + queueEscape(jobId) + '</span>' +
+          '<span class="state-chip">' + queueEscape(queueStateLabel(state)) + '</span>' +
+          '<span class="task-count">' + queueEscape(info.text) + '</span>' +
         '</div>' +
-        '<span class="queue-progress-text">' + queueEscape(info.text) + '</span>' +
+        '<div class="task-line">' +
+          '<span class="task-meta">' + queueEscape(mode === 'online' ? '联网' : '只用缓存') +
+            ' · ' + queueEscape(updated) + ' · 待复核 ' + queueEscape(String(reviewCount)) + '</span>' +
+          '<span class="task-actions">' + actions.join('') + '</span>' +
+        '</div>' +
+        '<div class="task-line">' +
+          '<div class="queue-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' +
+            Math.round(info.ratio * 100) + '">' +
+            '<span class="queue-progress-fill ' + info.tone + '" style="transform: scaleX(' + info.ratio + ')"></span>' +
+          '</div>' +
+        '</div>' +
       '</td>' +
-      '<td class="wrap">' + queueEscape(updated) + '</td>' +
-      '<td>' + (actions.join(' ') || '—') + '</td>' +
       '</tr>'
     );
   }).join('');
@@ -3849,7 +4233,7 @@ function renderQueueList() {
     button.addEventListener('click', () => doQueueCancel(button.getAttribute('data-queue-cancel')));
   });
   body.querySelectorAll('[data-queue-results]').forEach((button) => {
-    button.addEventListener('click', () => doQueueResults(button.getAttribute('data-queue-results')));
+    button.addEventListener('click', () => doQueueResults(button.getAttribute('data-queue-results'), button));
   });
   let selected = jobs.find((job) => job.job_id === queueState.selectedJobId) || null;
   if (!selected) {
@@ -3858,6 +4242,8 @@ function renderQueueList() {
     queueState.selectedJobId = selected ? selected.job_id : '';
     patchStore({ 'queue.selectedJobId': queueState.selectedJobId });
     if (previous && queueState.selectedJobId && previous !== queueState.selectedJobId) {
+      // Auto-switching to another job drops the single-row focus.
+      queueClearResultSelection(null);
       showToast('上次任务已不可见，已切换到最新任务。', 'info');
     }
   }
@@ -3868,9 +4254,10 @@ function renderQueueList() {
 function restoreQueueResultState() {
   const stored = readStore();
   const storedResultId = stored['queue.selectedResultId'];
-  if (storedResultId && !queueState.selectedResultId) {
-    queueState.selectedResultId = String(storedResultId);
-  }
+  // Normalize legacy empty-string or missing values to null; a real id is
+  // restored as a string and validated against rows once they settle.
+  queueState.selectedResultId =
+    storedResultId && String(storedResultId).trim() !== '' ? String(storedResultId) : null;
   const storedLimit = Number(stored['queue.pageSize']);
   if (Number.isFinite(storedLimit) && storedLimit > 0) {
     queueState.resultLimit = storedLimit;
@@ -3929,9 +4316,12 @@ function queueUpdateResultsToolbar() {
   const providerButton = $('queue-filter-provider-issues');
   if (providerButton) {
     providerButton.setAttribute('aria-pressed', filters.providerIssues ? 'true' : 'false');
+    providerButton.textContent = filters.providerIssues ? '异常开' : '异常';
   }
   const clear = $('queue-results-clear-filter');
   if (clear) clear.hidden = !queueFiltersActive();
+  const refreshResults = $('queue-results-refresh');
+  if (refreshResults) refreshResults.hidden = (queueState.resultTotal || 0) > 0;
   const limit = queueState.resultLimit > 0 ? queueState.resultLimit : 100;
   const total = queueState.resultTotal || 0;
   const pages = Math.max(1, Math.ceil(total / limit));
@@ -3952,11 +4342,25 @@ function queueUpdateResultsToolbar() {
 
 function queueResultsHeadline() {
   const filters = queueFilterState();
-  const bits = ['任务 ' + (queueState.selectedJobId || '—')];
-  bits.push('共 ' + (queueState.resultTotal || 0) + ' 行');
-  if (QUEUE_FILTER_LABELS[filters.kind]) bits.push('筛选“' + QUEUE_FILTER_LABELS[filters.kind] + '”');
-  if (filters.providerIssues) bits.push('Provider 异常');
-  if (filters.query) bits.push('关键字 ' + filters.query);
+  const job = (queueState.jobs || []).find((item) => item.job_id === queueState.selectedJobId) || null;
+  const summary = job && job.result_summary && typeof job.result_summary === 'object' ? job.result_summary : {};
+  const counts = queueKpiFromSummary(summary);
+  const jobId = queueState.selectedJobId || '未选择任务';
+  const shortId = jobId.length > 10 ? '…' + jobId.slice(-8) : jobId;
+  const loaded = queueState.resultRows.length + ' / ' + (queueState.resultTotal || 0) + ' 行';
+  const bits = [shortId, loaded, '待复核 ' + counts.review, '异常 ' + counts.providerIssue];
+  const node = $('queue-results-stats');
+  if (node) {
+    node.title = [
+      jobId,
+      loaded,
+      '待复核 ' + counts.review,
+      '异常 ' + counts.providerIssue,
+      filters.kind !== 'all' ? '筛选 ' + (QUEUE_FILTER_LABELS[filters.kind] || filters.kind) : '',
+      filters.providerIssues ? 'Provider 异常' : '',
+      filters.query ? '关键字 ' + filters.query : '',
+    ].filter(Boolean).join(' · ');
+  }
   return bits.join(' · ');
 }
 
@@ -3983,20 +4387,54 @@ function queueResultsParams(offset) {
   return params;
 }
 
+function queueShowResultsError(err) {
+  const panel = $('queue-results-error');
+  const message = err && err.message ? err.message : String(err);
+  if (panel) {
+    $('queue-results-error-message').textContent = '结果读取失败。后端返回：' + message;
+    panel.hidden = false;
+  }
+  const wrap = $('queue-results-wrap');
+  if (wrap) wrap.hidden = true;
+  const foot = $('queue-results-foot');
+  if (foot) foot.hidden = true;
+  const batch = $('queue-batch-bar');
+  if (batch) batch.hidden = true;
+  const body = $('queue-results-body');
+  if (body) body.setAttribute('aria-busy', 'false');
+}
+
+function queueHideResultsError() {
+  const panel = $('queue-results-error');
+  if (panel) panel.hidden = true;
+  const wrap = $('queue-results-wrap');
+  if (wrap) wrap.hidden = false;
+  const foot = $('queue-results-foot');
+  if (foot) foot.hidden = false;
+}
+
 async function queueLoadResults(offset) {
   if (!queueState.selectedJobId) throw new Error('请先打开任务结果');
   const body = $('queue-results-body');
   if (body) body.setAttribute('aria-busy', 'true');
   const start = Math.max(0, offset || 0);
   queueResultsSkeleton();
-  const data = await apiGet('/api/jobs/results?' + queueResultsParams(start).toString());
+  let data;
+  try {
+    data = await apiGet('/api/jobs/results?' + queueResultsParams(start).toString());
+  } catch (err) {
+    queueShowResultsError(err);
+    return null;
+  }
+  queueHideResultsError();
   const rows = (data && data.rows) || [];
   queueState.resultRows = [];
   queueState.resultTotal = data && data.total != null ? Number(data.total) : rows.length;
   queueState.resultOffset = data && data.offset != null ? Number(data.offset) : start;
   if (data && data.limit != null) queueState.resultLimit = Number(data.limit) || queueState.resultLimit;
   $('queue-results-box').hidden = false;
-  $('queue-results-stats').textContent = queueResultsHeadline();
+  const ledgerEmpty = $('queue-ledger-empty');
+  if (ledgerEmpty) ledgerEmpty.hidden = true;
   queueState.selectedResultIds = new Set(
     Array.from(queueState.selectedResultIds || []).filter(
       (resultId) => rows.some((row) => String(row.result_id) === resultId)
@@ -4004,6 +4442,7 @@ async function queueLoadResults(offset) {
   );
   renderQueueResultRows(rows);
   queueUpdateResultsToolbar();
+  $('queue-results-stats').textContent = queueResultsHeadline();
   queuePersistResultState();
 }
 
@@ -4074,11 +4513,13 @@ let overlayOpen = null;
 let confirmResolve = null;
 
 function setBackgroundInert(inert) {
-  [document.querySelector('.topbar'), $('main')].forEach((element) => {
-    if (!element) return;
-    if (inert) element.setAttribute('inert', '');
-    else element.removeAttribute('inert');
-  });
+  // The topbar stays interactive while an overlay is open: it hosts the
+  // version toggle, theme toggle and mode navigation, which must remain
+  // reachable. Only the main content is inerted.
+  const main = $('main');
+  if (!main) return;
+  if (inert) main.setAttribute('inert', '');
+  else main.removeAttribute('inert');
 }
 
 function overlayFocusables(container) {
@@ -4115,7 +4556,15 @@ function prefersReducedMotion() {
 function openOverlay(element, trigger) {
   if (!element) return;
   if (!overlayOpen) overlayTrigger = trigger || document.activeElement;
+  if (element._hideTimer) {
+    clearTimeout(element._hideTimer);
+    element._hideTimer = null;
+  }
   element.hidden = false;
+  if (element.classList.contains('side-panel')) {
+    const scrim = $('overlay-scrim');
+    if (scrim) scrim.hidden = false;
+  }
   requestAnimationFrame(() => element.classList.add('is-open'));
   overlayOpen = element;
   setBackgroundInert(true);
@@ -4129,9 +4578,21 @@ function openOverlay(element, trigger) {
 function closeOverlay(element) {
   const target = element || overlayOpen;
   if (!target) return;
+  if (target.classList.contains('side-panel')) {
+    const scrim = $('overlay-scrim');
+    if (scrim) scrim.hidden = true;
+  }
   target.classList.remove('is-open');
   const hide = () => { target.hidden = true; };
-  if (target.classList.contains('side-panel') && !prefersReducedMotion()) setTimeout(hide, 200);
+  if (target._hideTimer) {
+    clearTimeout(target._hideTimer);
+    target._hideTimer = null;
+  }
+  if (target.classList.contains('side-panel') && !prefersReducedMotion()) {
+    // A reopen inside the animation window must not be clobbered by the
+    // pending hidden flag.
+    target._hideTimer = setTimeout(hide, 200);
+  }
   else hide();
   if (overlayOpen === target) {
     overlayOpen = null;
@@ -4174,6 +4635,78 @@ function bindOverlay(element) {
 }
 
 /* ---- 解释详情 side panel ------------------------------------------ */
+function queueVerdictAria(conclusion) {
+  const kind = queueVerdictClass(conclusion);
+  if (kind === 'is-black') return '黑：威胁成立';
+  if (kind === 'is-gray') return '灰：作用范围受限';
+  if (kind === 'is-white') return '白：误报';
+  if (kind === 'is-review') return '待复核：需要人工接管';
+  return 'unknown：系统未给出把握';
+}
+
+function queueDetailProviderRows(explanation) {
+  const rows = [];
+  const statuses = explanation && explanation.provider_statuses && typeof explanation.provider_statuses === 'object'
+    ? explanation.provider_statuses
+    : {};
+  const details = explanation && explanation.provider_details && typeof explanation.provider_details === 'object'
+    ? explanation.provider_details
+    : {};
+  Object.keys(statuses).forEach((name) => {
+    rows.push({
+      name: name,
+      status: String(statuses[name] == null ? '' : statuses[name]),
+      detail: details[name] == null ? '' : String(details[name]),
+    });
+  });
+  return rows;
+}
+
+function queueRenderDetailSources(explanation) {
+  const host = $('queue-detail-sources');
+  if (!host) return;
+  host.textContent = '';
+  const rows = queueDetailProviderRows(explanation);
+  const missing = explanation && Array.isArray(explanation.missing_required_providers)
+    ? explanation.missing_required_providers.filter((item) => String(item || '').trim())
+    : [];
+  const retained = queueFirstRetainedUrl(explanation && explanation.retained_urls);
+  if (!rows.length && !missing.length && !retained) {
+    const empty = document.createElement('p');
+    empty.className = 'stats';
+    empty.textContent = '这条结果没有 provider 明细。';
+    host.appendChild(empty);
+    return;
+  }
+  rows.forEach((row) => {
+    const line = document.createElement('div');
+    line.className = 'source-row';
+    const chip = document.createElement('span');
+    chip.className = 'provider-chip ' + queueProviderStatusClass(row.status);
+    chip.textContent = String(row.name) + ' ' + row.status;
+    line.appendChild(chip);
+    if (row.detail) {
+      const detail = document.createElement('span');
+      detail.className = 'source-detail';
+      detail.textContent = row.detail;
+      line.appendChild(detail);
+    }
+    host.appendChild(line);
+  });
+  if (missing.length) {
+    const missingLine = document.createElement('div');
+    missingLine.className = 'source-row';
+    missingLine.textContent = '缺失来源 ' + missing.join('、');
+    host.appendChild(missingLine);
+  }
+  if (retained) {
+    const urlLine = document.createElement('div');
+    urlLine.className = 'source-row';
+    urlLine.textContent = retained;
+    host.appendChild(urlLine);
+  }
+}
+
 function queueDetailOpen() {
   const panel = $('queue-detail-panel');
   return !!panel && !panel.hidden;
@@ -4183,23 +4716,103 @@ function openQueueDetail(mode, trigger) {
   const panel = $('queue-detail-panel');
   if (!panel) return;
   const nextMode = mode === 'diff' ? 'diff' : 'explain';
+  // Diff is a task-level view: it never carries a single-row focus.
+  if (nextMode === 'diff' && queueHasResultSelection()) queueClearResultSelection(null);
+  // A pending close animation must not hide a panel we are about to keep.
+  if (panel._hideTimer) {
+    clearTimeout(panel._hideTimer);
+    panel._hideTimer = null;
+  }
   panel.dataset.panelMode = nextMode;
   const explain = $('queue-explain-box');
   const diff = $('queue-diff-result');
   if (explain) explain.hidden = nextMode !== 'explain';
   if (diff) diff.hidden = nextMode !== 'diff';
+  const sourcesSection = $('queue-detail-sources-section');
+  if (sourcesSection) sourcesSection.hidden = nextMode !== 'explain';
+  const reviewForm = $('queue-review-form');
+  if (reviewForm) reviewForm.hidden = nextMode !== 'explain';
   $('queue-detail-kicker').textContent = nextMode === 'diff' ? 'diff 对比' : '解释详情';
-  if (!queueDetailOpen()) openOverlay(panel, trigger);
+  if (!queueDetailOpen() || overlayOpen !== panel) {
+    // Fresh open, or a mode switch (explain to diff) that closed the overlay
+    // while keeping the panel visible: restore the overlay bookkeeping.
+    openOverlay(panel, trigger);
+  } else if (trigger && document.contains(trigger)) {
+    // Keep the stored trigger fresh so closing focuses the newest row.
+    overlayTrigger = trigger;
+  }
 }
 
 function closeQueueDetail() {
   const panel = $('queue-detail-panel');
   if (!panel || panel.hidden) return;
+  if (panel.dataset.panelMode === 'explain' && queueHasResultSelection()) {
+    // Explain mode is driven by the single-row focus: clearing S closes the
+    // drawer in the same frame (and returns focus), so no separate close.
+    queueClearResultSelection(null);
+    return;
+  }
+  // Diff mode, or an explain panel whose focus is already cleared.
   closeOverlay(panel);
-  // 结果行在复核后会重新挂载；此时把焦点交回当前选中行。
-  if (!document.activeElement || document.activeElement === document.body) {
-    const row = queueRowElement(queueState.selectedResultId);
-    if (row && document.contains(row)) row.focus();
+}
+
+function queueSelectResult(resultId, trigger) {
+  doQueueExplain(resultId, trigger);
+}
+
+function queueClearResultSelection(trigger) {
+  if (!queueHasResultSelection()) return;
+  // Capture the selected row before clearing so focus can return to it.
+  const previousId = queueState.selectedResultId;
+  const previousRow = queueRowElement(previousId);
+  queueState.selectedResultId = null;
+  patchStore({ 'queue.selectedResultId': null });
+  queueUpdateRowSelection();
+  const panel = $('queue-detail-panel');
+  if (panel && !panel.hidden && panel.dataset.panelMode === 'explain') {
+    closeOverlay(panel);
+  }
+  // Focus order: the original trigger, then the previously selected row,
+  // then the first visible row.
+  if (trigger && document.contains(trigger) && typeof trigger.focus === 'function') {
+    trigger.focus();
+    return;
+  }
+  if (previousRow && document.contains(previousRow)) {
+    previousRow.focus();
+    return;
+  }
+  const first = queueFirstVisibleRow();
+  if (first) first.focus();
+}
+
+function queueToggleResultSelection(resultId, trigger) {
+  if (queueHasResultSelection() && String(queueState.selectedResultId) === String(resultId)) {
+    queueClearResultSelection(trigger);
+  } else {
+    queueSelectResult(resultId, trigger);
+  }
+}
+
+function queueReconcileResultSelection() {
+  // After rows settle, the drawer must follow the selection: a restored or
+  // surviving S whose row exists reopens explain; a ghost S is cleared.
+  if (queueHasResultSelection()) {
+    if (queueHasResultRow(queueState.selectedResultId)) {
+      const panel = $('queue-detail-panel');
+      const alreadyShown = panel && !panel.hidden &&
+        panel.dataset.panelMode === 'explain' &&
+        String(panel.getAttribute('data-result-id') || '') === String(queueState.selectedResultId);
+      if (alreadyShown) return;
+      queueSelectResult(queueState.selectedResultId, null);
+    } else {
+      queueClearResultSelection(null);
+    }
+    return;
+  }
+  const panel = $('queue-detail-panel');
+  if (panel && !panel.hidden && panel.dataset.panelMode === 'explain') {
+    closeQueueDetail();
   }
 }
 
@@ -4250,7 +4863,7 @@ function queueDetailNavigate(direction) {
     return;
   }
   const resultId = String(rows[nextIndex].result_id);
-  doQueueExplain(resultId, queueRowElement(resultId));
+  queueSelectResult(resultId, queueRowElement(resultId));
 }
 
 function queuePendingNavigate(direction) {
@@ -4261,7 +4874,7 @@ function queuePendingNavigate(direction) {
   for (let index = start + step; index >= 0 && index < rows.length; index += step) {
     if (String(rows[index].conclusion) === '待复核') {
       const resultId = String(rows[index].result_id);
-      doQueueExplain(resultId, queueRowElement(resultId));
+      queueSelectResult(resultId, queueRowElement(resultId));
       return;
     }
   }
@@ -4360,6 +4973,14 @@ document.addEventListener('keydown', (event) => {
       closeOverlay(shortcutsDialogEl);
       return;
     }
+    const statusPopover = $('status-popover');
+    if (statusPopover && !statusPopover.hidden) {
+      event.preventDefault();
+      queueToggleStatusPopover(false);
+      const statusButton = $('status-summary-button');
+      if (statusButton) statusButton.focus();
+      return;
+    }
     if (queueDetailOpen()) {
       event.preventDefault();
       closeQueueDetail();
@@ -4422,7 +5043,7 @@ document.addEventListener('keydown', (event) => {
   if (key === 'Enter') {
     if (!queueState.selectedResultId) return;
     event.preventDefault();
-    doQueueExplain(queueState.selectedResultId, queueRowElement(queueState.selectedResultId));
+    queueSelectResult(queueState.selectedResultId, queueRowElement(queueState.selectedResultId));
     return;
   }
   if (key === 'a') { queueSetReviewLabel('approved'); return; }
@@ -4508,7 +5129,7 @@ function renderOpsStatus(data) {
   $('ops-cache-stats').textContent =
     '条目 ' + Number(cache.items || 0).toLocaleString('zh-CN') +
     ' · 占用 ' + opsBytes(cache.bytes) +
-    ' · 最近更新 ' + (cache.updated_at ? queueLocalTime(cache.updated_at) : '—');
+    ' · 最近更新 ' + (cache.updated_at ? queueLocalTime(cache.updated_at) : '未记录');
   const providers = cache.by_provider && typeof cache.by_provider === 'object' ? cache.by_provider : {};
   const providerList = $('ops-cache-providers');
   providerList.textContent = '';
@@ -4558,10 +5179,10 @@ function renderOpsStatus(data) {
 
   const workbench = (data && data.workbench) || {};
   $('ops-workbench-stats').textContent = workbench.enabled
-    ? 'legacy workbench 已启用，本窗口可直接打开 #workbench-panel。'
+    ? 'legacy workbench：enabled，本窗口可直接打开 #workbench-panel。'
     : (workbench.configured
-      ? '未启用。携带 legacy_workbench=1 时可打开 #workbench-panel。'
-      : '未配置 legacy workbench。');
+      ? 'legacy workbench：disabled。携带 legacy_workbench=1 时可打开 #workbench-panel。'
+      : 'legacy workbench：disabled，本机未配置。');
 }
 
 async function loadOpsStatus() {
@@ -4584,7 +5205,7 @@ async function loadOpsStatus() {
     }
     ['ops-server-stats', 'ops-cache-stats', 'ops-history-stats', 'ops-workbench-stats'].forEach((id) => {
       const element = $(id);
-      if (element) element.textContent = '—';
+      if (element) element.textContent = '未记录';
     });
   } finally {
     if (blocks) blocks.setAttribute('aria-busy', 'false');
@@ -4609,7 +5230,10 @@ async function refreshQueueList(silent) {
   if (queueState.refreshInFlight) return queueState.jobs;
   queueState.refreshInFlight = true;
   try {
-    if (!silent) clearError();
+    if (!silent) {
+      clearError();
+      queueListSkeleton();
+    }
     const data = await apiGet('/api/jobs/list');
     const jobs = (data && data.jobs) || [];
     // Running jobs: pull latest runner_progress from status (poll, not push).
@@ -4632,7 +5256,10 @@ async function refreshQueueList(silent) {
     queueSchedulePoll();
     return queueState.jobs;
   } catch (err) {
-    if (!silent) showError(err && err.message ? err.message : String(err));
+    if (!silent) {
+      $('queue-status-line').textContent = '任务列表读取失败，选择“重试”。';
+      showError(err && err.message ? err.message : String(err));
+    }
     throw err;
   } finally {
     queueState.refreshInFlight = false;
@@ -4748,19 +5375,29 @@ async function doQueueCancel(jobId) {
   }
 }
 
-async function doQueueResults(jobId) {
+async function doQueueResults(jobId, triggerButton) {
   try {
     clearError();
     if (!jobId) throw new Error('缺少 job_id');
     const sameJob = queueState.selectedJobId === jobId;
     if (!sameJob) {
+      // Switching jobs always drops the single-row focus and batch set.
       queueState.resultOffset = 0;
-      queueState.selectedResultId = '';
       queueState.selectedResultIds = new Set();
-      patchStore({ 'queue.selectedJobId': jobId, 'queue.selectedResultId': '' });
+      patchStore({ 'queue.selectedJobId': jobId, 'queue.selectedResultId': null });
+      const panel = $('queue-detail-panel');
+      if (queueHasResultSelection()) queueClearResultSelection(null);
+      else if (panel && !panel.hidden) closeOverlay(panel);
+      // Focus the task button that initiated the switch.
+      if (triggerButton && document.contains(triggerButton)) triggerButton.focus();
     }
     queueState.selectedJobId = jobId;
-    closeQueueDetail();
+    // Same-job reload keeps a surviving selection; close only when there is
+    // nothing selected (cross-job already handled its own close above).
+    if (!queueHasResultSelection()) {
+      const panel = $('queue-detail-panel');
+      if (panel && !panel.hidden) closeOverlay(panel);
+    }
     await queueLoadResults(queueState.resultOffset || 0);
     const selected = (queueState.jobs || []).find((job) => job.job_id === jobId) || null;
     renderQueueKpi(selected);
@@ -4784,6 +5421,8 @@ async function doQueueExplain(resultId, trigger) {
   patchStore({ 'queue.selectedResultId': resultId });
   queueUpdateRowSelection();
   openQueueDetail('explain', trigger || queueRowElement(resultId));
+  const explainPanel = $('queue-detail-panel');
+  if (explainPanel) explainPanel.setAttribute('data-result-id', String(resultId));
   $('queue-selected-result').textContent = resultId;
   $('queue-detail-title').textContent = resultId;
   queueUpdateDetailNav();
@@ -4800,9 +5439,31 @@ async function doQueueExplain(resultId, trigger) {
       job_id: queueState.selectedJobId,
       result_id: resultId,
     });
+    // Drop a late response: the user moved on (S changed) or the panel is no
+    // longer in explain mode for this row.
+    if (!queueHasResultSelection() || String(queueState.selectedResultId) !== String(resultId)) return;
+    const panel = $('queue-detail-panel');
+    if (!panel || panel.hidden || panel.dataset.panelMode !== 'explain') return;
     const explanation = (data && data.explanation) || data || {};
     if (stateLine) stateLine.hidden = true;
     renderJsonlViewer($('queue-explain-viewer'), JSON.stringify(explanation));
+    const detailBadge = $('queue-detail-badge');
+    if (detailBadge) {
+      detailBadge.className = 'verdict-badge ' + queueVerdictClass(explanation.conclusion);
+      detailBadge.textContent = String(explanation.conclusion == null || explanation.conclusion === '' ? '未知' : explanation.conclusion);
+      detailBadge.setAttribute('aria-label', queueVerdictAria(explanation.conclusion));
+    }
+    const rawViewer = $('queue-raw-viewer');
+    if (rawViewer) {
+      rawViewer.textContent = JSON.stringify(explanation, null, 2);
+      rawViewer.hidden = true;
+    }
+    const rawToggle = $('queue-raw-toggle');
+    if (rawToggle) {
+      rawToggle.textContent = '原始 JSONL';
+      rawToggle.setAttribute('aria-expanded', 'false');
+    }
+    queueRenderDetailSources(explanation);
     const review = explanation.review && typeof explanation.review === 'object'
       ? explanation.review
       : null;
@@ -4815,6 +5476,9 @@ async function doQueueExplain(resultId, trigger) {
       if (review.reviewer != null) $('queue-review-reviewer').value = String(review.reviewer || '');
     }
   } catch (err) {
+    if (!queueHasResultSelection() || String(queueState.selectedResultId) !== String(resultId)) return;
+    const panel = $('queue-detail-panel');
+    if (!panel || panel.hidden || panel.dataset.panelMode !== 'explain') return;
     if (stateLine) {
       stateLine.hidden = false;
       stateLine.classList.add('is-error');
@@ -4823,7 +5487,6 @@ async function doQueueExplain(resultId, trigger) {
     }
   }
 }
-
 async function doQueueReview() {
   const button = $('queue-review-submit');
   try {
@@ -4902,6 +5565,7 @@ function queueDownloadExport(result, format) {
 }
 
 async function doQueueDiff() {
+  queueOpenExportMenu(false);
   try {
     clearError();
     if (!queueState.selectedJobId) throw new Error('请先打开任务结果');
@@ -5059,6 +5723,146 @@ document.addEventListener('click', (event) => {
   if (!event.target.closest || !event.target.closest('.menu-wrap')) queueOpenExportMenu(false);
 });
 
+/* 顶栏状态弹层 */
+function queueToggleStatusPopover(open) {
+  const popover = $('status-popover');
+  const button = $('status-summary-button');
+  if (!popover || !button) return;
+  popover.hidden = !open;
+  button.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+const queueStatusButton = $('status-summary-button');
+if (queueStatusButton) {
+  queueStatusButton.addEventListener('click', () => {
+    const popover = $('status-popover');
+    queueToggleStatusPopover(!!popover && popover.hidden);
+  });
+  queueStatusButton.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const popover = $('status-popover');
+    queueToggleStatusPopover(!!popover && popover.hidden);
+  });
+}
+const queueStatusClose = $('status-popover-close');
+if (queueStatusClose) {
+  queueStatusClose.addEventListener('click', () => {
+    queueToggleStatusPopover(false);
+    const button = $('status-summary-button');
+    if (button) button.focus();
+  });
+}
+const queueStatusRetry = $('status-retry');
+if (queueStatusRetry) queueStatusRetry.addEventListener('click', () => refreshStatus());
+document.addEventListener('click', (event) => {
+  const target = event.target;
+  if (!target || !target.closest) return;
+  if (target.closest('#status-popover') || target.closest('#status-summary-button')) return;
+  queueToggleStatusPopover(false);
+});
+
+/* 入队抽屉：展开 168px，收起后回到 40px 按钮 */
+const queueComposerToggle = $('queue-composer-toggle');
+if (queueComposerToggle) {
+  queueComposerToggle.addEventListener('click', () => {
+    const composer = $('queue-composer-body');
+    if (!composer) return;
+    const collapsed = !composer.hidden;
+    composer.hidden = collapsed;
+    queueComposerToggle.textContent = collapsed ? '入队' : '收起';
+    queueComposerToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  });
+}
+const queueMoreButton = $('queue-more-button');
+if (queueMoreButton) {
+  queueMoreButton.addEventListener('click', () => {
+    const menu = $('queue-more-menu');
+    if (!menu) return;
+    const open = menu.hidden;
+    menu.hidden = !open;
+    queueMoreButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) {
+      const first = menu.querySelector('button:not(:disabled)');
+      if (first) first.focus();
+    }
+  });
+}
+document.addEventListener('click', (event) => {
+  const target = event.target;
+  if (!target || !target.closest) return;
+  if (target.closest('#queue-more-wrap')) return;
+  const menu = $('queue-more-menu');
+  if (menu && !menu.hidden) {
+    menu.hidden = true;
+    const button = $('queue-more-button');
+    if (button) button.setAttribute('aria-expanded', 'false');
+  }
+});
+const queueBatchMarkButton = $('queue-batch-mark-button');
+if (queueBatchMarkButton) {
+  queueBatchMarkButton.addEventListener('click', () => {
+    const menu = $('queue-batch-mark-menu');
+    if (!menu) return;
+    const open = menu.hidden;
+    menu.hidden = !open;
+    queueBatchMarkButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) {
+      const first = menu.querySelector('button:not(:disabled)');
+      if (first) first.focus();
+    }
+  });
+}
+document.addEventListener('click', (event) => {
+  const target = event.target;
+  if (!target || !target.closest) return;
+  if (target.closest('#queue-batch-mark-menu') || target.closest('#queue-batch-mark-button')) return;
+  const menu = $('queue-batch-mark-menu');
+  if (menu && !menu.hidden) {
+    menu.hidden = true;
+    const button = $('queue-batch-mark-button');
+    if (button) button.setAttribute('aria-expanded', 'false');
+  }
+});
+const queueRawToggle = $('queue-raw-toggle');
+if (queueRawToggle) {
+  queueRawToggle.addEventListener('click', () => {
+    const viewer = $('queue-raw-viewer');
+    if (!viewer) return;
+    const open = viewer.hidden;
+    viewer.hidden = !open;
+    queueRawToggle.textContent = open ? '收起原始 JSONL' : '原始 JSONL';
+    queueRawToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+}
+const queueLedgerRefresh = $('queue-ledger-refresh');
+if (queueLedgerRefresh) {
+  queueLedgerRefresh.addEventListener('click', () => {
+    refreshQueueList(false).catch(() => {});
+  });
+}
+const queueResultsErrorRetry = $('queue-results-error-retry');
+if (queueResultsErrorRetry) {
+  queueResultsErrorRetry.addEventListener('click', () => {
+    queueLoadResults(queueState.resultOffset || 0).catch(() => {});
+  });
+}
+const queueResultsErrorBack = $('queue-results-error-back');
+if (queueResultsErrorBack) {
+  queueResultsErrorBack.addEventListener('click', () => {
+    queueHideResultsError();
+    queueState.selectedJobId = '';
+    patchStore({ 'queue.selectedJobId': '' });
+    const panel = $('queue-detail-panel');
+    if (panel && !panel.hidden) closeOverlay(panel);
+    queueClearResultSelection(queueResultsErrorBack);
+    const box = $('queue-results-box');
+    if (box) box.hidden = true;
+    const empty = $('queue-ledger-empty');
+    if (empty) empty.hidden = false;
+    renderQueueList();
+  });
+}
+
 /* 解释 side panel、批量复核与对话框 */
 const queueDetailClose = $('queue-detail-close');
 if (queueDetailClose) queueDetailClose.addEventListener('click', closeQueueDetail);
@@ -5067,7 +5871,13 @@ if (queueDetailPrev) queueDetailPrev.addEventListener('click', () => queueDetail
 const queueDetailNext = $('queue-detail-next');
 if (queueDetailNext) queueDetailNext.addEventListener('click', () => queueDetailNavigate(1));
 document.querySelectorAll('[data-queue-batch-review]').forEach((button) => {
-  button.addEventListener('click', () => doQueueBatchReview(button.getAttribute('data-queue-batch-review')));
+  button.addEventListener('click', () => {
+    const menu = $('queue-batch-mark-menu');
+    if (menu) menu.hidden = true;
+    const markButton = $('queue-batch-mark-button');
+    if (markButton) markButton.setAttribute('aria-expanded', 'false');
+    doQueueBatchReview(button.getAttribute('data-queue-batch-review'));
+  });
 });
 const shortcutsClose = $('shortcuts-close');
 if (shortcutsClose) shortcutsClose.addEventListener('click', () => closeOverlay($('shortcuts-dialog')));
@@ -5076,6 +5886,26 @@ if (confirmCancel) confirmCancel.addEventListener('click', () => resolveConfirm(
 const confirmOk = $('confirm-ok');
 if (confirmOk) confirmOk.addEventListener('click', () => resolveConfirm(true));
 bindOverlay($('queue-detail-panel'));
+// Scrim click: the scrim sits above the (inert) rows, so a click on a row's
+// visible part lands here. Forward row clicks to the toggle; otherwise close
+// the drawer exactly like Esc.
+const overlayScrim = $('overlay-scrim');
+if (overlayScrim) {
+  overlayScrim.addEventListener('click', (event) => {
+    const x = event.clientX;
+    const y = event.clientY;
+    const rows = Array.from(document.querySelectorAll('#queue-results-body tr.queue-row'));
+    const hit = rows.find((row) => {
+      const rect = row.getBoundingClientRect();
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    });
+    if (hit) {
+      queueToggleResultSelection(hit.getAttribute('data-queue-result-id'), hit);
+    } else {
+      closeQueueDetail();
+    }
+  });
+}
 bindOverlay($('shortcuts-dialog'));
 bindOverlay($('confirm-dialog'));
 
